@@ -3,6 +3,11 @@ from functools import wraps
 import json
 import os
 import socket
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
 from datetime import datetime
 from database import init_db, get_db, build_snapshot, save_snapshot, restore_snapshot, get_job_data
 from tax_rates import lookup_tax
@@ -1370,17 +1375,17 @@ def api_codebook_search():
         sections = conn.execute(
             '''SELECT cs.*, cb.code as book_code, cb.name as book_name
                FROM code_sections cs JOIN code_books cb ON cs.book_id = cb.id
-               WHERE cs.book_id = ? AND (cs.section_number LIKE ? OR cs.title LIKE ?)
+               WHERE cs.book_id = ? AND (cs.section_number LIKE ? OR cs.title LIKE ? OR cs.content LIKE ?)
                ORDER BY cs.sort_order LIMIT 50''',
-            (book_id, f'%{q}%', f'%{q}%')
+            (book_id, f'%{q}%', f'%{q}%', f'%{q}%')
         ).fetchall()
     else:
         sections = conn.execute(
             '''SELECT cs.*, cb.code as book_code, cb.name as book_name
                FROM code_sections cs JOIN code_books cb ON cs.book_id = cb.id
-               WHERE cs.section_number LIKE ? OR cs.title LIKE ?
+               WHERE cs.section_number LIKE ? OR cs.title LIKE ? OR cs.content LIKE ?
                ORDER BY cb.code, cs.sort_order LIMIT 50''',
-            (f'%{q}%', f'%{q}%')
+            (f'%{q}%', f'%{q}%', f'%{q}%')
         ).fetchall()
     conn.close()
     return jsonify([dict(s) for s in sections])
@@ -1674,31 +1679,101 @@ def api_notifications_mark_all_read():
 # ─── Bids ───────────────────────────────────────────────────
 
 def calculate_bid(data):
-    """Calculate all derived bid fields."""
-    total_man_hours = float(data.get('total_man_hours', 0) or 0)
-    crew_size = int(data.get('crew_size', 1) or 1)
+    """Calculate all derived bid fields from system counts."""
+    # System counts
+    num_apartments = int(data.get('num_apartments', 0) or 0)
+    num_non_apt = int(data.get('num_non_apartment_systems', 0) or 0)
+    num_mini_splits = int(data.get('num_mini_splits', 0) or 0)
+    has_clubhouse = int(data.get('has_clubhouse', 0) or 0)
+    clubhouse_systems = int(data.get('clubhouse_systems', 0) or 0) if has_clubhouse else 0
+    # Mini splits count as 0.75 of a standard system for labor calculation
+    total_systems = num_apartments + num_non_apt + (num_mini_splits * 0.75) + clubhouse_systems
+
+    # Man hours breakdown per system
+    rough_in = float(data.get('rough_in_hours', 15) or 15)
+    ahu = float(data.get('ahu_install_hours', 1) or 1)
+    condenser = float(data.get('condenser_install_hours', 1) or 1)
+    trim = float(data.get('trim_out_hours', 1) or 1)
+    startup = float(data.get('startup_hours', 2) or 2)
+    man_hours_per_system = rough_in + ahu + condenser + trim + startup
+    total_man_hours = total_systems * man_hours_per_system
+
+    # Labor
+    crew_size = int(data.get('crew_size', 4) or 4)
     hours_per_day = float(data.get('hours_per_day', 8) or 8)
     labor_rate = float(data.get('labor_rate_per_hour', 0) or 0)
-    material_cost = float(data.get('material_cost', 0) or 0)
-    management_fee = float(data.get('management_fee', 0) or 0)
-    per_diem_rate = float(data.get('per_diem_rate', 0) or 0)
-    per_diem_days = float(data.get('per_diem_days', 0) or 0)
-    profit_pct = float(data.get('company_profit_pct', 0) or 0)
+    labor_cost_per_unit = float(data.get('labor_cost_per_unit', 0) or 0)
 
+    # Labor cost: use per-unit price if set, otherwise hourly rate × total hours
+    if labor_cost_per_unit > 0:
+        labor_cost = round(total_systems * labor_cost_per_unit, 2)
+    else:
+        labor_cost = round(total_man_hours * labor_rate, 2)
+
+    # Duration
     duration_days = round(total_man_hours / (crew_size * hours_per_day), 2) if crew_size > 0 and hours_per_day > 0 else 0
-    labor_cost = round(total_man_hours * labor_rate, 2)
-    per_diem_total = round(per_diem_rate * per_diem_days, 2)
-    subtotal = round(material_cost + labor_cost + management_fee + per_diem_total, 2)
+    num_weeks = round(duration_days / 5, 2)
+
+    # Per diem (auto from mileage)
+    job_mileage = float(data.get('job_mileage', 0) or 0)
+    per_diem_rate = float(data.get('per_diem_rate', 0) or 0)
+    # Auto-set per diem rate from mileage if rate is 0
+    if per_diem_rate == 0 and job_mileage > 0:
+        if job_mileage >= 250:
+            per_diem_rate = 75
+        elif job_mileage >= 101:
+            per_diem_rate = 60
+    per_diem_total = round(per_diem_rate * duration_days * crew_size, 2)
+
+    # Overhead
+    material_cost = float(data.get('material_cost', 0) or 0)
+    insurance_cost = float(data.get('insurance_cost', 0) or 0)
+    permit_cost = float(data.get('permit_cost', 0) or 0)
+    management_fee = float(data.get('management_fee', 0) or 0)
+
+    # Totals
+    total_cost_to_build = round(material_cost + labor_cost + insurance_cost + permit_cost + management_fee + per_diem_total, 2)
+    subtotal = total_cost_to_build
+    profit_pct = float(data.get('company_profit_pct', 0) or 0)
     company_profit = round(subtotal * (profit_pct / 100), 2)
     total_bid = round(subtotal + company_profit, 2)
+    net_profit = round(total_bid - total_cost_to_build, 2)
+
+    # Per-unit calcs
+    cost_per_apartment = round(total_cost_to_build / num_apartments, 2) if num_apartments > 0 else 0
+    cost_per_system = round(total_cost_to_build / total_systems, 2) if total_systems > 0 else 0
+    labor_cost_per_apt = round(labor_cost / num_apartments, 2) if num_apartments > 0 else 0
+    labor_cost_per_sys = round(labor_cost / total_systems, 2) if total_systems > 0 else 0
+
+    # Suggested bids (proportional split if clubhouse)
+    if has_clubhouse and clubhouse_systems > 0 and total_systems > 0:
+        apt_share = (total_systems - clubhouse_systems) / total_systems
+        suggested_apartment_bid = round(total_bid * apt_share, 2)
+        suggested_clubhouse_bid = round(total_bid * (1 - apt_share), 2)
+    else:
+        suggested_apartment_bid = total_bid
+        suggested_clubhouse_bid = 0
 
     return {
+        'total_systems': total_systems,
+        'man_hours_per_system': man_hours_per_system,
+        'total_man_hours': total_man_hours,
         'duration_days': duration_days,
+        'num_weeks': num_weeks,
         'labor_cost': labor_cost,
+        'per_diem_rate': per_diem_rate,
         'per_diem_total': per_diem_total,
+        'total_cost_to_build': total_cost_to_build,
         'subtotal': subtotal,
         'company_profit': company_profit,
         'total_bid': total_bid,
+        'net_profit': net_profit,
+        'cost_per_apartment': cost_per_apartment,
+        'cost_per_system': cost_per_system,
+        'labor_cost_per_apartment': labor_cost_per_apt,
+        'labor_cost_per_system': labor_cost_per_sys,
+        'suggested_apartment_bid': suggested_apartment_bid,
+        'suggested_clubhouse_bid': suggested_clubhouse_bid,
     }
 
 @app.route('/bids')
@@ -1728,35 +1803,64 @@ def api_bids():
     conn.close()
     return jsonify([dict(b) for b in bids])
 
+def _bid_fields(data, calcs):
+    """Extract all bid fields from request data + calculated values."""
+    f = lambda key, default=0: float(data.get(key, default) or default)
+    i = lambda key, default=0: int(data.get(key, default) or default)
+    s = lambda key, default='': data.get(key, default) or default
+    return (
+        data.get('job_id') or None, s('bid_name'), s('status', 'Draft'), s('project_type', 'Multi-Family'),
+        i('num_apartments'), i('num_non_apartment_systems'), i('num_mini_splits'),
+        i('has_clubhouse'), i('clubhouse_systems'), f('clubhouse_tons'), calcs['total_systems'],
+        f('total_tons'), f('price_per_ton'), f('material_cost'),
+        calcs['man_hours_per_system'], f('rough_in_hours', 15), f('ahu_install_hours', 1),
+        f('condenser_install_hours', 1), f('trim_out_hours', 1), f('startup_hours', 2),
+        calcs['total_man_hours'], i('crew_size', 4), f('hours_per_day', 8),
+        calcs['duration_days'], calcs['num_weeks'],
+        f('labor_rate_per_hour', 37), f('labor_cost_per_unit'), calcs['labor_cost'],
+        f('job_mileage'), calcs['per_diem_rate'], calcs['duration_days'], calcs['per_diem_total'],
+        f('insurance_cost'), f('permit_cost'), f('management_fee'), f('pay_schedule_pct', 0.33),
+        f('company_profit_pct'), calcs['company_profit'], calcs['subtotal'], calcs['total_bid'],
+        calcs['total_cost_to_build'], calcs['net_profit'],
+        calcs['cost_per_apartment'], calcs['cost_per_system'],
+        calcs['labor_cost_per_apartment'], calcs['labor_cost_per_system'],
+        calcs['suggested_apartment_bid'], calcs['suggested_clubhouse_bid'],
+        s('contracting_gc'), s('gc_attention'), s('bid_number'), s('bid_date'),
+        s('bid_workup_date'), s('bid_due_date'), s('bid_submitted_date'), s('lead_name'),
+        s('inclusions'), s('exclusions'), s('bid_description'), s('notes'),
+    )
+
+_BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
+    num_apartments, num_non_apartment_systems, num_mini_splits,
+    has_clubhouse, clubhouse_systems, clubhouse_tons, total_systems,
+    total_tons, price_per_ton, material_cost,
+    man_hours_per_system, rough_in_hours, ahu_install_hours,
+    condenser_install_hours, trim_out_hours, startup_hours,
+    total_man_hours, crew_size, hours_per_day,
+    duration_days, num_weeks,
+    labor_rate_per_hour, labor_cost_per_unit, labor_cost,
+    job_mileage, per_diem_rate, per_diem_days, per_diem_total,
+    insurance_cost, permit_cost, management_fee, pay_schedule_pct,
+    company_profit_pct, company_profit, subtotal, total_bid,
+    total_cost_to_build, net_profit,
+    cost_per_apartment, cost_per_system,
+    labor_cost_per_apartment, labor_cost_per_system,
+    suggested_apartment_bid, suggested_clubhouse_bid,
+    contracting_gc, gc_attention, bid_number, bid_date,
+    bid_workup_date, bid_due_date, bid_submitted_date, lead_name,
+    inclusions, exclusions, bid_description, notes'''
+
 @app.route('/api/bids', methods=['POST'])
 @api_role_required('owner', 'project_manager')
 def api_create_bid():
     data = request.get_json()
     calcs = calculate_bid(data)
+    fields = _bid_fields(data, calcs)
+    placeholders = ','.join(['?'] * (len(fields) + 1))  # +1 for created_by
     conn = get_db()
     cursor = conn.execute(
-        '''INSERT INTO bids (job_id, bid_name, status, project_type,
-           material_cost, total_man_hours, crew_size, hours_per_day,
-           duration_days, labor_rate_per_hour, labor_cost,
-           management_fee, per_diem_rate, per_diem_days, per_diem_total,
-           company_profit_pct, company_profit, subtotal, total_bid, notes, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-        (data.get('job_id') or None, data.get('bid_name', ''), data.get('status', 'Draft'),
-         data.get('project_type', 'Multi-Family'),
-         float(data.get('material_cost', 0) or 0),
-         float(data.get('total_man_hours', 25) or 25),
-         int(data.get('crew_size', 1) or 1),
-         float(data.get('hours_per_day', 8) or 8),
-         calcs['duration_days'],
-         float(data.get('labor_rate_per_hour', 0) or 0),
-         calcs['labor_cost'],
-         float(data.get('management_fee', 0) or 0),
-         float(data.get('per_diem_rate', 0) or 0),
-         float(data.get('per_diem_days', 0) or 0),
-         calcs['per_diem_total'],
-         float(data.get('company_profit_pct', 0) or 0),
-         calcs['company_profit'], calcs['subtotal'], calcs['total_bid'],
-         data.get('notes', ''), session.get('user_id'))
+        f'INSERT INTO bids ({_BID_INSERT_COLS}, created_by) VALUES ({placeholders})',
+        fields + (session.get('user_id'),)
     )
     bid_id = cursor.lastrowid
     conn.commit()
@@ -1790,30 +1894,12 @@ def api_bid_detail(bid_id):
 def api_update_bid(bid_id):
     data = request.get_json()
     calcs = calculate_bid(data)
+    fields = _bid_fields(data, calcs)
+    set_clause = ', '.join([f'{col.strip()}=?' for col in _BID_INSERT_COLS.split(',')])
     conn = get_db()
     conn.execute(
-        '''UPDATE bids SET job_id=?, bid_name=?, status=?, project_type=?,
-           material_cost=?, total_man_hours=?, crew_size=?, hours_per_day=?,
-           duration_days=?, labor_rate_per_hour=?, labor_cost=?,
-           management_fee=?, per_diem_rate=?, per_diem_days=?, per_diem_total=?,
-           company_profit_pct=?, company_profit=?, subtotal=?, total_bid=?,
-           notes=?, updated_at=datetime('now','localtime') WHERE id=?''',
-        (data.get('job_id') or None, data.get('bid_name', ''), data.get('status', 'Draft'),
-         data.get('project_type', 'Multi-Family'),
-         float(data.get('material_cost', 0) or 0),
-         float(data.get('total_man_hours', 25) or 25),
-         int(data.get('crew_size', 1) or 1),
-         float(data.get('hours_per_day', 8) or 8),
-         calcs['duration_days'],
-         float(data.get('labor_rate_per_hour', 0) or 0),
-         calcs['labor_cost'],
-         float(data.get('management_fee', 0) or 0),
-         float(data.get('per_diem_rate', 0) or 0),
-         float(data.get('per_diem_days', 0) or 0),
-         calcs['per_diem_total'],
-         float(data.get('company_profit_pct', 0) or 0),
-         calcs['company_profit'], calcs['subtotal'], calcs['total_bid'],
-         data.get('notes', ''), bid_id)
+        f"UPDATE bids SET {set_clause}, updated_at=datetime('now','localtime') WHERE id=?",
+        fields + (bid_id,)
     )
     conn.commit()
     conn.close()
@@ -1882,6 +1968,138 @@ def api_delete_bid_personnel(bid_id, pid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+# ─── Proposals (PDF + Email) ─────────────────────────────────
+
+@app.route('/api/bids/<int:bid_id>/generate-proposal', methods=['POST'])
+@api_role_required('owner', 'project_manager')
+def api_generate_proposal(bid_id):
+    """Generate a PDF proposal from bid data."""
+    conn = get_db()
+    bid = conn.execute(
+        'SELECT b.*, j.name as job_name FROM bids b LEFT JOIN jobs j ON b.job_id = j.id WHERE b.id = ?',
+        (bid_id,)
+    ).fetchone()
+    conn.close()
+    if not bid:
+        return jsonify({'error': 'Bid not found'}), 404
+
+    bid = dict(bid)
+    today = datetime.now().strftime('%B %d, %Y')
+    logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
+
+    html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path)
+
+    from weasyprint import HTML
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    os.makedirs(proposals_dir, exist_ok=True)
+
+    safe_name = ''.join(c if c.isalnum() or c in ' -_' else '' for c in (bid.get('bid_name') or 'proposal')).strip()
+    filename = f"Proposal_{safe_name}_{bid_id}.pdf"
+    filepath = os.path.join(proposals_dir, filename)
+
+    HTML(string=html).write_pdf(filepath)
+
+    return jsonify({'ok': True, 'filename': filename, 'path': f'/api/bids/{bid_id}/proposal/{filename}'})
+
+
+@app.route('/api/bids/<int:bid_id>/proposal/<filename>')
+@api_role_required('owner', 'project_manager')
+def api_download_proposal(bid_id, filename):
+    """Download a generated proposal PDF."""
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    filepath = os.path.join(proposals_dir, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    return send_file(filepath, as_attachment=True, download_name=filename)
+
+
+@app.route('/api/bids/<int:bid_id>/email-proposal', methods=['POST'])
+@api_role_required('owner', 'project_manager')
+def api_email_proposal(bid_id):
+    """Email a proposal PDF to specified recipients."""
+    data = request.get_json()
+    recipients = [e.strip() for e in data.get('recipients', []) if e.strip()]
+    subject = data.get('subject', 'HVAC Installation Proposal')
+    body_text = data.get('body', '')
+    smtp_host = data.get('smtp_host', '')
+    smtp_port = int(data.get('smtp_port', 587) or 587)
+    smtp_user = data.get('smtp_user', '')
+    smtp_pass = data.get('smtp_pass', '')
+    from_email = data.get('from_email', smtp_user)
+
+    if not recipients:
+        return jsonify({'error': 'No recipients specified'}), 400
+    if not smtp_host or not smtp_user:
+        return jsonify({'error': 'SMTP settings required. Configure in Settings or provide in request.'}), 400
+
+    # Find the most recent proposal PDF for this bid
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    pdf_files = [f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{bid_id}.pdf' in f]
+    if not pdf_files:
+        return jsonify({'error': 'No proposal PDF found. Generate the proposal first.'}), 404
+    pdf_path = os.path.join(proposals_dir, sorted(pdf_files)[-1])
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body_text, 'plain'))
+
+        with open(pdf_path, 'rb') as f:
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(pdf_path)}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        return jsonify({'ok': True, 'sent_to': recipients})
+
+    except Exception as e:
+        return jsonify({'error': f'Email failed: {str(e)}'}), 500
+
+
+@app.route('/api/email-settings', methods=['GET', 'POST'])
+@api_role_required('owner')
+def api_email_settings():
+    """Get or save email/SMTP settings."""
+    settings_path = os.path.join(os.path.dirname(__file__), 'data', 'email_settings.json')
+    if request.method == 'GET':
+        if os.path.exists(settings_path):
+            with open(settings_path) as f:
+                settings = json.load(f)
+            settings.pop('smtp_pass', None)  # never return password
+            return jsonify(settings)
+        return jsonify({})
+    else:
+        data = request.get_json()
+        # Load existing to preserve password if not provided
+        existing = {}
+        if os.path.exists(settings_path):
+            with open(settings_path) as f:
+                existing = json.load(f)
+        settings = {
+            'smtp_host': data.get('smtp_host', existing.get('smtp_host', '')),
+            'smtp_port': data.get('smtp_port', existing.get('smtp_port', 587)),
+            'smtp_user': data.get('smtp_user', existing.get('smtp_user', '')),
+            'from_email': data.get('from_email', existing.get('from_email', '')),
+            'team_emails': data.get('team_emails', existing.get('team_emails', '')),
+        }
+        if data.get('smtp_pass'):
+            settings['smtp_pass'] = data['smtp_pass']
+        elif existing.get('smtp_pass'):
+            settings['smtp_pass'] = existing['smtp_pass']
+        with open(settings_path, 'w') as f:
+            json.dump(settings, f)
+        return jsonify({'ok': True})
+
 
 # ─── Chatbot ────────────────────────────────────────────────
 

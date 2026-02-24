@@ -3,123 +3,187 @@
 {% block content %}
 <div class="page-header">
     <h1 id="pageTitle">{% if bid_id %}Edit Bid{% else %}New Bid{% endif %}</h1>
-    <div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="saveBid()">Save Bid</button>
+        {% if bid_id %}
+        <button class="btn btn-secondary" onclick="generateProposal()" id="btnGenerate">Generate Proposal</button>
+        <button class="btn btn-secondary" onclick="openEmailModal()" id="btnEmail" style="display:none;">Email Proposal</button>
+        <a id="btnDownload" href="#" class="btn btn-secondary" style="display:none;" download>Download PDF</a>
+        {% endif %}
         <a href="/bids" class="btn btn-secondary">Back to Bids</a>
     </div>
 </div>
 
 <div class="bid-form">
-    <!-- Project Info -->
+    <!-- Row 1: Project Info + Bid Info -->
+    <div class="bid-row-2col">
+        <div class="bid-section">
+            <h3>Project Info</h3>
+            <div class="bid-form-grid">
+                <div class="bid-field"><label class="form-label">Bid Name</label>
+                    <input type="text" id="bidName" class="form-input" placeholder="Project name"></div>
+                <div class="bid-field"><label class="form-label">Job</label>
+                    <select id="bidJob" class="form-select"><option value="">-- Select Job --</option></select></div>
+                <div class="bid-field"><label class="form-label">Type of Build</label>
+                    <select id="bidProjectType" class="form-select">
+                        <option value="Multi-Family">Multi-Family</option>
+                        <option value="Single-Family">Single-Family</option>
+                        <option value="Commercial">Commercial</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Status</label>
+                    <select id="bidStatus" class="form-select">
+                        <option value="Draft">Draft</option>
+                        <option value="Submitted">Submitted</option>
+                        <option value="Accepted">Accepted</option>
+                        <option value="Rejected">Rejected</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Lead</label>
+                    <input type="text" id="bidLead" class="form-input" placeholder="Lead name"></div>
+            </div>
+        </div>
+        <div class="bid-section">
+            <h3>Bid Details</h3>
+            <div class="bid-form-grid">
+                <div class="bid-field"><label class="form-label">Contracting GC</label>
+                    <input type="text" id="bidGC" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Attention</label>
+                    <input type="text" id="bidAttention" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Bid #</label>
+                    <input type="text" id="bidNumber" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Bid Date</label>
+                    <input type="date" id="bidDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Bid Workup Date</label>
+                    <input type="date" id="bidWorkupDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Bid Due Date</label>
+                    <input type="date" id="bidDueDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Submitted Date</label>
+                    <input type="date" id="bidSubmittedDate" class="form-input"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Counts -->
     <div class="bid-section">
-        <h3>Project Info</h3>
+        <h3>System Counts</h3>
         <div class="bid-form-grid">
-            <div class="bid-field">
-                <label class="form-label">Bid Name</label>
-                <input type="text" id="bidName" class="form-input" placeholder="Enter bid name">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Job</label>
-                <select id="bidJob" class="form-select"><option value="">-- Select Job --</option></select>
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Project Type</label>
-                <select id="bidProjectType" class="form-select">
-                    <option value="Multi-Family">Multi-Family</option>
-                    <option value="Single-Family">Single-Family</option>
-                    <option value="Commercial">Commercial</option>
-                    <option value="Industrial">Industrial</option>
-                </select>
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Status</label>
-                <select id="bidStatus" class="form-select">
-                    <option value="Draft">Draft</option>
-                    <option value="Submitted">Submitted</option>
-                    <option value="Accepted">Accepted</option>
-                    <option value="Rejected">Rejected</option>
-                </select>
-            </div>
+            <div class="bid-field"><label class="form-label"># of Apartments</label>
+                <input type="number" id="bidNumApt" class="form-input" value="0" min="0" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label"># Non-Apt Systems <small>(corridors etc.)</small></label>
+                <input type="number" id="bidNumNonApt" class="form-input" value="0" min="0" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label"># of Mini Splits</label>
+                <input type="number" id="bidNumMini" class="form-input" value="0" min="0" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Clubhouse?</label>
+                <select id="bidHasClub" class="form-select" onchange="toggleClubhouse(); recalculate()">
+                    <option value="0">No</option><option value="1">Yes</option>
+                </select></div>
+            <div class="bid-field clubhouse-field" style="display:none;"><label class="form-label"># Clubhouse Systems</label>
+                <input type="number" id="bidClubSystems" class="form-input" value="0" min="0" oninput="recalculate()"></div>
+            <div class="bid-field clubhouse-field" style="display:none;"><label class="form-label">Clubhouse Total Tons</label>
+                <input type="number" id="bidClubTons" class="form-input" value="0" min="0" step="0.5" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Total Systems</label>
+                <input type="text" id="bidTotalSystems" class="form-input calc-field" value="0" readonly></div>
+            <div class="bid-field"><label class="form-label">Total Tons (non-mini)</label>
+                <input type="number" id="bidTotalTons" class="form-input" value="0" min="0" step="0.5"></div>
+            <div class="bid-field"><label class="form-label">Price Per Ton</label>
+                <input type="number" id="bidPricePerTon" class="form-input" value="0" min="0" step="0.01"></div>
         </div>
     </div>
 
     <!-- Materials -->
     <div class="bid-section">
-        <h3>Materials</h3>
+        <h3>Equipment / Material Cost</h3>
         <div class="bid-form-grid">
-            <div class="bid-field">
-                <label class="form-label">Material Cost ($)</label>
-                <input type="number" id="bidMaterialCost" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
-            </div>
+            <div class="bid-field"><label class="form-label">Total Material Cost ($)</label>
+                <input type="number" id="bidMaterialCost" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Material Cost / System</label>
+                <input type="text" id="bidMatPerSystem" class="form-input calc-field" value="$0.00" readonly></div>
+            <div class="bid-field"><label class="form-label">Material Cost / Apartment</label>
+                <input type="text" id="bidMatPerApt" class="form-input calc-field" value="$0.00" readonly></div>
         </div>
     </div>
 
     <!-- Labor -->
     <div class="bid-section">
         <h3>Labor</h3>
-        <div class="bid-form-grid">
-            <div class="bid-field">
-                <label class="form-label">Total Man-Hours</label>
-                <input type="number" id="bidManHours" class="form-input" value="25" min="0" step="0.5" oninput="recalculate()">
+        <div class="bid-row-2col">
+            <div>
+                <h4 style="margin-bottom:8px;">Man-Hour Breakdown <small style="color:var(--gray-400);">(per system)</small></h4>
+                <div class="bid-form-grid">
+                    <div class="bid-field"><label class="form-label">Rough In</label>
+                        <input type="number" id="bidRoughIn" class="form-input" value="15" min="0" step="0.5" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">AHU Install</label>
+                        <input type="number" id="bidAHU" class="form-input" value="1" min="0" step="0.5" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">Condenser Install</label>
+                        <input type="number" id="bidCondenser" class="form-input" value="1" min="0" step="0.5" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">Trim Out</label>
+                        <input type="number" id="bidTrimOut" class="form-input" value="1" min="0" step="0.5" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">Start Up</label>
+                        <input type="number" id="bidStartup" class="form-input" value="2" min="0" step="0.5" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label" style="font-weight:700;">Man Hrs / System</label>
+                        <input type="text" id="bidMHPerSystem" class="form-input calc-field" value="20" readonly></div>
+                </div>
             </div>
-            <div class="bid-field">
-                <label class="form-label">Crew Size</label>
-                <input type="number" id="bidCrewSize" class="form-input" value="1" min="1" step="1" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Hours/Day</label>
-                <input type="number" id="bidHoursPerDay" class="form-input" value="8" min="1" step="0.5" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Duration (Days)</label>
-                <input type="text" id="bidDuration" class="form-input" value="0" readonly style="background:var(--gray-100);">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Labor Rate ($/hr)</label>
-                <input type="number" id="bidLaborRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Labor Cost</label>
-                <input type="text" id="bidLaborCost" class="form-input" value="$0.00" readonly style="background:var(--gray-100);">
-            </div>
-        </div>
-    </div>
-
-    <!-- Overhead -->
-    <div class="bid-section">
-        <h3>Overhead</h3>
-        <div class="bid-form-grid">
-            <div class="bid-field">
-                <label class="form-label">Management Fee ($)</label>
-                <input type="number" id="bidMgmtFee" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Per Diem Rate ($/day)</label>
-                <input type="number" id="bidPerDiemRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Per Diem Days</label>
-                <input type="number" id="bidPerDiemDays" class="form-input" value="0" min="0" step="0.5" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Per Diem Total</label>
-                <input type="text" id="bidPerDiemTotal" class="form-input" value="$0.00" readonly style="background:var(--gray-100);">
+            <div>
+                <h4 style="margin-bottom:8px;">Labor Calculation</h4>
+                <div class="bid-form-grid">
+                    <div class="bid-field"><label class="form-label">Total Man Hours</label>
+                        <input type="text" id="bidTotalMH" class="form-input calc-field" value="0" readonly></div>
+                    <div class="bid-field"><label class="form-label">Crew Size</label>
+                        <input type="number" id="bidCrewSize" class="form-input" value="4" min="1" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">Hours / Day</label>
+                        <input type="number" id="bidHoursPerDay" class="form-input" value="8" min="1" step="0.5" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">Duration (Days)</label>
+                        <input type="text" id="bidDuration" class="form-input calc-field" value="0" readonly></div>
+                    <div class="bid-field"><label class="form-label"># of Weeks</label>
+                        <input type="text" id="bidWeeks" class="form-input calc-field" value="0" readonly></div>
+                    <div class="bid-field"><label class="form-label">Labor Rate ($/hr)</label>
+                        <input type="number" id="bidLaborRate" class="form-input" value="37" min="0" step="0.01" oninput="recalculate()"></div>
+                    <div class="bid-field"><label class="form-label">Labor Cost / Unit ($)</label>
+                        <input type="number" id="bidLaborPerUnit" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()" placeholder="0 = use hourly rate"></div>
+                    <div class="bid-field"><label class="form-label" style="font-weight:700;">Total Labor Cost</label>
+                        <input type="text" id="bidLaborCost" class="form-input calc-field" value="$0.00" readonly></div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Profit -->
+    <!-- Per Diem + Overhead -->
+    <div class="bid-row-2col">
+        <div class="bid-section">
+            <h3>Per Diem</h3>
+            <div class="bid-form-grid">
+                <div class="bid-field"><label class="form-label">Job Mileage from Warehouse</label>
+                    <input type="number" id="bidMileage" class="form-input" value="0" min="0" oninput="autoPerDiem(); recalculate()"></div>
+                <div class="bid-field"><label class="form-label">Per Diem Rate ($/day/person)</label>
+                    <input type="number" id="bidPerDiemRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+                <div class="bid-field"><label class="form-label">Per Diem Total</label>
+                    <input type="text" id="bidPerDiemTotal" class="form-input calc-field" value="$0.00" readonly></div>
+            </div>
+            <p class="text-muted" style="font-size:12px;margin-top:6px;">Auto-rates: 0-100mi = $0, 101-249mi = $60, 250+mi = $75 (rate × days × crew)</p>
+        </div>
+        <div class="bid-section">
+            <h3>Overhead</h3>
+            <div class="bid-form-grid">
+                <div class="bid-field"><label class="form-label">Insurance ($)</label>
+                    <input type="number" id="bidInsurance" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+                <div class="bid-field"><label class="form-label">Permits ($)</label>
+                    <input type="number" id="bidPermits" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+                <div class="bid-field"><label class="form-label">Management Fee ($)</label>
+                    <input type="number" id="bidMgmtFee" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+                <div class="bid-field"><label class="form-label">Pay Schedule (%)</label>
+                    <input type="number" id="bidPaySchedule" class="form-input" value="33" min="0" max="100" step="1" oninput="recalculate()"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profit + Partners -->
     <div class="bid-section">
         <h3>Profit</h3>
-        <div class="bid-form-grid">
-            <div class="bid-field">
-                <label class="form-label">Company Profit (%)</label>
-                <input type="number" id="bidProfitPct" class="form-input" value="0" min="0" step="0.1" oninput="recalculate()">
-            </div>
-            <div class="bid-field">
-                <label class="form-label">Company Profit ($)</label>
-                <input type="text" id="bidProfitAmt" class="form-input" value="$0.00" readonly style="background:var(--gray-100);">
-            </div>
+        <div class="bid-form-grid" style="max-width:500px;">
+            <div class="bid-field"><label class="form-label">Company Profit (%)</label>
+                <input type="number" id="bidProfitPct" class="form-input" value="0" min="0" step="0.1" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Company Profit ($)</label>
+                <input type="text" id="bidProfitAmt" class="form-input calc-field" value="$0.00" readonly></div>
         </div>
         <h4 style="margin-top:16px;">Partner Profit Splits</h4>
         <table class="data-table" style="margin-top:8px;">
@@ -133,7 +197,7 @@
     <div class="bid-section">
         <h3>Personnel</h3>
         <table class="data-table">
-            <thead><tr><th>Name</th><th>Role</th><th>Hourly Rate</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Role</th><th>Hourly Rate</th><th>Total Hours</th><th></th></tr></thead>
             <tbody id="personnelBody"></tbody>
         </table>
         <div style="display:flex;gap:8px;margin-top:8px;">
@@ -145,10 +209,28 @@
         </div>
     </div>
 
+    <!-- Inclusions / Exclusions -->
+    <div class="bid-row-2col">
+        <div class="bid-section">
+            <h3>Inclusions</h3>
+            <textarea id="bidInclusions" class="form-textarea" rows="6" placeholder="1 Year parts and labor warranty&#10;Manufacturer's Warranty per submittals&#10;Insurances, licenses, and required HVAC Permits&#10;Price includes sales tax"></textarea>
+        </div>
+        <div class="bid-section">
+            <h3>Exclusions</h3>
+            <textarea id="bidExclusions" class="form-textarea" rows="6" placeholder="Cutting or coring any concrete, block, or brick&#10;Concrete work and Lifting&#10;Framed openings or structural support&#10;Condenser pads, Disconnects, and Whips&#10;Weather-tight of exterior and roof penetrations"></textarea>
+        </div>
+    </div>
+
+    <!-- Bid Description -->
+    <div class="bid-section">
+        <h3>Bid Description</h3>
+        <textarea id="bidDescription" class="form-textarea" rows="4" placeholder="Industry standard VE for..."></textarea>
+    </div>
+
     <!-- Notes -->
     <div class="bid-section">
         <h3>Notes</h3>
-        <textarea id="bidNotes" class="form-textarea" rows="4" placeholder="Additional notes..."></textarea>
+        <textarea id="bidNotes" class="form-textarea" rows="3" placeholder="Additional notes..."></textarea>
     </div>
 
     <!-- Summary -->
@@ -157,11 +239,66 @@
         <div class="cost-summary-grid">
             <div class="cost-row"><span class="cost-label">Material Cost</span><span class="cost-value" id="sumMaterial">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Labor Cost</span><span class="cost-value" id="sumLabor">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Insurance</span><span class="cost-value" id="sumInsurance">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Permits</span><span class="cost-value" id="sumPermits">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Management Fee</span><span class="cost-value" id="sumMgmt">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Per Diem</span><span class="cost-value" id="sumPerDiem">$0.00</span></div>
-            <div class="cost-row cost-row-total"><span class="cost-label">Subtotal</span><span class="cost-value" id="sumSubtotal">$0.00</span></div>
+            <div class="cost-row cost-row-total"><span class="cost-label">Total Cost to Build</span><span class="cost-value" id="sumCostToBuild">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Company Profit</span><span class="cost-value" id="sumProfit">$0.00</span></div>
-            <div class="cost-row cost-row-total"><span class="cost-label">Total Bid</span><span class="cost-value" id="sumTotal" style="color:var(--blue-primary);font-size:18px;">$0.00</span></div>
+            <div class="cost-row cost-row-total" style="font-size:18px;"><span class="cost-label">SUGGESTED BID</span><span class="cost-value" id="sumTotal" style="color:var(--blue-primary);">$0.00</span></div>
+            <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px;"></div>
+            <div class="cost-row"><span class="cost-label">Net Profit</span><span class="cost-value" id="sumNetProfit">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Suggested Apartment Bid</span><span class="cost-value" id="sumAptBid">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Suggested Clubhouse Bid</span><span class="cost-value" id="sumClubBid">$0.00</span></div>
+            <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px;"></div>
+            <div class="cost-row"><span class="cost-label">Cost / Apartment</span><span class="cost-value" id="sumCostPerApt">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Cost / System</span><span class="cost-value" id="sumCostPerSys">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Labor Cost / Apartment</span><span class="cost-value" id="sumLaborPerApt">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Labor Cost / System</span><span class="cost-value" id="sumLaborPerSys">$0.00</span></div>
+        </div>
+    </div>
+</div>
+
+<!-- Email Modal -->
+<div id="emailModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeEmailModal()">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Email Proposal</h3>
+            <button onclick="closeEmailModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="bid-field" style="margin-bottom:12px;">
+                <label class="form-label">Recipients (comma-separated emails)</label>
+                <input type="text" id="emailTo" class="form-input" placeholder="gc@example.com, team@example.com">
+            </div>
+            <div class="bid-field" style="margin-bottom:12px;">
+                <label class="form-label">Subject</label>
+                <input type="text" id="emailSubject" class="form-input" value="HVAC Installation Proposal">
+            </div>
+            <div class="bid-field" style="margin-bottom:12px;">
+                <label class="form-label">Message Body</label>
+                <textarea id="emailBody" class="form-textarea" rows="5" placeholder="Please find attached our HVAC installation proposal for your review..."></textarea>
+            </div>
+            <details style="margin-bottom:12px;">
+                <summary style="cursor:pointer;font-size:13px;color:var(--gray-500);">SMTP Settings</summary>
+                <div class="bid-form-grid" style="margin-top:8px;">
+                    <div class="bid-field"><label class="form-label">SMTP Host</label>
+                        <input type="text" id="smtpHost" class="form-input" placeholder="smtp.gmail.com"></div>
+                    <div class="bid-field"><label class="form-label">Port</label>
+                        <input type="number" id="smtpPort" class="form-input" value="587"></div>
+                    <div class="bid-field"><label class="form-label">Username</label>
+                        <input type="text" id="smtpUser" class="form-input" placeholder="your@gmail.com"></div>
+                    <div class="bid-field"><label class="form-label">Password</label>
+                        <input type="password" id="smtpPass" class="form-input" placeholder="App password"></div>
+                    <div class="bid-field"><label class="form-label">From Email</label>
+                        <input type="text" id="smtpFrom" class="form-input" placeholder="lgsqoffice@gmail.com"></div>
+                </div>
+                <button class="btn btn-secondary btn-small" style="margin-top:8px;" onclick="saveSmtpSettings()">Save SMTP Settings</button>
+            </details>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeEmailModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="sendEmail()" id="btnSendEmail">Send Email</button>
         </div>
     </div>
 </div>

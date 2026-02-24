@@ -216,6 +216,7 @@ def init_db():
             book_id INTEGER NOT NULL,
             section_number TEXT NOT NULL DEFAULT '',
             title TEXT NOT NULL DEFAULT '',
+            content TEXT DEFAULT '',
             parent_section_id INTEGER,
             depth INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 0,
@@ -256,22 +257,81 @@ def init_db():
             bid_name TEXT NOT NULL,
             status TEXT DEFAULT 'Draft',
             project_type TEXT DEFAULT 'Multi-Family',
+
+            /* System counts */
+            num_apartments INTEGER DEFAULT 0,
+            num_non_apartment_systems INTEGER DEFAULT 0,
+            num_mini_splits INTEGER DEFAULT 0,
+            has_clubhouse INTEGER DEFAULT 0,
+            clubhouse_systems INTEGER DEFAULT 0,
+            clubhouse_tons REAL DEFAULT 0,
+            total_systems INTEGER DEFAULT 0,
+            total_tons REAL DEFAULT 0,
+            price_per_ton REAL DEFAULT 0,
+
+            /* Materials */
             material_cost REAL DEFAULT 0,
-            total_man_hours REAL DEFAULT 25,
-            crew_size INTEGER DEFAULT 1,
+
+            /* Labor */
+            man_hours_per_system REAL DEFAULT 20,
+            rough_in_hours REAL DEFAULT 15,
+            ahu_install_hours REAL DEFAULT 1,
+            condenser_install_hours REAL DEFAULT 1,
+            trim_out_hours REAL DEFAULT 1,
+            startup_hours REAL DEFAULT 2,
+            total_man_hours REAL DEFAULT 0,
+            crew_size INTEGER DEFAULT 4,
             hours_per_day REAL DEFAULT 8,
             duration_days REAL DEFAULT 0,
-            labor_rate_per_hour REAL DEFAULT 0,
+            num_weeks REAL DEFAULT 0,
+            labor_rate_per_hour REAL DEFAULT 37,
+            labor_cost_per_unit REAL DEFAULT 0,
             labor_cost REAL DEFAULT 0,
-            management_fee REAL DEFAULT 0,
+
+            /* Per Diem */
+            job_mileage REAL DEFAULT 0,
             per_diem_rate REAL DEFAULT 0,
             per_diem_days REAL DEFAULT 0,
             per_diem_total REAL DEFAULT 0,
+
+            /* Overhead */
+            insurance_cost REAL DEFAULT 0,
+            permit_cost REAL DEFAULT 0,
+            management_fee REAL DEFAULT 0,
+            pay_schedule_pct REAL DEFAULT 0.33,
+
+            /* Profit */
             company_profit_pct REAL DEFAULT 0,
             company_profit REAL DEFAULT 0,
             subtotal REAL DEFAULT 0,
             total_bid REAL DEFAULT 0,
+            total_cost_to_build REAL DEFAULT 0,
+            net_profit REAL DEFAULT 0,
+
+            /* Calculated per-unit */
+            cost_per_apartment REAL DEFAULT 0,
+            cost_per_system REAL DEFAULT 0,
+            labor_cost_per_apartment REAL DEFAULT 0,
+            labor_cost_per_system REAL DEFAULT 0,
+            suggested_apartment_bid REAL DEFAULT 0,
+            suggested_clubhouse_bid REAL DEFAULT 0,
+
+            /* Bid info */
+            contracting_gc TEXT DEFAULT '',
+            gc_attention TEXT DEFAULT '',
+            bid_number TEXT DEFAULT '',
+            bid_date TEXT DEFAULT '',
+            bid_workup_date TEXT DEFAULT '',
+            bid_due_date TEXT DEFAULT '',
+            bid_submitted_date TEXT DEFAULT '',
+            lead_name TEXT DEFAULT '',
+
+            /* Content */
+            inclusions TEXT DEFAULT '',
+            exclusions TEXT DEFAULT '',
+            bid_description TEXT DEFAULT '',
             notes TEXT DEFAULT '',
+
             created_by INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -362,6 +422,11 @@ def init_db():
     ]:
         if col not in job_cols:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typedef}")
+
+    # Migration: add content column to code_sections if missing
+    code_cols = [row[1] for row in conn.execute("PRAGMA table_info(code_sections)").fetchall()]
+    if 'content' not in code_cols:
+        conn.execute("ALTER TABLE code_sections ADD COLUMN content TEXT DEFAULT ''")
 
     # Migration: convert old statuses to new pipeline stages
     conn.execute("UPDATE jobs SET status = 'Needs Bid' WHERE status = 'Active'")

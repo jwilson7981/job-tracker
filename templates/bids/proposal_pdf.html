@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter;
+    margin: 0.75in 0.85in;
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 9px;
+        color: #666;
+    }
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11px; color: #222; line-height: 1.5; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 3px solid #1a5276; padding-bottom: 16px; }
+.header-logo img { max-height: 80px; }
+.header-info { text-align: right; font-size: 10px; color: #444; }
+.header-info .company { font-size: 14px; font-weight: 700; color: #1a5276; margin-bottom: 4px; }
+h1 { font-size: 22px; color: #1a5276; text-align: center; margin: 20px 0 24px; letter-spacing: 1px; }
+h2 { font-size: 13px; color: #1a5276; border-bottom: 1.5px solid #1a5276; padding-bottom: 4px; margin: 20px 0 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+h3 { font-size: 11px; color: #333; margin: 12px 0 6px; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 16px; }
+.meta-block { padding: 8px 0; }
+.meta-block strong { display: block; font-size: 10px; color: #1a5276; text-transform: uppercase; margin-bottom: 2px; }
+.pricing-box { background: #f0f5fa; border: 1.5px solid #1a5276; border-radius: 6px; padding: 14px 18px; margin: 16px 0; }
+.pricing-box .total-line { font-size: 16px; font-weight: 700; color: #1a5276; }
+.pricing-box .detail-line { font-size: 10px; color: #555; margin-top: 4px; }
+.scope-text { margin-bottom: 12px; }
+ul { margin: 6px 0; padding-left: 20px; }
+ul li { margin-bottom: 3px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.terms-section { font-size: 9.5px; color: #444; line-height: 1.6; }
+.terms-section h2 { font-size: 12px; }
+.terms-section p { margin: 6px 0; }
+.acceptance { margin-top: 30px; padding-top: 16px; border-top: 1.5px solid #ccc; }
+.sig-row { display: flex; gap: 40px; margin-top: 8px; }
+.sig-block { flex: 1; }
+.sig-block.date { flex: 0 0 160px; }
+.sig-line { display: block; border-bottom: 1px solid #333; height: 28px; }
+.sig-label { font-size: 9px; color: #666; margin-top: 2px; }
+.footer-contact { margin-top: 24px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 8px; }
+.page-break { page-break-before: always; }
+table.summary { width: 100%; border-collapse: collapse; font-size: 10.5px; margin: 8px 0; }
+table.summary td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+table.summary td:last-child { text-align: right; font-weight: 600; }
+table.summary tr.total td { border-top: 2px solid #1a5276; font-weight: 700; font-size: 12px; color: #1a5276; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+    <div class="header-logo">
+        <img src="{{ logo_path }}" alt="LGHVAC">
+    </div>
+    <div class="header-info">
+        <div class="company">LGHVAC Mechanical, LLC</div>
+        3616 Utica Square Dr.<br>
+        Edmond, OK 73034<br>
+        Phone: 918-351-3092<br>
+        Email: lgsqoffice@gmail.com
+    </div>
+</div>
+
+<h1>HVAC INSTALLATION PROPOSAL</h1>
+
+<!-- CLIENT / PROJECT INFO -->
+<div class="meta-grid">
+    <div class="meta-block">
+        <strong>Client</strong>
+        {{ bid.contracting_gc or 'TBD' }}<br>
+        {% if bid.gc_attention %}ATTN: {{ bid.gc_attention }}{% endif %}
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>Proposal Details</strong>
+        Date: {{ bid.bid_date or today }}<br>
+        {% if bid.bid_number %}Bid #: {{ bid.bid_number }}<br>{% endif %}
+        Quote #: {{ 'LG-%04d' % bid.id }}
+    </div>
+</div>
+
+<h2>Project</h2>
+<p><strong>{{ bid.bid_name }}</strong></p>
+{% if bid.bid_description %}
+<p class="scope-text">{{ bid.bid_description }}</p>
+{% endif %}
+
+<!-- PRICING -->
+<div class="pricing-box">
+    <div class="total-line">Base Quote: ${{ '{:,.2f}'.format(bid.total_bid) }}</div>
+    <div class="detail-line">
+        {{ bid.total_systems|int if bid.total_systems == bid.total_systems|int else bid.total_systems }} systems
+        {% if bid.num_apartments %} ({{ bid.num_apartments }} apartments{% if bid.has_clubhouse %} + clubhouse{% endif %}){% endif %}
+        {% if bid.permit_cost %} — Permits included{% endif %}
+    </div>
+</div>
+
+<p style="font-size:10px;color:#666;">
+    Prices are valid for 30 days from date of proposal.<br>
+    Price excludes any insurance requirements above our current coverage and any change in bid scope due to unforeseen conditions.
+</p>
+
+<!-- SCOPE OF WORK -->
+<h2>Scope of Work</h2>
+<p>LGHVAC Mechanical, LLC is pleased to submit this bid proposal for the above-referenced project. We propose to furnish all necessary labor, materials, equipment, and supervision for the installation of the HVAC systems as shown on project plans and specifications provided at the time of bid submission.</p>
+
+{% if bid.inclusions %}
+<h2>Scope Inclusions</h2>
+<ul>
+{% for item in bid.inclusions.split('\n') %}
+{% if item.strip() %}
+    <li>{{ item.strip() }}</li>
+{% endif %}
+{% endfor %}
+</ul>
+{% endif %}
+
+<!-- COST SUMMARY TABLE -->
+<h2>Cost Summary</h2>
+<table class="summary">
+    <tr><td>Equipment / Materials</td><td>${{ '{:,.2f}'.format(bid.material_cost) }}</td></tr>
+    <tr><td>Labor ({{ bid.total_man_hours|int }} man-hours, crew of {{ bid.crew_size }})</td><td>${{ '{:,.2f}'.format(bid.labor_cost) }}</td></tr>
+    {% if bid.insurance_cost %}<tr><td>Insurance</td><td>${{ '{:,.2f}'.format(bid.insurance_cost) }}</td></tr>{% endif %}
+    {% if bid.permit_cost %}<tr><td>Permits</td><td>${{ '{:,.2f}'.format(bid.permit_cost) }}</td></tr>{% endif %}
+    {% if bid.management_fee %}<tr><td>Management</td><td>${{ '{:,.2f}'.format(bid.management_fee) }}</td></tr>{% endif %}
+    {% if bid.per_diem_total %}<tr><td>Per Diem</td><td>${{ '{:,.2f}'.format(bid.per_diem_total) }}</td></tr>{% endif %}
+    <tr class="total"><td>Total</td><td>${{ '{:,.2f}'.format(bid.total_bid) }}</td></tr>
+</table>
+
+{% if bid.has_clubhouse and bid.suggested_clubhouse_bid %}
+<p style="font-size:10px;color:#555;">
+    Suggested Apartment Portion: ${{ '{:,.2f}'.format(bid.suggested_apartment_bid) }} &nbsp;|&nbsp;
+    Suggested Clubhouse Portion: ${{ '{:,.2f}'.format(bid.suggested_clubhouse_bid) }}
+</p>
+{% endif %}
+
+<!-- TERMS SUMMARY -->
+<h2>Terms &amp; Conditions (Summary)</h2>
+<ul style="font-size:10.5px;">
+    <li><strong>Payment:</strong> Net 40 from date of pay application submission; 8% late fee after due date.</li>
+    <li><strong>Retainage:</strong> Maximum 10% on labor only; released upon Certificate of Occupancy per building.</li>
+    <li><strong>Warranty:</strong> One-year parts and labor warranty; manufacturer warranties apply per submittals. Begins at startup.</li>
+    <li><strong>Materials:</strong> Ordered upon receipt of fully executed contract and billed in full upon delivery. No retainage shall be held on materials.</li>
+    <li><strong>Back-Charges:</strong> Must be submitted in writing within 30 days of occurrence.</li>
+    <li><strong>Cancellation:</strong> Purchaser is responsible for all costs incurred if canceled after acceptance.</li>
+    <li><strong>Non-Payment:</strong> Work will be suspended if payment is not received within 60 days of billing submission.</li>
+    <li><strong>Contract Type:</strong> Pricing is based on contracts that pay subcontractor within 40 days of pay application submission.</li>
+</ul>
+
+{% if bid.exclusions %}
+<h2>Exclusions</h2>
+<ul>
+{% for item in bid.exclusions.split('\n') %}
+{% if item.strip() %}
+    <li>{{ item.strip() }}</li>
+{% endif %}
+{% endfor %}
+</ul>
+{% endif %}
+
+<!-- PAGE 2: TERMS DETAIL -->
+<div class="page-break"></div>
+
+<h2>Project Acceptance</h2>
+<p>By issuing a contract for this proposal, the Client acknowledges acceptance of all terms, pricing, and conditions stated herein. Proposal terms will commence upon receipt of fully executed contract.</p>
+
+<p>Retainage released at time of Certificate of Occupancy by building/unit.<br>
+All prices are good for 30 days from date of bid.<br>
+Payment terms are Net 40; late payments are subject to an 8% late fee.</p>
+
+<div class="acceptance">
+    <p><strong>Acceptance of Proposal</strong></p>
+    <p>The above prices, specifications and conditions are satisfactory and are hereby accepted. Signed acceptance of this proposal constitutes authorization to proceed.</p>
+    <div class="sig-row">
+        <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Customer Signature</div></div>
+        <div class="sig-block date"><div class="sig-line"></div><div class="sig-label">Date</div></div>
+    </div>
+</div>
+
+<div class="terms-section">
+<h2>Standard Terms and Conditions Detail</h2>
+
+<p><strong>MATERIALS:</strong> All materials will be ordered upon contract execution and submittal approval. Material and handling charges are billed in full upon receipt and are not subject to retainage. An 8% late fee applies to material invoices not paid within 30 days. Materials may be stored offsite by LGHVAC Mechanical, LLC with proof of insurance provided to the Purchaser, or delivered to the jobsite and stored at the Purchaser's responsibility and expense.</p>
+
+<p><strong>PAYMENT TERMS:</strong> Payment terms are Net 40 from date of pay application submission. Monthly invoices will reflect all equipment, materials, labor, supervision, and applicable overhead and profit as outlined in this proposal. A service charge of 1.5% per month will apply to balances outstanding beyond 40 days. In the event of non-payment requiring collection efforts, the Purchaser agrees to cover reasonable attorney's fees and all associated collection costs.</p>
+
+<p><strong>RETAINAGE:</strong> Retainage shall not exceed 10% and may only be withheld on the labor portion of the contract. Retainage will be released upon issuance of the Certificate of Occupancy. For multi-building projects, retainage shall be released on a per-building basis upon completion of each building, not at the conclusion of the entire project.</p>
+
+<p><strong>DAMAGES OR BACK-CHARGES:</strong> Any damages or back-charges must be communicated to LGHVAC Mechanical, LLC in writing within thirty (30) days of occurrence. Failure to provide an itemized account within this period will relieve LGHVAC Mechanical, LLC of responsibility. Back-charges resulting from scheduling delays caused by other trades or plan revisions shall not be the responsibility of LGHVAC Mechanical, LLC.</p>
+
+<p><strong>WARRANTY:</strong> All work described in this proposal is covered by a one (1) year warranty beginning on the date of equipment startup or substantial completion, whichever occurs first. This warranty does not cover damage caused by misuse, unauthorized modifications, improper maintenance, or normal wear and tear. For multi-building projects, the warranty period applies individually to each building from its date of completion.</p>
+
+<p><strong>DURATION OF PROPOSAL:</strong> This proposal is valid for thirty (30) days from the date of issue and is subject to change or withdrawal by LGHVAC Mechanical, LLC at any time prior to acceptance.</p>
+
+<p><strong>CANCELLATION:</strong> If the Purchaser cancels all or any portion of an accepted proposal without cause or without written consent from LGHVAC Mechanical, LLC, the Purchaser will be responsible for all material and equipment cancellation charges, restocking fees, and any other project-related costs incurred to date. LGHVAC Mechanical, LLC will make every reasonable effort to return or cancel previously ordered materials to minimize these charges.</p>
+
+<p><strong>CONTRACT TYPE:</strong> All pricing is based on a contract with payment due within 40 days of pay application submission. If a pay-when-paid contract is required, LGHVAC Mechanical, LLC will submit a schedule of values equivalent to 60 days of progress billing, with material costs billed as Pay Application #2. Work will commence upon receipt of this initial payment to ensure the project is not financed by LGHVAC Mechanical, LLC on behalf of the Owner and General Contractor.</p>
+</div>
+
+<div class="footer-contact">
+    James Wilson, 918-351-3092 &nbsp;|&nbsp; Dan Dirks, 405-823-6513<br>
+    jwilson7981@gmail.com &nbsp;|&nbsp; lghvac@yahoo.com
+</div>
+
+</body>
+</html>

@@ -7,14 +7,21 @@
 </div>
 <p class="text-muted" style="margin-bottom:16px;">{{ book.edition }} - {{ book.description }}</p>
 <div class="search-bar">
-    <input type="text" id="sectionSearch" class="form-input" placeholder="Search sections..." oninput="filterSections()">
+    <input type="text" id="sectionSearch" class="form-input" placeholder="Search sections by number or title..." oninput="filterSections()">
 </div>
-<div class="codebook-layout">
-    <div class="section-tree" id="sectionTree">
-        <p class="loading">Loading sections...</p>
+<div class="codebook-browse-layout">
+    <div class="codebook-nav-panel">
+        <div class="section-tree" id="sectionTree">
+            <p class="loading">Loading sections...</p>
+        </div>
+    </div>
+    <div class="codebook-content-panel" id="contentPanel">
+        <div class="content-placeholder">
+            <p>Select a section from the left to view its content.</p>
+        </div>
     </div>
     <div class="bookmark-panel">
-        <h3>Your Bookmarks</h3>
+        <h3>Bookmarks</h3>
         <div id="bookmarkList"><p class="text-muted">Loading...</p></div>
     </div>
 </div>

@@ -1,3 +1,5 @@
 flask
 openpyxl
 pdfplumber
+python-docx
+weasyprint
