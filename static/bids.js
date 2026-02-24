@@ -440,6 +440,9 @@ async function generateProposal() {
     btn.disabled = true;
     try {
         const res = await fetch(`/api/bids/${window.BID_ID}/generate-proposal`, { method: 'POST' });
+        if (!res.ok && res.headers.get('content-type')?.indexOf('json') === -1) {
+            alert('Server error generating proposal. Check the server logs.'); return;
+        }
         const result = await res.json();
         if (result.error) { alert(result.error); return; }
         // Show download + email buttons

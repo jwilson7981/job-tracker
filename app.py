@@ -1990,7 +1990,6 @@ def api_generate_proposal(bid_id):
 
     html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path)
 
-    from weasyprint import HTML
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
     os.makedirs(proposals_dir, exist_ok=True)
 
@@ -1998,7 +1997,36 @@ def api_generate_proposal(bid_id):
     filename = f"Proposal_{safe_name}_{bid_id}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    HTML(string=html).write_pdf(filepath)
+    # Write HTML to a temp file for Chrome to render
+    import subprocess, tempfile
+    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+
+    try:
+        chrome_paths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ]
+        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
+        if not chrome:
+            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
+
+        result = subprocess.run([
+            chrome,
+            '--headless',
+            '--disable-gpu',
+            '--no-sandbox',
+            '--disable-software-rasterizer',
+            f'--print-to-pdf={filepath}',
+            '--no-pdf-header-footer',
+            f'file://{tmp_path}',
+        ], capture_output=True, text=True, timeout=30)
+
+        if not os.path.exists(filepath):
+            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
+    finally:
+        os.unlink(tmp_path)
 
     return jsonify({'ok': True, 'filename': filename, 'path': f'/api/bids/{bid_id}/proposal/{filename}'})
 
