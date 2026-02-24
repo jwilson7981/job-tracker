@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ book.code }} - {{ book.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ book.code }}: {{ book.name }}</h1>
+    <a href="/codebooks" class="btn btn-secondary">Back to Code Books</a>
+</div>
+<p class="text-muted" style="margin-bottom:16px;">{{ book.edition }} - {{ book.description }}</p>
+<div class="search-bar">
+    <input type="text" id="sectionSearch" class="form-input" placeholder="Search sections..." oninput="filterSections()">
+</div>
+<div class="codebook-layout">
+    <div class="section-tree" id="sectionTree">
+        <p class="loading">Loading sections...</p>
+    </div>
+    <div class="bookmark-panel">
+        <h3>Your Bookmarks</h3>
+        <div id="bookmarkList"><p class="text-muted">Loading...</p></div>
+    </div>
+</div>
+<script>window.BOOK_ID = {{ book.id }};</script>
+<script src="/static/codebooks.js"></script>
+{% endblock %}

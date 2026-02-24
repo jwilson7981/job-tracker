@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Bids{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Bids</h1>
+    <a href="/bids/new" class="btn btn-primary">+ New Bid</a>
+</div>
+<div class="filter-bar">
+    <select id="statusFilter" onchange="filterBids()">
+        <option value="">All Statuses</option>
+        <option value="Draft">Draft</option>
+        <option value="Submitted">Submitted</option>
+        <option value="Accepted">Accepted</option>
+        <option value="Rejected">Rejected</option>
+    </select>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>Bid Name</th><th>Job</th><th>Project Type</th><th>Total Bid</th><th>Status</th><th>Updated</th>
+        </tr></thead>
+        <tbody id="bidsBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+<script>
+let allBids = [];
+
+async function loadBids() {
+    const res = await fetch('/api/bids');
+    allBids = await res.json();
+    renderBids(allBids);
+}
+
+function renderBids(bids) {
+    const tbody = document.getElementById('bidsBody');
+    if (!bids.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No bids yet. Create your first bid!</td></tr>';
+        return;
+    }
+    tbody.innerHTML = bids.map(b => {
+        const statusClass = 'status-' + (b.status || 'draft').toLowerCase().replace(/ /g, '-');
+        return `<tr>
+            <td><a href="/bids/${b.id}" class="link">${b.bid_name || 'Untitled'}</a></td>
+            <td>${b.job_name || '-'}</td>
+            <td>${b.project_type || '-'}</td>
+            <td style="text-align:right;font-weight:600;">$${(b.total_bid || 0).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
+            <td><span class="status-badge ${statusClass}">${b.status || 'Draft'}</span></td>
+            <td style="font-size:13px;color:var(--gray-500);">${b.updated_at || ''}</td>
+        </tr>`;
+    }).join('');
+}
+
+function filterBids() {
+    const status = document.getElementById('statusFilter').value;
+    const filtered = status ? allBids.filter(b => b.status === status) : allBids;
+    renderBids(filtered);
+}
+
+document.addEventListener('DOMContentLoaded', loadBids);
+</script>
+{% endblock %}

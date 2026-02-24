@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Chat Assistant{% endblock %}
+{% block content %}
+<div class="chat-container">
+    <div class="chat-sidebar" id="chatSidebar">
+        <div class="chat-sidebar-header">
+            <h3>Sessions</h3>
+            <button class="btn btn-primary btn-small" onclick="newSession()">+ New</button>
+        </div>
+        <div class="chat-session-list" id="sessionList">
+            <p class="text-muted" style="padding:12px;">Loading...</p>
+        </div>
+    </div>
+    <div class="chat-main">
+        <div class="chat-messages" id="chatMessages">
+            <div class="chat-welcome">
+                <h2>Construction Management Assistant</h2>
+                <p>I can help you look up code sections, check warranty status, find open service calls, search how-to articles, and review bid summaries.</p>
+                <p style="margin-top:8px;">Type <strong>help</strong> for a list of commands, or just ask a question!</p>
+            </div>
+        </div>
+        <div class="chat-input-bar">
+            <input type="text" id="chatInput" class="form-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMessage()">
+            <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+</div>
+<script src="/static/chatbot.js"></script>
+{% endblock %}

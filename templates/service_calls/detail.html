@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Service Call #{{ call_id }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Service Call #<span id="callId">{{ call_id }}</span></h1>
+    <a href="/service-calls" class="btn btn-secondary">Back to List</a>
+</div>
+<div id="callDetail" class="card">
+    <p class="loading">Loading...</p>
+</div>
+<script>window.CALL_ID = {{ call_id }};</script>
+<script src="/static/service_calls.js"></script>
+{% endblock %}

@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Accounting - {{ job.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ job.name }} - Accounting</h1>
+    <a href="/accounting" class="btn btn-secondary">Back to Accounting</a>
+</div>
+
+<div class="tab-bar">
+    <button class="tab active" data-tab="expenses" onclick="switchAcctTab('expenses')">Expenses</button>
+    <button class="tab" data-tab="invoices" onclick="switchAcctTab('invoices')">Invoices</button>
+    <button class="tab" data-tab="payments" onclick="switchAcctTab('payments')">Payments</button>
+</div>
+
+<div class="tab-content active" id="tab-expenses">
+    <div class="section-header">
+        <h3>Expenses</h3>
+        <button class="btn btn-primary btn-small" onclick="showAddExpense()">+ Add Expense</button>
+    </div>
+    <div class="module-table-wrapper">
+        <table class="data-table"><thead><tr>
+            <th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Amount</th><th></th>
+        </tr></thead><tbody id="expensesBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody></table>
+    </div>
+</div>
+
+<div class="tab-content" id="tab-invoices" style="display:none;">
+    <div class="section-header">
+        <h3>Client Invoices</h3>
+        <button class="btn btn-primary btn-small" onclick="showAddInvoice()">+ Add Invoice</button>
+    </div>
+    <div class="module-table-wrapper">
+        <table class="data-table"><thead><tr>
+            <th>Invoice #</th><th>Date</th><th>Due</th><th>Amount</th><th>Status</th><th></th>
+        </tr></thead><tbody id="invoicesBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody></table>
+    </div>
+</div>
+
+<div class="tab-content" id="tab-payments" style="display:none;">
+    <div class="section-header">
+        <h3>Payments Received</h3>
+        <button class="btn btn-primary btn-small" onclick="showAddPayment()">+ Add Payment</button>
+    </div>
+    <div class="module-table-wrapper">
+        <table class="data-table"><thead><tr>
+            <th>Date</th><th>Method</th><th>Reference</th><th>Description</th><th>Amount</th><th></th>
+        </tr></thead><tbody id="paymentsBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody></table>
+    </div>
+</div>
+
+<!-- Summary Card -->
+<div class="cost-summary" style="margin-top:24px;">
+    <h3>Financial Summary</h3>
+    <div class="cost-summary-grid">
+        <div class="cost-row"><span class="cost-label">Material Cost</span><span class="cost-value" id="sumMaterial">$0.00</span></div>
+        <div class="cost-row"><span class="cost-label">Other Expenses</span><span class="cost-value" id="sumExpenses">$0.00</span></div>
+        <div class="cost-row cost-row-total"><span class="cost-label">Total Cost</span><span class="cost-value" id="sumTotalCost">$0.00</span></div>
+        <div class="cost-row"><span class="cost-label">Total Invoiced</span><span class="cost-value" id="sumInvoiced">$0.00</span></div>
+        <div class="cost-row"><span class="cost-label">Payments Received</span><span class="cost-value" id="sumPayments">$0.00</span></div>
+    </div>
+</div>
+
+<!-- Add modals -->
+<div id="expenseModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <h2>Add Expense</h2>
+        <form onsubmit="saveExpense(event)">
+            <label>Category</label><input type="text" id="expCategory" placeholder="Materials, Labor, Equipment...">
+            <label>Vendor</label><input type="text" id="expVendor">
+            <label>Description</label><input type="text" id="expDescription">
+            <label>Amount</label><input type="number" id="expAmount" step="0.01" min="0" required>
+            <label>Date</label><input type="date" id="expDate">
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('expenseModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+<div id="invoiceModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <h2>Add Invoice</h2>
+        <form onsubmit="saveInvoice(event)">
+            <label>Invoice #</label><input type="text" id="invNumber">
+            <label>Amount</label><input type="number" id="invAmount" step="0.01" min="0" required>
+            <label>Description</label><input type="text" id="invDescription">
+            <label>Issue Date</label><input type="date" id="invIssueDate">
+            <label>Due Date</label><input type="date" id="invDueDate">
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('invoiceModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+<div id="paymentModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <h2>Add Payment</h2>
+        <form onsubmit="savePayment(event)">
+            <label>Amount</label><input type="number" id="payAmount" step="0.01" min="0" required>
+            <label>Method</label>
+            <select id="payMethod" style="width:100%;padding:10px;border:1px solid var(--gray-300);border-radius:6px;margin-bottom:16px;">
+                <option value="Check">Check</option><option value="ACH">ACH</option><option value="Wire">Wire</option><option value="Cash">Cash</option><option value="Credit Card">Credit Card</option><option value="Other">Other</option>
+            </select>
+            <label>Reference #</label><input type="text" id="payRef">
+            <label>Description</label><input type="text" id="payDescription">
+            <label>Date</label><input type="date" id="payDate">
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('paymentModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+window.JOB_ID = {{ job.id }};
+</script>
+<script src="/static/accounting.js"></script>
+{% endblock %}

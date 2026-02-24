@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ job.name }} - Project{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ job.name }}</h1>
+    <a href="/projects" class="btn btn-secondary">Back to Projects</a>
+</div>
+<div id="projectLoading" class="loading">Loading project details...</div>
+<div id="projectContent" style="display:none;">
+    <div class="kpi-grid" id="projectKpis"></div>
+
+    <div class="tab-bar">
+        <button class="tab active" onclick="switchProjectTab('expenses', this)">Expenses</button>
+        <button class="tab" onclick="switchProjectTab('invoices', this)">Invoices</button>
+        <button class="tab" onclick="switchProjectTab('payments', this)">Payments</button>
+        <button class="tab" onclick="switchProjectTab('service', this)">Service Calls</button>
+        <button class="tab" onclick="switchProjectTab('warranty', this)">Warranties</button>
+        <button class="tab" onclick="switchProjectTab('labor', this)">Labor</button>
+    </div>
+
+    <div class="project-tab active" id="ptab-expenses">
+        <div class="module-table-wrapper">
+            <table class="data-table"><thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Amount</th></tr></thead>
+            <tbody id="pExpenses"></tbody></table>
+        </div>
+    </div>
+    <div class="project-tab" id="ptab-invoices" style="display:none;">
+        <div class="module-table-wrapper">
+            <table class="data-table"><thead><tr><th>Invoice #</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody id="pInvoices"></tbody></table>
+        </div>
+    </div>
+    <div class="project-tab" id="ptab-payments" style="display:none;">
+        <div class="module-table-wrapper">
+            <table class="data-table"><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead>
+            <tbody id="pPayments"></tbody></table>
+        </div>
+    </div>
+    <div class="project-tab" id="ptab-service" style="display:none;">
+        <div class="module-table-wrapper">
+            <table class="data-table"><thead><tr><th>Priority</th><th>Description</th><th>Assigned To</th><th>Status</th></tr></thead>
+            <tbody id="pService"></tbody></table>
+        </div>
+    </div>
+    <div class="project-tab" id="ptab-warranty" style="display:none;">
+        <div class="module-table-wrapper">
+            <table class="data-table"><thead><tr><th>Item</th><th>Manufacturer</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
+            <tbody id="pWarranty"></tbody></table>
+        </div>
+    </div>
+    <div class="project-tab" id="ptab-labor" style="display:none;">
+        <div class="module-table-wrapper">
+            <table class="data-table"><thead><tr><th>Date</th><th>Employee</th><th>Hours</th><th>Rate</th><th>Total</th><th>Description</th></tr></thead>
+            <tbody id="pLabor"></tbody></table>
+        </div>
+    </div>
+</div>
+<script>window.JOB_ID = {{ job.id }};</script>
+<script src="/static/projects.js"></script>
+{% endblock %}

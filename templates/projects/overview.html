@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Projects - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Project Manager</h1>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>Project</th><th>Status</th><th>Location</th><th>Material Cost</th><th>Expenses</th><th>Service Calls</th><th>Warranties</th><th>Updated</th><th></th>
+        </tr></thead>
+        <tbody id="projectsBody"><tr><td colspan="9" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+<script src="/static/projects.js"></script>
+{% endblock %}

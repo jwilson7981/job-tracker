@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}{{ job.name }} - Construction Management{% endblock %}
+
+{% block header %}
+<div class="page-top-bar">
+    <div class="page-top-actions">
+        <button class="btn btn-secondary" onclick="openImportModal()">Import PDF</button>
+        <a href="/api/job/{{ job.id }}/export" class="btn btn-secondary">Download Excel</a>
+        <a href="/materials/job/{{ job.id }}/history" class="btn btn-secondary">History</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="job-page" data-job-id="{{ job.id }}">
+    <div class="job-header">
+        <div>
+            <h1 id="jobName" class="editable-title" contenteditable="false" title="Click to edit">{{ job.name }}</h1>
+            {% if job.address or job.city or job.state or job.zip_code %}
+            <div class="job-address-info">
+                {% if job.address %}{{ job.address }}, {% endif %}{{ job.city }} {{ job.state }} {{ job.zip_code }}
+            </div>
+            {% endif %}
+        </div>
+        <div class="job-header-controls">
+            <select id="jobStatus" class="status-select">
+                <option value="Needs Bid" {% if job.status == 'Needs Bid' %}selected{% endif %}>Needs Bid</option>
+                <option value="Bid Complete" {% if job.status == 'Bid Complete' %}selected{% endif %}>Bid Complete</option>
+                <option value="In Progress" {% if job.status == 'In Progress' %}selected{% endif %}>In Progress</option>
+                <option value="Complete" {% if job.status == 'Complete' %}selected{% endif %}>Complete</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="tab-bar">
+        <button class="tab active" data-tab="master">Master List</button>
+        <button class="tab" data-tab="received">Received</button>
+        <button class="tab" data-tab="shipped">Shipped to Site</button>
+        <button class="tab" data-tab="invoiced">Invoiced</button>
+    </div>
+
+    <div class="tab-content active" id="tab-master">
+        <div class="table-wrapper">
+            <table class="data-table" id="masterTable">
+                <thead>
+                    <tr>
+                        <th class="col-line">Line #</th>
+                        <th class="col-stock">Stock/NS</th>
+                        <th class="col-sku">SKU</th>
+                        <th class="col-desc">Item Description</th>
+                        <th class="col-num">Quote QTY</th>
+                        <th class="col-num">QTY Ordered</th>
+                        <th class="col-num">Price Per</th>
+                        <th class="col-computed">Total Net Price</th>
+                        <th class="col-summary">Total Received</th>
+                        <th class="col-summary">Total Shipped</th>
+                        <th class="col-summary">Total Invoiced</th>
+                        <th class="col-action"></th>
+                    </tr>
+                </thead>
+                <tbody id="masterBody"></tbody>
+            </table>
+        </div>
+        <button class="btn btn-secondary" id="addRowBtn" onclick="addMasterRow()">+ Add Line Item</button>
+
+        <div class="cost-summary" id="costSummary">
+            <h3>Cost Summary</h3>
+            <div class="cost-summary-grid">
+                <div class="cost-row">
+                    <span class="cost-label">Subtotal</span>
+                    <span class="cost-value" id="costSubtotal">$0.00</span>
+                </div>
+                <div class="cost-row">
+                    <span class="cost-label">Tax Rate</span>
+                    <span class="cost-value" id="costTaxRate">0%</span>
+                </div>
+                <div class="cost-row">
+                    <span class="cost-label">Tax Amount</span>
+                    <span class="cost-value" id="costTaxAmount">$0.00</span>
+                </div>
+                <div class="cost-row cost-row-fee" id="costFeeRow" style="display:none;">
+                    <span class="cost-label">Out-of-State Shipping</span>
+                    <span class="cost-value">$10,000.00</span>
+                </div>
+                <div class="cost-row cost-row-total">
+                    <span class="cost-label">Total</span>
+                    <span class="cost-value" id="costTotal">$0.00</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-content" id="tab-received">
+        <div class="table-wrapper">
+            <table class="data-table entry-table" id="receivedTable">
+                <thead id="receivedHead"></thead>
+                <tbody id="receivedBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="tab-content" id="tab-shipped">
+        <div class="table-wrapper">
+            <table class="data-table entry-table" id="shippedTable">
+                <thead id="shippedHead"></thead>
+                <tbody id="shippedBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="tab-content" id="tab-invoiced">
+        <div class="table-wrapper">
+            <table class="data-table entry-table" id="invoicedTable">
+                <thead id="invoicedHead"></thead>
+                <tbody id="invoicedBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="save-bar">
+        <span class="save-bar-total" id="saveBarTotal"></span>
+        <span id="saveStatus" class="save-status"></span>
+        <button class="btn btn-primary btn-large" id="saveBtn" onclick="saveCurrentTab()">Save</button>
+    </div>
+</div>
+
+<!-- Import PDF Modal -->
+<div class="modal-overlay" id="importModal" style="display:none;" onclick="if(event.target===this)closeImportModal()">
+    <div class="modal modal-wide">
+        <div class="modal-header">
+            <h2>Import PDF</h2>
+            <button class="btn btn-small btn-secondary" onclick="closeImportModal()">&times;</button>
+        </div>
+        <div id="importStep1">
+            <p style="margin-bottom:12px;color:var(--gray-500);">Upload a supplier quote PDF to extract line items.</p>
+            <input type="file" id="pdfFileInput" accept=".pdf" style="margin-bottom:16px;">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="uploadPDF()">Upload &amp; Preview</button>
+            </div>
+        </div>
+        <div id="importStep2" style="display:none;">
+            <p id="importCount" style="margin-bottom:8px;font-weight:600;"></p>
+            <div class="table-wrapper" style="max-height:50vh;overflow-y:auto;">
+                <table class="data-table">
+                    <thead><tr><th>Line #</th><th>SKU</th><th>Description</th><th>QTY</th><th>Price Per</th><th>Total Net</th></tr></thead>
+                    <tbody id="importPreviewBody"></tbody>
+                </table>
+            </div>
+            <div style="margin-top:16px;margin-bottom:12px;">
+                <label style="font-weight:600;font-size:14px;">Import mode:</label>
+                <select id="importMode" style="padding:6px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:14px;">
+                    <option value="replace">Replace existing items</option>
+                    <option value="append">Append to existing items</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="backToStep1()">Back</button>
+                <button class="btn btn-primary" onclick="confirmImport()">Confirm Import</button>
+            </div>
+        </div>
+        <div id="importLoading" style="display:none;text-align:center;padding:40px;">
+            <p>Extracting line items from PDF...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        initJobView({{ job.id }});
+    });
+</script>
+{% endblock %}

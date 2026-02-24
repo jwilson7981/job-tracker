@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+data/jobs.db
+*.xlsx
+.DS_Store

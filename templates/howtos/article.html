@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ article.title }} - How To's{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ article.title }}</h1>
+    <div>
+        {% if current_user.role in ('owner', 'project_manager') %}
+        <a href="/howtos/{{ article.id }}/edit" class="btn btn-secondary btn-small">Edit</a>
+        {% endif %}
+        <a href="/howtos" class="btn btn-secondary btn-small">Back</a>
+    </div>
+</div>
+{% if article.category %}
+<div class="article-meta">
+    <span class="badge">{{ article.category }}</span>
+    {% if article.tags %}<span class="article-tags">{{ article.tags }}</span>{% endif %}
+</div>
+{% endif %}
+<div class="article-content card" id="articleContent">{{ article.content }}</div>
+<div class="article-footer">
+    <span>Created: {{ article.created_at }}</span>
+    <span>Updated: {{ article.updated_at }}</span>
+</div>
+{% endblock %}

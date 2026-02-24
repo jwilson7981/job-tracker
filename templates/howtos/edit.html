@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{% if article %}Edit{% else %}New{% endif %} Article - How To's{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{% if article %}Edit Article{% else %}New Article{% endif %}</h1>
+    <a href="/howtos" class="btn btn-secondary">Cancel</a>
+</div>
+<div class="card" style="max-width:800px;">
+    <form onsubmit="saveArticle(event)">
+        <label class="form-label">Title</label>
+        <input type="text" id="artTitle" class="form-input" required value="{{ article.title if article else '' }}">
+        <label class="form-label">Category</label>
+        <input type="text" id="artCategory" class="form-input" placeholder="e.g. Electrical, Plumbing, Safety..." value="{{ article.category if article else '' }}">
+        <label class="form-label">Tags (comma separated)</label>
+        <input type="text" id="artTags" class="form-input" placeholder="wiring, 120v, residential" value="{{ article.tags if article else '' }}">
+        <label class="form-label">Content</label>
+        <textarea id="artContent" class="form-textarea" rows="15" placeholder="Write your how-to article here...">{{ article.content if article else '' }}</textarea>
+        <div class="modal-actions" style="margin-top:16px;">
+            <a href="/howtos" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if article %}Update{% else %}Create{% endif %} Article</button>
+        </div>
+    </form>
+</div>
+<script>
+window.ARTICLE_ID = {{ article.id if article else 'null' }};
+</script>
+<script src="/static/howtos.js"></script>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Time Entry - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Time Entry</h1>
+</div>
+<div class="card" style="max-width:600px;margin-bottom:24px;">
+    <h3 style="margin-bottom:16px;">Log Hours</h3>
+    <form onsubmit="submitTimeEntry(event)">
+        <label class="form-label">Job</label>
+        <select id="teJob" class="form-select" required>
+            <option value="">Select a job...</option>
+            {% for job in jobs %}
+            <option value="{{ job.id }}">{{ job.name }}</option>
+            {% endfor %}
+        </select>
+        <label class="form-label">Hours</label>
+        <input type="number" id="teHours" class="form-input" step="0.25" min="0.25" max="24" required placeholder="8">
+        <label class="form-label">Date</label>
+        <input type="date" id="teDate" class="form-input" required>
+        <label class="form-label">Description</label>
+        <input type="text" id="teDesc" class="form-input" placeholder="What did you work on?">
+        <button type="submit" class="btn btn-primary" style="margin-top:12px;">Submit Hours</button>
+    </form>
+</div>
+
+<h3>Recent Entries</h3>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr><th>Date</th><th>Job</th><th>Hours</th><th>Description</th><th>Status</th><th></th></tr></thead>
+        <tbody id="myEntriesBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+<script src="/static/payroll.js"></script>
+<script>
+document.getElementById('teDate').valueAsDate = new Date();
+</script>
+{% endblock %}

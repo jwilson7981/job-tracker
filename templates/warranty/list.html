@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Warranty - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Warranty Management</h1>
+</div>
+<div class="tab-bar">
+    <button class="tab active" onclick="filterWarranty('all', this)">All</button>
+    <button class="tab" onclick="filterWarranty('Active', this)">Active</button>
+    <button class="tab" onclick="filterWarranty('Expiring Soon', this)">Expiring Soon</button>
+    <button class="tab" onclick="filterWarranty('Expired', this)">Expired</button>
+    <button class="tab" onclick="filterWarranty('Claimed', this)">Claimed</button>
+</div>
+<div class="module-table-wrapper" style="margin-top:16px;">
+    <table class="data-table">
+        <thead><tr>
+            <th>Job</th><th>Item</th><th>Manufacturer</th><th>Start</th><th>End</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="warrantyBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+<script src="/static/warranty.js"></script>
+{% endblock %}

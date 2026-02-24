@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Construction Management{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="{% if current_user %}has-sidebar{% endif %}">
+    {% if current_user %}
+    {% include 'sidebar.html' %}
+    {% endif %}
+    <div class="app-main{% if not current_user %} no-sidebar{% endif %}">
+        {% block header %}{% endblock %}
+        <main class="container">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

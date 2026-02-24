@@ -1,0 +1,98 @@
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-logo">CM</div>
+        <div class="sidebar-title">Construction<br>Management</div>
+        <!-- Notification Bell -->
+        <div class="notif-bell-wrapper" onclick="toggleNotifPanel(event)">
+            <span class="notif-bell">&#128276;</span>
+            <span class="notif-badge" id="notifBadge" style="display:none;">0</span>
+        </div>
+    </div>
+
+    <!-- Notification Dropdown -->
+    <div class="notif-panel" id="notifPanel" style="display:none;">
+        <div class="notif-panel-header">
+            <strong>Notifications</strong>
+            <button class="btn btn-secondary btn-small" onclick="markAllNotifRead()">Mark all read</button>
+        </div>
+        <div class="notif-panel-list" id="notifList">
+            <p class="text-muted" style="padding:12px;text-align:center;">No notifications</p>
+        </div>
+    </div>
+
+    <nav class="sidebar-nav">
+        {% if current_user.role == 'owner' %}
+        <a href="/dashboard" class="sidebar-link {% if request.path == '/dashboard' %}active{% endif %}">
+            <span class="sidebar-icon">&#9632;</span> Dashboard
+        </a>
+        {% endif %}
+
+        {% if current_user.role in ('owner', 'project_manager') %}
+        <a href="/materials" class="sidebar-link {% if '/materials' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9634;</span> Materials
+        </a>
+        <a href="/projects" class="sidebar-link {% if '/projects' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9635;</span> Projects
+        </a>
+        <a href="/bids" class="sidebar-link {% if '/bids' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9998;</span> Bids
+        </a>
+        {% endif %}
+
+        {% if current_user.role == 'owner' %}
+        <a href="/accounting" class="sidebar-link {% if '/accounting' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">$</span> Accounting
+        </a>
+        <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/employee' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9636;</span> Payroll
+        </a>
+        {% endif %}
+
+        {% if current_user.role == 'employee' %}
+        <a href="/time-entry" class="sidebar-link {% if request.path == '/time-entry' %}active{% endif %}">
+            <span class="sidebar-icon">&#9200;</span> Time Entry
+        </a>
+        {% endif %}
+
+        {% if current_user.role in ('owner', 'project_manager') %}
+        <a href="/warranty" class="sidebar-link {% if '/warranty' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9745;</span> Warranty
+        </a>
+        {% endif %}
+
+        <div class="sidebar-divider"></div>
+
+        <a href="/service-calls" class="sidebar-link {% if '/service-calls' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9742;</span> Service Calls
+        </a>
+        <a href="/howtos" class="sidebar-link {% if '/howtos' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9997;</span> How To's
+        </a>
+        <a href="/codebooks" class="sidebar-link {% if '/codebooks' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9783;</span> Code Books
+        </a>
+
+        <div class="sidebar-divider"></div>
+
+        <a href="/chatbot" class="sidebar-link {% if '/chatbot' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128172;</span> Chat
+        </a>
+
+        {% if current_user.role == 'owner' %}
+        <div class="sidebar-divider"></div>
+        <a href="/admin/users" class="sidebar-link {% if '/admin/users' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9881;</span> User Mgmt
+        </a>
+        {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+        <div class="sidebar-user">
+            <div class="sidebar-user-name">{{ current_user.display_name or current_user.username }}</div>
+            <div class="sidebar-user-role">{{ current_user.role|replace('_', ' ')|title }}</div>
+        </div>
+        <a href="/logout" class="sidebar-link sidebar-logout">Logout</a>
+    </div>
+</aside>
+<button class="sidebar-toggle" id="sidebarToggle" onclick="document.getElementById('sidebar').classList.toggle('open');this.classList.toggle('active');">
+    <span></span><span></span><span></span>
+</button>

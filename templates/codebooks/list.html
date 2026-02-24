@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Code Books - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Code Books</h1>
+</div>
+<div class="search-bar">
+    <input type="text" id="codeSearch" class="form-input" placeholder="Search all codes by section number or title..." oninput="searchCodes()">
+</div>
+<div id="searchResults" style="display:none;margin-bottom:24px;">
+    <h3 style="margin-bottom:8px;">Search Results</h3>
+    <div id="searchResultsList"></div>
+</div>
+<div id="bookGrid" class="cards-grid">
+    <p class="loading">Loading code books...</p>
+</div>
+<script src="/static/codebooks.js"></script>
+{% endblock %}

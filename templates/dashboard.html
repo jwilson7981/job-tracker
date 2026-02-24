@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Construction Management{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+</div>
+<div id="dashboardLoading" class="loading">Loading dashboard...</div>
+<div id="dashboardContent" style="display:none;">
+    <div class="kpi-grid" id="kpiGrid"></div>
+    <div class="charts-row">
+        <div class="chart-card">
+            <h3>Jobs by Stage</h3>
+            <canvas id="stageChart"></canvas>
+        </div>
+        <div class="chart-card">
+            <h3>Financial Overview</h3>
+            <canvas id="financeChart"></canvas>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/static/dashboard.js"></script>
+{% endblock %}

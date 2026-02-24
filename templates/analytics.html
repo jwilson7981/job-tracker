@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics — Job Material Tracker{% endblock %}
+
+{% block content %}
+<div class="analytics-page">
+    <div class="home-header">
+        <h1>Analytics</h1>
+    </div>
+
+    <div id="analyticsLoading" class="loading">Loading analytics...</div>
+    <div id="analyticsContent" style="display:none;">
+
+        <!-- Stage Summary Cards -->
+        <div class="stage-cards" id="stageCards"></div>
+
+        <!-- Charts Row -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <h3>Jobs by Stage</h3>
+                <canvas id="stageChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Costs by Stage</h3>
+                <canvas id="costChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Grand Totals -->
+        <div class="grand-totals" id="grandTotals"></div>
+
+        <!-- Collapsible Stage Sections -->
+        <div id="stageSections"></div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const STAGE_COLORS = {
+    'Needs Bid':    { bg: '#DBEAFE', text: '#1E40AF', chart: '#3B82F6' },
+    'Bid Complete': { bg: '#E0E7FF', text: '#3730A3', chart: '#6366F1' },
+    'In Progress':  { bg: '#FEF3C7', text: '#92400E', chart: '#F59E0B' },
+    'Complete':     { bg: '#DCFCE7', text: '#166534', chart: '#22C55E' },
+};
+
+function fmt(n) {
+    return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function loadAnalytics() {
+    const res = await fetch('/api/analytics');
+    const data = await res.json();
+    document.getElementById('analyticsLoading').style.display = 'none';
+    document.getElementById('analyticsContent').style.display = 'block';
+
+    const stages = data.stage_order;
+    const sd = data.stages;
+
+    // Stage summary cards
+    const cardsHtml = stages.map(s => {
+        const c = STAGE_COLORS[s];
+        return `<div class="stage-card" style="background:${c.bg};border-color:${c.chart};">
+            <div class="stage-card-count" style="color:${c.text};">${sd[s].count}</div>
+            <div class="stage-card-label" style="color:${c.text};">${s}</div>
+        </div>`;
+    }).join('');
+    document.getElementById('stageCards').innerHTML = cardsHtml;
+
+    // Grand totals
+    document.getElementById('grandTotals').innerHTML = `
+        <div class="grand-totals-row">
+            <div class="grand-total-item">
+                <span class="grand-total-label">Subtotal</span>
+                <span class="grand-total-value">${fmt(data.grand_subtotal)}</span>
+            </div>
+            <div class="grand-total-item">
+                <span class="grand-total-label">Tax</span>
+                <span class="grand-total-value">${fmt(data.grand_tax)}</span>
+            </div>
+            <div class="grand-total-item">
+                <span class="grand-total-label">Shipping</span>
+                <span class="grand-total-value">${fmt(data.grand_shipping)}</span>
+            </div>
+            <div class="grand-total-item grand-total-highlight">
+                <span class="grand-total-label">Grand Total</span>
+                <span class="grand-total-value">${fmt(data.grand_total)}</span>
+            </div>
+        </div>`;
+
+    // Collapsible stage sections
+    let sectionsHtml = '';
+    stages.forEach(s => {
+        const jobs = sd[s].jobs;
+        const slugClass = s.toLowerCase().replace(/ /g, '-');
+        sectionsHtml += `
+        <div class="stage-section">
+            <button class="stage-section-header status-${slugClass}" onclick="this.parentElement.classList.toggle('open')">
+                <span>${s} (${jobs.length} job${jobs.length !== 1 ? 's' : ''}) — ${fmt(sd[s].total)}</span>
+                <span class="stage-chevron">&#9660;</span>
+            </button>
+            <div class="stage-section-body">
+                ${jobs.length === 0 ? '<p class="stage-empty">No jobs in this stage.</p>' : `
+                <table class="data-table analytics-table">
+                    <thead><tr>
+                        <th>Job Name</th><th>Location</th><th>Subtotal</th><th>Tax</th><th>Shipping</th><th>Total</th>
+                    </tr></thead>
+                    <tbody>
+                        ${jobs.map(j => `<tr>
+                            <td><a href="/job/${j.id}" class="analytics-job-link">${j.name}</a></td>
+                            <td>${j.location}</td>
+                            <td class="cell-computed">${fmt(j.subtotal)}</td>
+                            <td class="cell-computed">${fmt(j.tax)}</td>
+                            <td class="cell-computed">${fmt(j.shipping)}</td>
+                            <td class="cell-computed" style="font-weight:700;">${fmt(j.total)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>`}
+            </div>
+        </div>`;
+    });
+    document.getElementById('stageSections').innerHTML = sectionsHtml;
+
+    // Doughnut chart: jobs by stage
+    const doughnutCtx = document.getElementById('stageChart').getContext('2d');
+    new Chart(doughnutCtx, {
+        type: 'doughnut',
+        data: {
+            labels: stages,
+            datasets: [{
+                data: stages.map(s => sd[s].count),
+                backgroundColor: stages.map(s => STAGE_COLORS[s].chart),
+                borderWidth: 2,
+                borderColor: '#fff',
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'bottom' },
+            }
+        }
+    });
+
+    // Stacked bar chart: costs by stage
+    const barCtx = document.getElementById('costChart').getContext('2d');
+    new Chart(barCtx, {
+        type: 'bar',
+        data: {
+            labels: stages,
+            datasets: [
+                {
+                    label: 'Subtotal',
+                    data: stages.map(s => sd[s].subtotal),
+                    backgroundColor: '#3B82F6',
+                },
+                {
+                    label: 'Tax',
+                    data: stages.map(s => sd[s].tax),
+                    backgroundColor: '#F59E0B',
+                },
+                {
+                    label: 'Shipping',
+                    data: stages.map(s => sd[s].shipping),
+                    backgroundColor: '#EF4444',
+                },
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'bottom' },
+            },
+            scales: {
+                x: { stacked: true },
+                y: {
+                    stacked: true,
+                    ticks: {
+                        callback: function(val) { return '$' + val.toLocaleString(); }
+                    }
+                }
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', loadAnalytics);
+</script>
+{% endblock %}

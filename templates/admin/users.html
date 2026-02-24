@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}User Management - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>User Management</h1>
+    <button class="btn btn-primary" onclick="showAddUser()">+ Add User</button>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>Username</th><th>Display Name</th><th>Role</th><th>Email</th><th>Phone</th><th>Hourly Rate</th><th>Active</th><th></th>
+        </tr></thead>
+        <tbody id="usersBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<div id="userModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <h2 id="userModalTitle">Add User</h2>
+        <form onsubmit="saveUser(event)">
+            <input type="hidden" id="userId">
+            <label>Username</label><input type="text" id="userUsername" required>
+            <label>Display Name</label><input type="text" id="userDisplayName">
+            <label>Password <span id="pwdHint" style="color:var(--gray-400);font-weight:400;font-size:12px;"></span></label>
+            <input type="password" id="userPassword">
+            <label>Role</label>
+            <select id="userRole" class="form-select">
+                <option value="employee">Employee</option>
+                <option value="project_manager">Project Manager</option>
+                <option value="owner">Owner</option>
+            </select>
+            <label>Email</label><input type="text" id="userEmail">
+            <label>Phone</label><input type="text" id="userPhone">
+            <label>Hourly Rate</label><input type="number" id="userRate" step="0.01" min="0">
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('userModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script src="/static/admin.js"></script>
+{% endblock %}

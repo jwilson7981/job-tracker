@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}{% if bid_id %}Edit Bid{% else %}New Bid{% endif %}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 id="pageTitle">{% if bid_id %}Edit Bid{% else %}New Bid{% endif %}</h1>
+    <div>
+        <button class="btn btn-primary" onclick="saveBid()">Save Bid</button>
+        <a href="/bids" class="btn btn-secondary">Back to Bids</a>
+    </div>
+</div>
+
+<div class="bid-form">
+    <!-- Project Info -->
+    <div class="bid-section">
+        <h3>Project Info</h3>
+        <div class="bid-form-grid">
+            <div class="bid-field">
+                <label class="form-label">Bid Name</label>
+                <input type="text" id="bidName" class="form-input" placeholder="Enter bid name">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Job</label>
+                <select id="bidJob" class="form-select"><option value="">-- Select Job --</option></select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Project Type</label>
+                <select id="bidProjectType" class="form-select">
+                    <option value="Multi-Family">Multi-Family</option>
+                    <option value="Single-Family">Single-Family</option>
+                    <option value="Commercial">Commercial</option>
+                    <option value="Industrial">Industrial</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Status</label>
+                <select id="bidStatus" class="form-select">
+                    <option value="Draft">Draft</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Accepted">Accepted</option>
+                    <option value="Rejected">Rejected</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Materials -->
+    <div class="bid-section">
+        <h3>Materials</h3>
+        <div class="bid-form-grid">
+            <div class="bid-field">
+                <label class="form-label">Material Cost ($)</label>
+                <input type="number" id="bidMaterialCost" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
+            </div>
+        </div>
+    </div>
+
+    <!-- Labor -->
+    <div class="bid-section">
+        <h3>Labor</h3>
+        <div class="bid-form-grid">
+            <div class="bid-field">
+                <label class="form-label">Total Man-Hours</label>
+                <input type="number" id="bidManHours" class="form-input" value="25" min="0" step="0.5" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Crew Size</label>
+                <input type="number" id="bidCrewSize" class="form-input" value="1" min="1" step="1" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Hours/Day</label>
+                <input type="number" id="bidHoursPerDay" class="form-input" value="8" min="1" step="0.5" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Duration (Days)</label>
+                <input type="text" id="bidDuration" class="form-input" value="0" readonly style="background:var(--gray-100);">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Labor Rate ($/hr)</label>
+                <input type="number" id="bidLaborRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Labor Cost</label>
+                <input type="text" id="bidLaborCost" class="form-input" value="$0.00" readonly style="background:var(--gray-100);">
+            </div>
+        </div>
+    </div>
+
+    <!-- Overhead -->
+    <div class="bid-section">
+        <h3>Overhead</h3>
+        <div class="bid-form-grid">
+            <div class="bid-field">
+                <label class="form-label">Management Fee ($)</label>
+                <input type="number" id="bidMgmtFee" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Per Diem Rate ($/day)</label>
+                <input type="number" id="bidPerDiemRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Per Diem Days</label>
+                <input type="number" id="bidPerDiemDays" class="form-input" value="0" min="0" step="0.5" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Per Diem Total</label>
+                <input type="text" id="bidPerDiemTotal" class="form-input" value="$0.00" readonly style="background:var(--gray-100);">
+            </div>
+        </div>
+    </div>
+
+    <!-- Profit -->
+    <div class="bid-section">
+        <h3>Profit</h3>
+        <div class="bid-form-grid">
+            <div class="bid-field">
+                <label class="form-label">Company Profit (%)</label>
+                <input type="number" id="bidProfitPct" class="form-input" value="0" min="0" step="0.1" oninput="recalculate()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Company Profit ($)</label>
+                <input type="text" id="bidProfitAmt" class="form-input" value="$0.00" readonly style="background:var(--gray-100);">
+            </div>
+        </div>
+        <h4 style="margin-top:16px;">Partner Profit Splits</h4>
+        <table class="data-table" style="margin-top:8px;">
+            <thead><tr><th>Partner Name</th><th>Profit %</th><th>Profit Amount</th><th></th></tr></thead>
+            <tbody id="partnersBody"></tbody>
+        </table>
+        <button class="btn btn-secondary btn-small" style="margin-top:8px;" onclick="addPartnerRow()">+ Add Partner</button>
+    </div>
+
+    <!-- Personnel -->
+    <div class="bid-section">
+        <h3>Personnel</h3>
+        <table class="data-table">
+            <thead><tr><th>Name</th><th>Role</th><th>Hourly Rate</th><th></th></tr></thead>
+            <tbody id="personnelBody"></tbody>
+        </table>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+            <select id="userSelect" class="form-select" style="max-width:200px;">
+                <option value="">-- Add from users --</option>
+            </select>
+            <button class="btn btn-secondary btn-small" onclick="addPersonnelFromUser()">Add User</button>
+            <button class="btn btn-secondary btn-small" onclick="addPersonnelManual()">+ Add Manual</button>
+        </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="bid-section">
+        <h3>Notes</h3>
+        <textarea id="bidNotes" class="form-textarea" rows="4" placeholder="Additional notes..."></textarea>
+    </div>
+
+    <!-- Summary -->
+    <div class="bid-summary-card">
+        <h3>Bid Summary</h3>
+        <div class="cost-summary-grid">
+            <div class="cost-row"><span class="cost-label">Material Cost</span><span class="cost-value" id="sumMaterial">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Labor Cost</span><span class="cost-value" id="sumLabor">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Management Fee</span><span class="cost-value" id="sumMgmt">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Per Diem</span><span class="cost-value" id="sumPerDiem">$0.00</span></div>
+            <div class="cost-row cost-row-total"><span class="cost-label">Subtotal</span><span class="cost-value" id="sumSubtotal">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Company Profit</span><span class="cost-value" id="sumProfit">$0.00</span></div>
+            <div class="cost-row cost-row-total"><span class="cost-label">Total Bid</span><span class="cost-value" id="sumTotal" style="color:var(--blue-primary);font-size:18px;">$0.00</span></div>
+        </div>
+    </div>
+</div>
+
+<script>window.BID_ID = {{ bid_id }};</script>
+<script src="/static/bids.js"></script>
+{% endblock %}
