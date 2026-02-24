@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter;
+    margin: 0.75in 0.85in;
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 9px;
+        color: #666;
+    }
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11px; color: #222; line-height: 1.5; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 3px solid #1a5276; padding-bottom: 16px; }
+.header-logo img { max-height: 80px; }
+.header-info { text-align: right; font-size: 10px; color: #444; }
+.header-info .company { font-size: 14px; font-weight: 700; color: #1a5276; margin-bottom: 4px; }
+h1 { font-size: 22px; color: #1a5276; text-align: center; margin: 20px 0 24px; letter-spacing: 1px; }
+h2 { font-size: 13px; color: #1a5276; border-bottom: 1.5px solid #1a5276; padding-bottom: 4px; margin: 20px 0 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 16px; }
+.meta-block { padding: 8px 0; }
+.meta-block strong { display: block; font-size: 10px; color: #1a5276; text-transform: uppercase; margin-bottom: 2px; }
+.scope-text { margin-bottom: 12px; line-height: 1.6; }
+.pricing-box { background: #f0f5fa; border: 1.5px solid #1a5276; border-radius: 6px; padding: 14px 18px; margin: 16px 0; }
+.pricing-box .total-line { font-size: 16px; font-weight: 700; color: #1a5276; }
+.pricing-box .detail-line { font-size: 10px; color: #555; margin-top: 4px; }
+.acceptance { margin-top: 30px; padding-top: 16px; border-top: 1.5px solid #ccc; }
+.sig-row { display: flex; gap: 40px; margin-top: 20px; }
+.sig-block { flex: 1; }
+.sig-block.date { flex: 0 0 160px; }
+.sig-line { display: block; border-bottom: 1px solid #333; height: 28px; }
+.sig-label { font-size: 9px; color: #666; margin-top: 2px; }
+.footer-contact { margin-top: 24px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+    <div class="header-logo">
+        <img src="{{ logo_path }}" alt="LGHVAC">
+    </div>
+    <div class="header-info">
+        <div class="company">LGHVAC Mechanical, LLC</div>
+        3616 Utica Square Dr.<br>
+        Edmond, OK 73034<br>
+        Phone: 918-351-3092<br>
+        Email: lgsqoffice@gmail.com
+    </div>
+</div>
+
+<h1>CHANGE ORDER PROPOSAL</h1>
+
+<!-- META INFO -->
+<div class="meta-grid">
+    <div class="meta-block">
+        <strong>Change Order Number</strong>
+        CO-{{ co.job_id }}-{{ co.co_number }}
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>Date</strong>
+        {{ co.submitted_date or today }}
+    </div>
+</div>
+<div class="meta-grid">
+    <div class="meta-block">
+        <strong>Project</strong>
+        {{ co.job_name or 'TBD' }}<br>
+        {% if co.job_address %}{{ co.job_address }}{% endif %}
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>To</strong>
+        {{ co.gc_name or 'TBD' }}
+    </div>
+</div>
+
+<!-- SCOPE OF WORK -->
+<h2>Scope of Work</h2>
+<p class="scope-text">{{ co.scope_description or 'No scope description provided.' }}</p>
+
+<!-- REASON FOR CHANGE -->
+<h2>Reason for Change</h2>
+<p class="scope-text">{{ co.reason or 'No reason provided.' }}</p>
+
+<!-- PRICING -->
+<div class="pricing-box">
+    <div class="total-line">Change Order Amount: ${{ '{:,.2f}'.format(co.amount) }}</div>
+</div>
+
+<!-- ACCEPTANCE / SIGNATURE -->
+<div class="acceptance">
+    <p><strong>Acceptance of Change Order</strong></p>
+    <p style="font-size:10px;color:#444;">The above change order scope, pricing, and conditions are satisfactory and are hereby accepted. Signed acceptance constitutes authorization to proceed with the described work.</p>
+
+    <p style="font-size:10px;font-weight:600;margin-top:20px;">Contractor:</p>
+    <div class="sig-row">
+        <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Signature</div></div>
+        <div class="sig-block date"><div class="sig-line"></div><div class="sig-label">Date</div></div>
+    </div>
+
+    <p style="font-size:10px;font-weight:600;margin-top:20px;">Owner / General Contractor:</p>
+    <div class="sig-row">
+        <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Signature</div></div>
+        <div class="sig-block date"><div class="sig-line"></div><div class="sig-label">Date</div></div>
+    </div>
+</div>
+
+<div class="footer-contact">
+    James Wilson, 918-351-3092 &nbsp;|&nbsp; Dan Dirks, 405-823-6513
+</div>
+
+</body>
+</html>

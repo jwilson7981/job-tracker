@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Equipment Manuals - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Equipment Manuals</h1>
+    {% if current_user.role in ('owner', 'project_manager') %}
+    <button class="btn btn-primary" onclick="showAddManual()">+ Add Manual</button>
+    {% endif %}
+</div>
+
+<div class="manual-search-bar">
+    <input type="text" id="manualSearch" class="form-input" placeholder="Search by model number, title, or keyword..." oninput="loadManuals()">
+    <select id="manualMfg" class="form-select" onchange="loadManuals()">
+        <option value="">All Manufacturers</option>
+        <option value="Lennox">Lennox</option>
+        <option value="Allied">Allied</option>
+        <option value="ADP">ADP</option>
+    </select>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Manufacturer</th>
+                <th>Model #</th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="manualsBody">
+            <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add Manual Modal -->
+<div class="modal-overlay" id="manualModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Add Manual</h2>
+            <button class="modal-close" onclick="document.getElementById('manualModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveManual(event)">
+            <div class="form-group">
+                <label class="form-label">Manufacturer</label>
+                <select id="mmMfg" class="form-select" required>
+                    <option value="Lennox">Lennox</option>
+                    <option value="Allied">Allied</option>
+                    <option value="ADP">ADP</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Model Number</label>
+                <input type="text" id="mmModel" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input type="text" id="mmTitle" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Type</label>
+                <select id="mmType" class="form-select">
+                    <option value="Installation">Installation</option>
+                    <option value="Service">Service</option>
+                    <option value="Parts">Parts</option>
+                    <option value="Wiring">Wiring</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Source</label>
+                <div style="display:flex;gap:16px;margin-bottom:8px;">
+                    <label><input type="radio" name="mmSource" value="file" checked onchange="toggleManualSource()"> Upload PDF</label>
+                    <label><input type="radio" name="mmSource" value="url" onchange="toggleManualSource()"> External URL</label>
+                </div>
+                <div id="mmFileWrap">
+                    <input type="file" id="mmFile" class="form-input" accept=".pdf">
+                </div>
+                <div id="mmUrlWrap" style="display:none;">
+                    <input type="url" id="mmUrl" class="form-input" placeholder="https://...">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('manualModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Manual</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script src="/static/manuals.js"></script>
+{% endblock %}

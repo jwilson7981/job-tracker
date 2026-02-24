@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Change Orders{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Change Orders</h1>
+    <button class="btn btn-primary" onclick="showAddCO()">+ New Change Order</button>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="coSummary">
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total COs</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #9CA3AF;">
+        <div class="kpi-value" id="sumDraft">0</div>
+        <div class="kpi-label">Draft</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #3B82F6;">
+        <div class="kpi-value" id="sumSubmitted">0</div>
+        <div class="kpi-label">Submitted</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="sumApproved">$0.00</div>
+        <div class="kpi-label">Approved</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #EF4444;">
+        <div class="kpi-value" id="sumRejected">0</div>
+        <div class="kpi-label">Rejected</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="loadChangeOrders()" style="max-width:240px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="loadChangeOrders()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Draft">Draft</option>
+        <option value="Submitted">Submitted</option>
+        <option value="Approved">Approved</option>
+        <option value="Rejected">Rejected</option>
+        <option value="Void">Void</option>
+    </select>
+    <span id="coCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Table -->
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>CO #</th>
+                <th>Job</th>
+                <th>Title</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Submitted</th>
+                <th>Approved</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="coBody">
+            <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- New Change Order Modal -->
+<div class="modal-overlay" id="coModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="coModalTitle">New Change Order</h2>
+            <button class="modal-close" onclick="document.getElementById('coModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveChangeOrder(event)">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="coJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input type="text" id="coTitle" class="form-input" required placeholder="Change order title">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Scope Description</label>
+                <textarea id="coScope" class="form-input" rows="4" placeholder="Describe the scope of work for this change order..." style="resize:vertical;min-height:80px;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Reason for Change</label>
+                <input type="text" id="coReason" class="form-input" placeholder="e.g. Owner request, unforeseen condition, design change">
+            </div>
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Amount ($)</label>
+                    <input type="number" id="coAmount" class="form-input" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">GC Name</label>
+                    <input type="text" id="coGcName" class="form-input" placeholder="General Contractor name">
+                </div>
+            </div>
+            <div class="form-group" id="coStatusGroup" style="display:none;">
+                <label class="form-label">Status</label>
+                <select id="coStatus" class="form-select">
+                    <option value="Draft">Draft</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Rejected">Rejected</option>
+                    <option value="Void">Void</option>
+                </select>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('coModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Change Order</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/change_orders.js"></script>
+{% endblock %}

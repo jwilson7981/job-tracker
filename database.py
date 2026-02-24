@@ -84,7 +84,7 @@ def init_db():
             username TEXT NOT NULL UNIQUE,
             display_name TEXT NOT NULL DEFAULT '',
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'employee' CHECK(role IN ('owner','project_manager','employee')),
+            role TEXT NOT NULL DEFAULT 'employee' CHECK(role IN ('owner','admin','project_manager','warehouse','employee')),
             email TEXT DEFAULT '',
             phone TEXT DEFAULT '',
             hourly_rate REAL DEFAULT 0,
@@ -378,6 +378,276 @@ def init_db():
             FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
         );
 
+        /* ─── Pay Applications (AIA G702/G703) ─── */
+
+        CREATE TABLE IF NOT EXISTS pay_app_contracts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            gc_name TEXT DEFAULT '',
+            gc_address TEXT DEFAULT '',
+            project_name TEXT DEFAULT '',
+            project_address TEXT DEFAULT '',
+            project_no TEXT DEFAULT '',
+            contract_for TEXT DEFAULT '',
+            contract_date TEXT DEFAULT '',
+            original_contract_sum REAL DEFAULT 0,
+            retainage_work_pct REAL DEFAULT 10,
+            retainage_stored_pct REAL DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pay_app_sov_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_id INTEGER NOT NULL,
+            item_number INTEGER NOT NULL DEFAULT 0,
+            description TEXT NOT NULL DEFAULT '',
+            scheduled_value REAL DEFAULT 0,
+            is_header INTEGER NOT NULL DEFAULT 0,
+            retainage_exempt INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (contract_id) REFERENCES pay_app_contracts(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS pay_applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_id INTEGER NOT NULL,
+            application_number INTEGER NOT NULL DEFAULT 1,
+            period_to TEXT DEFAULT '',
+            application_date TEXT DEFAULT '',
+            co_additions REAL DEFAULT 0,
+            co_deductions REAL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Draft'
+                CHECK(status IN ('Draft','Submitted','Approved','Paid')),
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (contract_id) REFERENCES pay_app_contracts(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pay_app_line_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pay_app_id INTEGER NOT NULL,
+            sov_item_id INTEGER NOT NULL,
+            work_this_period REAL DEFAULT 0,
+            materials_stored REAL DEFAULT 0,
+            FOREIGN KEY (pay_app_id) REFERENCES pay_applications(id) ON DELETE CASCADE,
+            FOREIGN KEY (sov_item_id) REFERENCES pay_app_sov_items(id) ON DELETE CASCADE,
+            UNIQUE(pay_app_id, sov_item_id)
+        );
+
+        /* ─── Equipment Manuals ─── */
+
+        CREATE TABLE IF NOT EXISTS equipment_manuals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            manufacturer TEXT NOT NULL DEFAULT '',
+            model_number TEXT NOT NULL DEFAULT '',
+            manual_type TEXT DEFAULT 'Installation',
+            title TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            external_url TEXT DEFAULT '',
+            uploaded_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (uploaded_by) REFERENCES users(id)
+        );
+
+        /* ─── Job Schedule Events ─── */
+
+        CREATE TABLE IF NOT EXISTS job_schedule_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            phase_name TEXT NOT NULL DEFAULT '',
+            description TEXT DEFAULT '',
+            start_date TEXT DEFAULT '',
+            end_date TEXT DEFAULT '',
+            assigned_to INTEGER,
+            status TEXT NOT NULL DEFAULT 'Pending'
+                CHECK(status IN ('Pending','In Progress','Complete','Cancelled')),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (assigned_to) REFERENCES users(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── Recurring Expenses ─── */
+
+        CREATE TABLE IF NOT EXISTS recurring_expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL DEFAULT '',
+            vendor TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            amount REAL DEFAULT 0,
+            frequency TEXT NOT NULL DEFAULT 'Monthly'
+                CHECK(frequency IN ('Weekly','Bi-Weekly','Monthly','Quarterly','Annual')),
+            due_day INTEGER DEFAULT 1,
+            start_date TEXT DEFAULT '',
+            end_date TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 1,
+            last_paid_date TEXT DEFAULT '',
+            next_due_date TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS recurring_expense_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recurring_expense_id INTEGER NOT NULL,
+            amount_paid REAL DEFAULT 0,
+            payment_date TEXT DEFAULT (date('now','localtime')),
+            payment_method TEXT DEFAULT '',
+            reference_number TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            FOREIGN KEY (recurring_expense_id) REFERENCES recurring_expenses(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── Licenses ─── */
+
+        CREATE TABLE IF NOT EXISTS licenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            license_type TEXT NOT NULL DEFAULT '',
+            license_name TEXT NOT NULL DEFAULT '',
+            license_number TEXT DEFAULT '',
+            issuing_body TEXT DEFAULT '',
+            holder_name TEXT DEFAULT '',
+            issue_date TEXT DEFAULT '',
+            expiration_date TEXT DEFAULT '',
+            renewal_cost REAL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Active'
+                CHECK(status IN ('Active','Expiring Soon','Expired','Pending Renewal')),
+            notes TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── RFIs ─── */
+
+        CREATE TABLE IF NOT EXISTS rfis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            rfi_number INTEGER NOT NULL DEFAULT 1,
+            subject TEXT NOT NULL DEFAULT '',
+            question TEXT DEFAULT '',
+            answer TEXT DEFAULT '',
+            requested_by TEXT DEFAULT '',
+            assigned_to INTEGER,
+            status TEXT NOT NULL DEFAULT 'Open'
+                CHECK(status IN ('Open','Answered','Closed')),
+            date_submitted TEXT DEFAULT (date('now','localtime')),
+            date_required TEXT DEFAULT '',
+            date_answered TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (assigned_to) REFERENCES users(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── Change Orders ─── */
+
+        CREATE TABLE IF NOT EXISTS change_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            co_number INTEGER NOT NULL DEFAULT 1,
+            title TEXT NOT NULL DEFAULT '',
+            scope_description TEXT DEFAULT '',
+            reason TEXT DEFAULT '',
+            amount REAL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Draft'
+                CHECK(status IN ('Draft','Submitted','Approved','Rejected','Void')),
+            submitted_date TEXT DEFAULT '',
+            approved_date TEXT DEFAULT '',
+            approved_by TEXT DEFAULT '',
+            gc_name TEXT DEFAULT '',
+            pay_app_contract_id INTEGER,
+            sov_item_id INTEGER,
+            proposal_file TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (pay_app_contract_id) REFERENCES pay_app_contracts(id),
+            FOREIGN KEY (sov_item_id) REFERENCES pay_app_sov_items(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── Submittals ─── */
+
+        CREATE TABLE IF NOT EXISTS submittals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            submittal_number INTEGER NOT NULL DEFAULT 1,
+            spec_section TEXT DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            vendor TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Pending'
+                CHECK(status IN ('Pending','Submitted','Approved','Approved as Noted','Rejected','Resubmit')),
+            revision_number INTEGER DEFAULT 0,
+            date_submitted TEXT DEFAULT '',
+            date_required TEXT DEFAULT '',
+            date_returned TEXT DEFAULT '',
+            reviewer TEXT DEFAULT '',
+            reviewer_comments TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── Documents (Closeout) ─── */
+
+        CREATE TABLE IF NOT EXISTS closeout_checklists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            item_name TEXT NOT NULL DEFAULT '',
+            item_type TEXT DEFAULT 'Other'
+                CHECK(item_type IN ('O&M Manual','Warranty Letter','As-Built','Test Report',
+                      'Lien Waiver','Certificate of Completion','Start-Up Report',
+                      'Balancing Report','Permit','Other')),
+            status TEXT NOT NULL DEFAULT 'Not Started'
+                CHECK(status IN ('Not Started','In Progress','Complete','N/A')),
+            file_path TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS transmittals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            transmittal_number INTEGER NOT NULL DEFAULT 1,
+            to_company TEXT DEFAULT '',
+            to_attention TEXT DEFAULT '',
+            subject TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            sent_date TEXT DEFAULT '',
+            sent_via TEXT DEFAULT 'Email'
+                CHECK(sent_via IN ('Email','Hand Delivered','Mail','FedEx','Other')),
+            proposal_file TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
         /* ─── Indexes ─── */
         CREATE INDEX IF NOT EXISTS idx_line_items_job ON line_items(job_id);
         CREATE INDEX IF NOT EXISTS idx_received_line ON received_entries(line_item_id);
@@ -404,6 +674,23 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_bid_personnel_bid ON bid_personnel(bid_id);
         CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+        CREATE INDEX IF NOT EXISTS idx_pay_app_contracts_job ON pay_app_contracts(job_id);
+        CREATE INDEX IF NOT EXISTS idx_pay_app_sov_contract ON pay_app_sov_items(contract_id);
+        CREATE INDEX IF NOT EXISTS idx_pay_applications_contract ON pay_applications(contract_id);
+        CREATE INDEX IF NOT EXISTS idx_pay_app_entries_app ON pay_app_line_entries(pay_app_id);
+        CREATE INDEX IF NOT EXISTS idx_pay_app_entries_sov ON pay_app_line_entries(sov_item_id);
+        CREATE INDEX IF NOT EXISTS idx_equipment_manuals_manufacturer ON equipment_manuals(manufacturer);
+        CREATE INDEX IF NOT EXISTS idx_equipment_manuals_model ON equipment_manuals(model_number);
+        CREATE INDEX IF NOT EXISTS idx_schedule_events_job ON job_schedule_events(job_id);
+        CREATE INDEX IF NOT EXISTS idx_schedule_events_assigned ON job_schedule_events(assigned_to);
+        CREATE INDEX IF NOT EXISTS idx_recurring_expenses_active ON recurring_expenses(is_active);
+        CREATE INDEX IF NOT EXISTS idx_recurring_expense_payments_expense ON recurring_expense_payments(recurring_expense_id);
+        CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status);
+        CREATE INDEX IF NOT EXISTS idx_rfis_job ON rfis(job_id);
+        CREATE INDEX IF NOT EXISTS idx_change_orders_job ON change_orders(job_id);
+        CREATE INDEX IF NOT EXISTS idx_submittals_job ON submittals(job_id);
+        CREATE INDEX IF NOT EXISTS idx_closeout_checklists_job ON closeout_checklists(job_id);
+        CREATE INDEX IF NOT EXISTS idx_transmittals_job ON transmittals(job_id);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -419,6 +706,7 @@ def init_db():
         ('state', "TEXT DEFAULT ''"),
         ('zip_code', "TEXT DEFAULT ''"),
         ('tax_rate', "REAL DEFAULT 0"),
+        ('supplier_account', "TEXT DEFAULT ''"),
     ]:
         if col not in job_cols:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typedef}")

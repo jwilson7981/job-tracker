@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Documents - Job - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/documents" class="link" style="font-size:14px;">&larr; Back to Documents</a>
+        <h1 id="docJobName">Documents</h1>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="tab-bar">
+    <button class="tab active" onclick="switchDocTab('checklist', this)">Checklist</button>
+    <button class="tab" onclick="switchDocTab('transmittals', this)">Transmittals</button>
+</div>
+
+<!-- ─── Checklist Tab ─── -->
+<div class="tab-content active" id="tabChecklist">
+    <!-- Progress Bar -->
+    <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span id="checklistProgressLabel" style="font-size:14px;font-weight:600;color:var(--gray-700);">0 of 0 items complete</span>
+            <span id="checklistProgressPct" style="font-size:14px;font-weight:600;color:var(--blue-primary);">0%</span>
+        </div>
+        <div class="schedule-progress-bar" style="height:8px;">
+            <div class="schedule-progress-fill" id="checklistProgressFill" style="width:0%"></div>
+        </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button class="btn btn-secondary" onclick="addDefaultItems()">Add Default Items</button>
+        <button class="btn btn-primary" onclick="showAddChecklistItem()">+ Add Item</button>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Item Name</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>File</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="checklistBody">
+                <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── Transmittals Tab ─── -->
+<div class="tab-content" id="tabTransmittals">
+    <div style="margin-bottom:16px;">
+        <button class="btn btn-primary" onclick="showNewTransmittal()">+ New Transmittal</button>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Transmittal #</th>
+                    <th>To</th>
+                    <th>Subject</th>
+                    <th>Date</th>
+                    <th>Sent Via</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="transmittalsBody">
+                <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── Add/Edit Checklist Item Modal ─── -->
+<div class="modal-overlay" id="checklistModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="checklistModalTitle">Add Checklist Item</h2>
+            <button class="modal-close" onclick="document.getElementById('checklistModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveChecklistItem(event)">
+            <input type="hidden" id="ciId" value="">
+            <div class="form-group">
+                <label class="form-label">Item Name</label>
+                <input type="text" id="ciName" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Type</label>
+                <select id="ciType" class="form-select">
+                    <option value="Document">Document</option>
+                    <option value="Certificate">Certificate</option>
+                    <option value="Warranty">Warranty</option>
+                    <option value="Manual">Manual</option>
+                    <option value="Test Report">Test Report</option>
+                    <option value="Inspection">Inspection</option>
+                    <option value="As-Built">As-Built</option>
+                    <option value="Submittal">Submittal</option>
+                    <option value="Photo">Photo</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="ciStatus" class="form-select">
+                    <option value="Not Started">Not Started</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Complete">Complete</option>
+                    <option value="N/A">N/A</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="ciNotes" class="form-input" rows="3" style="resize:vertical;font-family:inherit;"></textarea>
+            </div>
+            <div class="form-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('checklistModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ─── File Upload Modal ─── -->
+<div class="modal-overlay" id="fileUploadModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Upload File</h2>
+            <button class="modal-close" onclick="document.getElementById('fileUploadModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="submitFileUpload(event)">
+            <input type="hidden" id="fuItemId" value="">
+            <div class="form-group">
+                <label class="form-label">Select File</label>
+                <input type="file" id="fuFile" class="form-input" required>
+            </div>
+            <div class="form-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('fileUploadModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ─── New Transmittal Modal ─── -->
+<div class="modal-overlay" id="transmittalModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>New Transmittal</h2>
+            <button class="modal-close" onclick="document.getElementById('transmittalModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveTransmittal(event)">
+            <div class="form-group">
+                <label class="form-label">To Company</label>
+                <input type="text" id="txToCompany" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">To Attention</label>
+                <input type="text" id="txToAttention" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="txSubject" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="txNotes" class="form-input" rows="3" style="resize:vertical;font-family:inherit;"></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Sent Via</label>
+                    <select id="txSentVia" class="form-select">
+                        <option value="Email">Email</option>
+                        <option value="Hand Delivered">Hand Delivered</option>
+                        <option value="Mail">Mail</option>
+                        <option value="FedEx">FedEx</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Sent Date</label>
+                    <input type="date" id="txSentDate" class="form-input">
+                </div>
+            </div>
+            <div class="form-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('transmittalModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Transmittal</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>window.DOC_PAGE = 'job'; window.DOC_JOB_ID = {{ job.id }};</script>
+<script src="/static/documents.js"></script>
+{% endblock %}

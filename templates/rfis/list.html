@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}RFIs - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>RFIs</h1>
+    <button class="btn btn-primary" onclick="showAddRFI()">+ New RFI</button>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="rfiSummary">
+    <div class="kpi-card" style="border-left:4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total RFIs</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #3B82F6;" id="sumOpenCard">
+        <div class="kpi-value" id="sumOpen">0</div>
+        <div class="kpi-label">Open</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #F59E0B;">
+        <div class="kpi-value" id="sumAnswered">0</div>
+        <div class="kpi-label">Answered</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #22C55E;">
+        <div class="kpi-value" id="sumClosed">0</div>
+        <div class="kpi-label">Closed</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="loadRFIs()" style="max-width:220px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="loadRFIs()" style="max-width:160px;">
+        <option value="">All Statuses</option>
+        <option value="Open">Open</option>
+        <option value="Answered">Answered</option>
+        <option value="Closed">Closed</option>
+    </select>
+</div>
+
+<!-- RFI Table -->
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>RFI #</th>
+                <th>Job</th>
+                <th>Subject</th>
+                <th>Requested By</th>
+                <th>Date Submitted</th>
+                <th>Date Required</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="rfisBody">
+            <tr><td colspan="8" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add RFI Modal -->
+<div class="modal-overlay" id="rfiAddModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>New RFI</h2>
+            <button class="modal-close" onclick="document.getElementById('rfiAddModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveRFI(event)">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="rfiJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="rfiSubject" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Question</label>
+                <textarea id="rfiQuestion" class="form-input" required style="min-height:100px;resize:vertical;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Requested By</label>
+                <input type="text" id="rfiRequestedBy" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Assigned To</label>
+                <select id="rfiAssignedTo" class="form-select">
+                    <option value="">Unassigned</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Date Required</label>
+                <input type="date" id="rfiDateRequired" class="form-input">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('rfiAddModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create RFI</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit RFI Modal -->
+<div class="modal-overlay" id="rfiEditModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Edit RFI</h2>
+            <button class="modal-close" onclick="document.getElementById('rfiEditModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveRFI(event)">
+            <input type="hidden" id="editRFIId">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="editRfiJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="editRfiSubject" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Question</label>
+                <textarea id="editRfiQuestion" class="form-input" required style="min-height:100px;resize:vertical;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Requested By</label>
+                <input type="text" id="editRfiRequestedBy" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Assigned To</label>
+                <select id="editRfiAssignedTo" class="form-select">
+                    <option value="">Unassigned</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Date Required</label>
+                <input type="date" id="editRfiDateRequired" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Answer</label>
+                <textarea id="editRfiAnswer" class="form-input" style="min-height:100px;resize:vertical;"></textarea>
+            </div>
+            <div class="form-row" style="display:flex;gap:12px;">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Status</label>
+                    <select id="editRfiStatus" class="form-select">
+                        <option value="Open">Open</option>
+                        <option value="Answered">Answered</option>
+                        <option value="Closed">Closed</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Date Answered</label>
+                    <input type="date" id="editRfiDateAnswered" class="form-input">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('rfiEditModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/rfis.js"></script>
+{% endblock %}

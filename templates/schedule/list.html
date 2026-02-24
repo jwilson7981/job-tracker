@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Schedule Overview - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Job Schedule</h1>
+</div>
+
+<div class="manual-search-bar">
+    <select id="schedJobFilter" class="form-select" onchange="onJobFilterChange()">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="schedStatusFilter" class="form-select" onchange="renderScheduleOverview()">
+        <option value="">All Statuses</option>
+        <option value="Pending">Pending</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Complete">Complete</option>
+        <option value="Cancelled">Cancelled</option>
+    </select>
+    <a id="goToJobBtn" href="#" class="btn btn-primary" style="display:none;">Manage Schedule</a>
+</div>
+
+<!-- Job cards grid (shown when "All Jobs" selected) -->
+<div id="jobCardsSection">
+    <div class="schedule-job-grid" id="jobCardsGrid">
+        <p class="empty-state">Loading jobs...</p>
+    </div>
+</div>
+
+<!-- Events table (shown when a specific job is filtered or events exist) -->
+<div id="eventsSection" style="display:none;">
+    <div class="table-wrapper">
+        <table class="data-table schedule-timeline">
+            <thead>
+                <tr>
+                    <th>Job</th>
+                    <th>Phase</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Assigned To</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="schedBody">
+                <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+<script>window.SCHEDULE_PAGE = 'overview';</script>
+<script src="/static/schedule.js"></script>
+{% endblock %}

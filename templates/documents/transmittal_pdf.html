@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter;
+    margin: 0.75in 0.85in;
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 9px;
+        color: #666;
+    }
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11px; color: #222; line-height: 1.5; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 3px solid #1a5276; padding-bottom: 16px; }
+.header-logo img { max-height: 80px; }
+.header-info { text-align: right; font-size: 10px; color: #444; }
+.header-info .company { font-size: 14px; font-weight: 700; color: #1a5276; margin-bottom: 4px; }
+h1 { font-size: 22px; color: #1a5276; text-align: center; margin: 20px 0 24px; letter-spacing: 1px; }
+h2 { font-size: 13px; color: #1a5276; border-bottom: 1.5px solid #1a5276; padding-bottom: 4px; margin: 20px 0 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 16px; }
+.meta-block { padding: 8px 0; }
+.meta-block strong { display: block; font-size: 10px; color: #1a5276; text-transform: uppercase; margin-bottom: 2px; }
+table.doc-table { width: 100%; border-collapse: collapse; font-size: 10.5px; margin: 12px 0; }
+table.doc-table th { background: #1a5276; color: #fff; padding: 6px 10px; text-align: left; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; }
+table.doc-table td { padding: 5px 10px; border-bottom: 1px solid #ddd; }
+table.doc-table tr:nth-child(even) td { background: #f8fafc; }
+.notes-section { margin: 16px 0; font-size: 10.5px; line-height: 1.6; }
+.notes-section p { margin: 6px 0; }
+.footer-contact { margin-top: 24px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+    <div class="header-logo">
+        <img src="{{ logo_path }}" alt="LGHVAC">
+    </div>
+    <div class="header-info">
+        <div class="company">LGHVAC Mechanical, LLC</div>
+        3616 Utica Square Dr.<br>
+        Edmond, OK 73034<br>
+        Phone: 918-351-3092<br>
+        Email: lgsqoffice@gmail.com
+    </div>
+</div>
+
+<h1>TRANSMITTAL</h1>
+
+<!-- TRANSMITTAL INFO -->
+<div class="meta-grid">
+    <div class="meta-block">
+        <strong>To</strong>
+        {{ transmittal.to_company }}<br>
+        {% if transmittal.to_attention %}ATTN: {{ transmittal.to_attention }}{% endif %}
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>Transmittal Details</strong>
+        Transmittal #: {{ transmittal.transmittal_number }}<br>
+        Date: {{ transmittal.sent_date or today }}<br>
+        Sent Via: {{ transmittal.sent_via or 'Email' }}
+    </div>
+</div>
+
+<div class="meta-grid">
+    <div class="meta-block">
+        <strong>From</strong>
+        LGHVAC Mechanical, LLC
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>RE: Project</strong>
+        {{ job.name }}
+    </div>
+</div>
+
+{% if transmittal.subject %}
+<h2>Subject</h2>
+<p style="font-size:11px;">{{ transmittal.subject }}</p>
+{% endif %}
+
+<!-- ENCLOSED DOCUMENTS -->
+<h2>Enclosed Documents</h2>
+{% if documents %}
+<table class="doc-table">
+    <thead>
+        <tr>
+            <th style="width:60%;">Item Name</th>
+            <th style="width:40%;">Type</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for doc in documents %}
+        <tr>
+            <td>{{ doc.item_name }}</td>
+            <td>{{ doc.item_type or '-' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p style="font-size:10.5px;color:#666;">No completed documents to include.</p>
+{% endif %}
+
+<!-- NOTES -->
+{% if transmittal.notes %}
+<h2>Notes</h2>
+<div class="notes-section">
+    <p>{{ transmittal.notes }}</p>
+</div>
+{% endif %}
+
+<div class="footer-contact">
+    LGHVAC Mechanical, LLC &nbsp;|&nbsp; 3616 Utica Square Dr., Edmond, OK 73034<br>
+    Phone: 918-351-3092 &nbsp;|&nbsp; Email: lgsqoffice@gmail.com
+</div>
+
+</body>
+</html>

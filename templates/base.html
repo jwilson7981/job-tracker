@@ -6,7 +6,7 @@
     <title>{% block title %}Construction Management{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="{% if current_user %}has-sidebar{% endif %}">
+<body class="{% if current_user %}has-sidebar{% endif %} {% block body_class %}{% endblock %}" {% if current_user %}data-role="{{ current_user.role }}"{% endif %}>
     {% if current_user %}
     {% include 'sidebar.html' %}
     {% endif %}
@@ -18,5 +18,24 @@
     </div>
     <script src="/static/app.js"></script>
     {% block scripts %}{% endblock %}
+    {% if current_user %}
+    <!-- Floating Chat Widget -->
+    <div class="chat-widget" id="chatWidget">
+        <div class="chat-widget-header" id="chatWidgetHeader">
+            <span class="chat-widget-title">Chat Assistant</span>
+            <span class="chat-widget-toggle" id="chatWidgetToggle">&#9650;</span>
+        </div>
+        <div class="chat-widget-body" id="chatWidgetBody">
+            <div class="chat-widget-messages" id="widgetMessages">
+                <div class="chat-widget-welcome">Ask me about bids, jobs, hours, codes, and more.</div>
+            </div>
+            <div class="chat-widget-input-bar">
+                <input type="text" id="widgetInput" class="form-input" placeholder="Type a message..." autocomplete="off">
+                <button class="btn btn-primary btn-small" id="widgetSendBtn">Send</button>
+            </div>
+        </div>
+    </div>
+    <script src="/static/chat_widget.js"></script>
+    {% endif %}
 </body>
 </html>

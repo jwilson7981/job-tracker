@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Job Schedule - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/schedule" class="link" style="font-size:14px;">&larr; Back to Schedule</a>
+        <h1 id="schedJobName">Job Schedule</h1>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="addDefaultPhases()">Add Default Phases</button>
+        <button class="btn btn-primary" onclick="showAddPhase()">+ Add Phase</button>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table schedule-timeline">
+        <thead>
+            <tr>
+                <th>Phase</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Assigned To</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="phaseBody">
+            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Phase Modal -->
+<div class="modal-overlay" id="phaseModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="phaseModalTitle">Add Phase</h2>
+            <button class="modal-close" onclick="document.getElementById('phaseModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="savePhase(event)">
+            <input type="hidden" id="pmId" value="">
+            <div class="form-group">
+                <label class="form-label">Phase Name</label>
+                <select id="pmPreset" class="form-select" onchange="if(this.value)document.getElementById('pmName').value=this.value">
+                    <option value="">-- Select Preset or Type Below --</option>
+                    <option value="Rough-In">Rough-In</option>
+                    <option value="AHU Install">AHU Install</option>
+                    <option value="Condenser Install">Condenser Install</option>
+                    <option value="Trim-Out">Trim-Out</option>
+                    <option value="Startup">Startup</option>
+                    <option value="Inspection">Inspection</option>
+                    <option value="Punch List">Punch List</option>
+                </select>
+                <input type="text" id="pmName" class="form-input" style="margin-top:6px;" placeholder="Phase name" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" id="pmStart" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">End Date</label>
+                    <input type="date" id="pmEnd" class="form-input">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Assigned To</label>
+                <select id="pmAssigned" class="form-select">
+                    <option value="">Unassigned</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea id="pmDesc" class="form-input" rows="3"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('phaseModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Phase</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>window.SCHEDULE_PAGE = 'job'; window.SCHEDULE_JOB_ID = {{ job_id }};</script>
+<script src="/static/schedule.js"></script>
+{% endblock %}

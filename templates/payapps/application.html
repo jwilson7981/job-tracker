@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Pay Application - G702/G703{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="#" id="backLink" class="link" style="font-size:14px;">&larr; Back to Contract</a>
+        <h1 id="appTitle">Pay Application</h1>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <select id="appStatus" class="form-select" style="width:140px;" onchange="updateAppStatus(this.value)">
+            <option value="Draft">Draft</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Approved">Approved</option>
+            <option value="Paid">Paid</option>
+        </select>
+        <button class="btn btn-primary" onclick="saveAllEntries()">Save</button>
+    </div>
+</div>
+
+<!-- G702 Summary -->
+<div class="g702-summary" id="g702Summary">
+    <div class="g702-header">
+        <div class="g702-header-left">
+            <h2>APPLICATION AND CERTIFICATION FOR PAYMENT</h2>
+            <div class="g702-subtitle">AIA DOCUMENT G702</div>
+        </div>
+        <div class="g702-header-right">
+            <div>APPLICATION NO: <strong id="g702AppNo">-</strong></div>
+            <div>PERIOD TO: <strong id="g702PeriodTo">-</strong></div>
+        </div>
+    </div>
+    <div class="g702-info-row" id="g702Info"></div>
+    <div class="g702-body">
+        <div class="g702-lines">
+            <div class="g702-line"><span>1. ORIGINAL CONTRACT SUM</span><span id="g702L1">$0.00</span></div>
+            <div class="g702-line"><span>2. Net change by Change Orders</span><span id="g702L2">$0.00</span></div>
+            <div class="g702-line"><span>3. CONTRACT SUM TO DATE (Line 1 +/- 2)</span><span id="g702L3">$0.00</span></div>
+            <div class="g702-line"><span>4. TOTAL COMPLETED & STORED TO DATE</span><span id="g702L4">$0.00</span></div>
+            <div class="g702-line g702-indent"><span>5a. <span id="g702RetPct">10</span>% of Completed Work</span><span id="g702L5a">$0.00</span></div>
+            <div class="g702-line g702-indent"><span>5b. <span id="g702RetStoredPct">0</span>% of Stored Material</span><span id="g702L5b">$0.00</span></div>
+            <div class="g702-line"><span>Total Retainage</span><span id="g702L5">$0.00</span></div>
+            <div class="g702-line"><span>6. TOTAL EARNED LESS RETAINAGE</span><span id="g702L6">$0.00</span></div>
+            <div class="g702-line"><span>7. LESS PREVIOUS CERTIFICATES</span><span id="g702L7">$0.00</span></div>
+            <div class="g702-line g702-highlight"><span>8. CURRENT PAYMENT DUE</span><span id="g702L8">$0.00</span></div>
+            <div class="g702-line"><span>9. BALANCE TO FINISH, INCL. RETAINAGE</span><span id="g702L9">$0.00</span></div>
+        </div>
+        <div class="g702-co">
+            <h4>CHANGE ORDER SUMMARY</h4>
+            <div class="form-row" style="gap:8px;">
+                <div class="form-group">
+                    <label class="form-label" style="font-size:12px;">Additions This Month</label>
+                    <input type="number" id="coAdd" class="form-input" step="0.01" value="0" onchange="recalcG702()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" style="font-size:12px;">Deductions This Month</label>
+                    <input type="number" id="coDed" class="form-input" step="0.01" value="0" onchange="recalcG702()">
+                </div>
+            </div>
+            <div class="form-group" style="margin-top:4px;">
+                <label class="form-label" style="font-size:12px;">Period To</label>
+                <input type="date" id="periodTo" class="form-input" onchange="saveAppMeta()">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- G703 Continuation Sheet -->
+<div class="g703-wrapper">
+    <h3 style="margin-bottom:8px;">CONTINUATION SHEET — AIA DOCUMENT G703</h3>
+    <div class="table-wrapper">
+        <table class="data-table g703-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">A</th>
+                    <th>B<br><small>Description</small></th>
+                    <th style="width:110px;">C<br><small>Scheduled Value</small></th>
+                    <th style="width:110px;">D<br><small>Previous App</small></th>
+                    <th style="width:110px;">E<br><small>This Period</small></th>
+                    <th style="width:110px;">F<br><small>Materials Stored</small></th>
+                    <th style="width:110px;">G<br><small>Total to Date</small></th>
+                    <th style="width:50px;">H<br><small>%</small></th>
+                    <th style="width:110px;">I<br><small>Balance</small></th>
+                    <th style="width:90px;">J<br><small>Retainage</small></th>
+                </tr>
+            </thead>
+            <tbody id="g703Body"><tr><td colspan="10" class="empty-state">Loading...</td></tr></tbody>
+            <tfoot id="g703Foot"></tfoot>
+        </table>
+    </div>
+</div>
+
+<script>window.PA_PAGE = 'application'; window.PA_APP_ID = {{ app_id }};</script>
+<script src="/static/payapps.js"></script>
+{% endblock %}

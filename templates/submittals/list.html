@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Submittals{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Submittals</h1>
+    <button class="btn btn-primary" onclick="showAddSubmittal()">+ New Submittal</button>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="submittalSummary">
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #9CA3AF;">
+        <div class="kpi-value" id="sumPending">0</div>
+        <div class="kpi-label">Pending</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #3B82F6;">
+        <div class="kpi-value" id="sumSubmitted">0</div>
+        <div class="kpi-label">Submitted</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="sumApproved">0</div>
+        <div class="kpi-label">Approved</div>
+    </div>
+    <div class="kpi-card" id="sumRejectedCard" style="border-left: 4px solid #EF4444;">
+        <div class="kpi-value" id="sumRejected">0</div>
+        <div class="kpi-label">Rejected / Resubmit</div>
+    </div>
+</div>
+
+<!-- Filter Row -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:16px;">
+    <select id="filterJob" class="form-select" onchange="loadSubmittals()" style="max-width:240px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="loadSubmittals()" style="max-width:200px;">
+        <option value="">All Statuses</option>
+        <option value="Pending">Pending</option>
+        <option value="Submitted">Submitted</option>
+        <option value="Approved">Approved</option>
+        <option value="Approved as Noted">Approved as Noted</option>
+        <option value="Rejected">Rejected</option>
+        <option value="Resubmit">Resubmit</option>
+    </select>
+</div>
+
+<!-- Submittals Table -->
+<div class="table-wrapper" style="margin-top:16px;">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Job</th>
+                <th>Spec Section</th>
+                <th>Description</th>
+                <th>Vendor</th>
+                <th>Rev</th>
+                <th>Status</th>
+                <th>Date Submitted</th>
+                <th>Date Required</th>
+                <th>Date Returned</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="submittalsBody">
+            <tr><td colspan="11" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- New Submittal Modal -->
+<div class="modal-overlay" id="addModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>New Submittal</h2>
+            <button class="modal-close" onclick="document.getElementById('addModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveSubmittal(event)" id="addForm">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="addJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Spec Section</label>
+                <input type="text" id="addSpecSection" class="form-input" placeholder="e.g. 23 05 00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="addDescription" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Vendor</label>
+                <input type="text" id="addVendor" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Date Required</label>
+                <input type="date" id="addDateRequired" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">File (PDF)</label>
+                <input type="file" id="addFile" class="form-input" accept=".pdf">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('addModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Submittal</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Submittal Modal -->
+<div class="modal-overlay" id="editModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Edit Submittal</h2>
+            <button class="modal-close" onclick="document.getElementById('editModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveSubmittal(event)" id="editForm">
+            <input type="hidden" id="editId">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="editJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Spec Section</label>
+                <input type="text" id="editSpecSection" class="form-input" placeholder="e.g. 23 05 00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="editDescription" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Vendor</label>
+                <input type="text" id="editVendor" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="editStatus" class="form-select">
+                    <option value="Pending">Pending</option>
+                    <option value="Submitted">Submitted</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Approved as Noted">Approved as Noted</option>
+                    <option value="Rejected">Rejected</option>
+                    <option value="Resubmit">Resubmit</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Reviewer</label>
+                <input type="text" id="editReviewer" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Reviewer Comments</label>
+                <textarea id="editReviewerComments" class="form-input" rows="3" style="min-height:80px;font-family:inherit;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Date Submitted</label>
+                <input type="date" id="editDateSubmitted" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Date Required</label>
+                <input type="date" id="editDateRequired" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Date Returned</label>
+                <input type="date" id="editDateReturned" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Revision Number</label>
+                <input type="number" id="editRevision" class="form-input" min="0" step="1">
+            </div>
+            <div class="form-group">
+                <label class="form-label">File (PDF) — leave blank to keep current</label>
+                <input type="file" id="editFile" class="form-input" accept=".pdf">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('editModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update Submittal</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/submittals.js"></script>
+{% endblock %}

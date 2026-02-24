@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Pay Applications - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Pay Applications (AIA G702/G703)</h1>
+    <button class="btn btn-primary" onclick="showNewContract()">+ New Contract</button>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>GC</th>
+                <th>Project #</th>
+                <th>Contract Sum</th>
+                <th>Applications</th>
+                <th>Latest Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="contractsBody">
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- New Contract Modal -->
+<div class="modal-overlay" id="contractModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>New Pay App Contract</h2>
+            <button class="modal-close" onclick="document.getElementById('contractModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveContract(event)">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="ncJob" class="form-select" required></select>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">GC Name</label>
+                    <input type="text" id="ncGcName" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">GC Address</label>
+                    <input type="text" id="ncGcAddr" class="form-input">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Project #</label>
+                    <input type="text" id="ncProjNo" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Contract For</label>
+                    <input type="text" id="ncContractFor" class="form-input" value="HVAC System">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Contract Date</label>
+                    <input type="date" id="ncContractDate" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Original Contract Sum</label>
+                    <input type="number" id="ncContractSum" class="form-input" step="0.01">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Retainage on Work (%)</label>
+                    <input type="number" id="ncRetWork" class="form-input" value="10" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Retainage on Stored Material (%)</label>
+                    <input type="number" id="ncRetStored" class="form-input" value="0" step="0.1">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('contractModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Contract</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>window.PA_PAGE = 'list';</script>
+<script src="/static/payapps.js"></script>
+{% endblock %}

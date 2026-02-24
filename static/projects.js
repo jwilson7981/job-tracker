@@ -39,6 +39,12 @@ async function loadProjectDetail() {
     const totalInvoiced = data.invoices.reduce((s, i) => s + (i.amount || 0), 0);
     const totalLabor = data.time_entries.reduce((s, t) => s + (t.hours || 0) * (t.hourly_rate || 0), 0);
 
+    // Supplier account info
+    if (data.job.supplier_account) {
+        const infoEl = document.getElementById('projectInfo');
+        if (infoEl) infoEl.innerHTML = `<span class="text-muted">Supplier Account:</span> <strong>${data.job.supplier_account}</strong>`;
+    }
+
     // KPIs
     document.getElementById('projectKpis').innerHTML = `
         <div class="kpi-card" style="border-left:4px solid #3B82F6;"><div class="kpi-value">${fmt(data.material_cost)}</div><div class="kpi-label">Material Cost</div></div>

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Licenses - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Licenses</h1>
+    {% if current_user.role in ('owner', 'project_manager') %}
+    <button class="btn btn-primary" onclick="showAddLicense()">+ Add License</button>
+    {% endif %}
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="licenseSummary">
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="summaryActive">0</div>
+        <div class="kpi-label">Total Active</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #F59E0B;">
+        <div class="kpi-value" id="summaryExpiring">0</div>
+        <div class="kpi-label">Expiring Soon</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #EF4444;">
+        <div class="kpi-value" id="summaryExpired">0</div>
+        <div class="kpi-label">Expired</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="summaryRenewalCost">$0.00</div>
+        <div class="kpi-label">Total Renewal Cost</div>
+    </div>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <select id="filterType" class="form-select" onchange="applyFilters()" style="max-width:180px;">
+        <option value="">All Types</option>
+        <option value="City">City</option>
+        <option value="State">State</option>
+        <option value="Trade">Trade</option>
+        <option value="Business">Business</option>
+        <option value="Insurance">Insurance</option>
+        <option value="Other">Other</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="applyFilters()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Active">Active</option>
+        <option value="Expiring Soon">Expiring Soon</option>
+        <option value="Expired">Expired</option>
+        <option value="Pending Renewal">Pending Renewal</option>
+    </select>
+    <span id="licenseCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Licenses Table -->
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Name</th>
+                <th>License #</th>
+                <th>Issuing Body</th>
+                <th>Holder</th>
+                <th>Expiration</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="licensesBody">
+            <tr><td colspan="8" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit License Modal -->
+<div id="licenseModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="licenseModalTitle">Add License</h2>
+            <button class="modal-close" onclick="document.getElementById('licenseModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveLicense(event)" id="licenseForm">
+            <input type="hidden" id="licenseId" value="">
+            <div class="form-group">
+                <label class="form-label">License Type</label>
+                <select id="licType" class="form-select" required>
+                    <option value="">Select Type...</option>
+                    <option value="City">City</option>
+                    <option value="State">State</option>
+                    <option value="Trade">Trade</option>
+                    <option value="Business">Business</option>
+                    <option value="Insurance">Insurance</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">License Name</label>
+                <input type="text" id="licName" class="form-input" required placeholder="e.g. Oklahoma Mechanical License">
+            </div>
+            <div class="form-group">
+                <label class="form-label">License Number</label>
+                <input type="text" id="licNumber" class="form-input" placeholder="e.g. ML-12345">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Issuing Body</label>
+                <input type="text" id="licIssuer" class="form-input" placeholder="e.g. Oklahoma CIB">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Holder Name</label>
+                <input type="text" id="licHolder" class="form-input" placeholder="e.g. LGHVAC LLC">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Issue Date</label>
+                    <input type="date" id="licIssueDate" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Expiration Date</label>
+                    <input type="date" id="licExpDate" class="form-input" required>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Renewal Cost ($)</label>
+                    <input type="number" id="licCost" class="form-input" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select id="licStatus" class="form-select">
+                        <option value="Active">Active</option>
+                        <option value="Expiring Soon">Expiring Soon</option>
+                        <option value="Expired">Expired</option>
+                        <option value="Pending Renewal">Pending Renewal</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="licNotes" class="form-input" rows="3" placeholder="Optional notes..." style="resize:vertical;min-height:60px;font-family:inherit;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Attachment (PDF)</label>
+                <input type="file" id="licFile" class="form-input" accept=".pdf">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('licenseModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save License</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script src="/static/licenses.js"></script>
+{% endblock %}

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Chat Assistant{% endblock %}
+{% block body_class %}page-chatbot{% endblock %}
 {% block content %}
 <div class="chat-container">
     <div class="chat-sidebar" id="chatSidebar">
@@ -15,8 +16,8 @@
         <div class="chat-messages" id="chatMessages">
             <div class="chat-welcome">
                 <h2>Construction Management Assistant</h2>
-                <p>I can help you look up code sections, check warranty status, find open service calls, search how-to articles, and review bid summaries.</p>
-                <p style="margin-top:8px;">Type <strong>help</strong> for a list of commands, or just ask a question!</p>
+                <p>Ask me anything — bid stats, win rates, job financials, time entries, code lookups, and more.</p>
+                <p style="margin-top:8px;">Try: <strong>"how many bids?"</strong>, <strong>"win rate"</strong>, <strong>"profit for Sunrise Estates"</strong>, or type <strong>help</strong> for all commands.</p>
             </div>
         </div>
         <div class="chat-input-bar">

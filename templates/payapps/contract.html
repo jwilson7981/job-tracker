@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Contract Setup - Pay Apps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/payapps" class="link" style="font-size:14px;">&larr; Back to Pay Apps</a>
+        <h1 id="contractTitle">Contract Setup</h1>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" onclick="createApplication()">+ New Pay Application</button>
+    </div>
+</div>
+
+<!-- Contract Details (collapsible) -->
+<details class="pa-section" open>
+    <summary class="pa-section-title">Contract Details</summary>
+    <div class="pa-section-body" id="contractDetails">Loading...</div>
+</details>
+
+<!-- Schedule of Values -->
+<details class="pa-section" open>
+    <summary class="pa-section-title">Schedule of Values (G703)</summary>
+    <div class="pa-section-body">
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <button class="btn btn-secondary btn-small" onclick="showAddSovItem()">+ Add Line</button>
+            <button class="btn btn-secondary btn-small" onclick="showAddBuilding()">+ Add Building</button>
+        </div>
+        <div class="table-wrapper">
+            <table class="data-table sov-table">
+                <thead>
+                    <tr>
+                        <th style="width:50px;">#</th>
+                        <th>Description</th>
+                        <th style="width:140px;">Scheduled Value</th>
+                        <th style="width:60px;">Ret.</th>
+                        <th style="width:100px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="sovBody"><tr><td colspan="5" class="empty-state">Loading...</td></tr></tbody>
+                <tfoot id="sovFoot"></tfoot>
+            </table>
+        </div>
+    </div>
+</details>
+
+<!-- Pay Applications -->
+<details class="pa-section" open>
+    <summary class="pa-section-title">Pay Applications</summary>
+    <div class="pa-section-body">
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr><th>#</th><th>Period To</th><th>Current Due</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="appsBody"><tr><td colspan="5" class="empty-state">Loading...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</details>
+
+<!-- Add SOV Item Modal -->
+<div class="modal-overlay" id="sovModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="sovModalTitle">Add Line Item</h2>
+            <button class="modal-close" onclick="document.getElementById('sovModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveSovItem(event)">
+            <input type="hidden" id="sovId" value="">
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="sovDesc" class="form-input" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Scheduled Value ($)</label>
+                    <input type="number" id="sovValue" class="form-input" step="0.01" value="0">
+                </div>
+                <div class="form-group" style="display:flex;gap:16px;align-items:end;padding-bottom:8px;">
+                    <label><input type="checkbox" id="sovIsHeader"> Section Header</label>
+                    <label><input type="checkbox" id="sovRetExempt"> No Retainage</label>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('sovModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Building Modal -->
+<div class="modal-overlay" id="buildingModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Add Building</h2>
+            <button class="modal-close" onclick="document.getElementById('buildingModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveBuilding(event)">
+            <div class="form-group">
+                <label class="form-label">Building Name (e.g. "Apartment 1", "Clubhouse")</label>
+                <input type="text" id="bldgName" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Material Value ($)</label>
+                <input type="number" id="bldgMaterial" class="form-input" step="0.01" value="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Rough In ($)</label>
+                <input type="number" id="bldgRoughIn" class="form-input" step="0.01" value="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Air Handler ($)</label>
+                <input type="number" id="bldgAH" class="form-input" step="0.01" value="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Condenser Installation ($)</label>
+                <input type="number" id="bldgCond" class="form-input" step="0.01" value="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Trim Out ($)</label>
+                <input type="number" id="bldgTrim" class="form-input" step="0.01" value="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Start Up / Low Voltage ($)</label>
+                <input type="number" id="bldgStartup" class="form-input" step="0.01" value="0">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('buildingModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Building</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>window.PA_PAGE = 'contract'; window.PA_CONTRACT_ID = {{ contract_id }};</script>
+<script src="/static/payapps.js"></script>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Documents - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Documents</h1>
+</div>
+
+<div class="schedule-job-grid" id="jobCardsGrid">
+    <p class="empty-state">Loading jobs...</p>
+</div>
+
+<script>window.DOC_PAGE = 'list';</script>
+<script src="/static/documents.js"></script>
+{% endblock %}
