@@ -2047,6 +2047,37 @@ body {
     padding: 6px 10px;
 }
 
+/* Mic button */
+.chat-mic-btn {
+    background: var(--gray-100);
+    color: var(--gray-600);
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+.chat-mic-btn:hover {
+    background: var(--gray-200);
+    color: var(--gray-800);
+}
+.chat-mic-btn.listening {
+    background: #fee2e2;
+    color: #dc2626;
+    border-color: #fca5a5;
+    animation: mic-pulse 1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.3); }
+    50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+.chat-mic-btn.unsupported {
+    display: none;
+}
+
 /* Hide widget on the full chatbot page */
 body.page-chatbot .chat-widget {
     display: none;

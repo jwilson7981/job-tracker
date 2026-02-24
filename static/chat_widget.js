@@ -7,6 +7,7 @@
     const toggle = document.getElementById('chatWidgetToggle');
     const input = document.getElementById('widgetInput');
     const sendBtn = document.getElementById('widgetSendBtn');
+    const micBtn = document.getElementById('widgetMicBtn');
     const messagesEl = document.getElementById('widgetMessages');
 
     if (!widget) return;
@@ -14,6 +15,74 @@
     let expanded = false;
     let sessionId = null;
     let sending = false;
+
+    /* ─── Speech Recognition Setup ───────────────────────────── */
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let listening = false;
+
+    if (SpeechRecognition && micBtn) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = true;
+        recognition.continuous = false;
+
+        recognition.onstart = function () {
+            listening = true;
+            micBtn.classList.add('listening');
+            input.placeholder = 'Listening...';
+        };
+
+        recognition.onresult = function (e) {
+            let transcript = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                transcript += e.results[i][0].transcript;
+            }
+            input.value = transcript;
+            // Auto-send on final result
+            if (e.results[e.results.length - 1].isFinal) {
+                stopListening();
+                send();
+            }
+        };
+
+        recognition.onerror = function (e) {
+            stopListening();
+            if (e.error === 'not-allowed') {
+                appendMsg('assistant', 'Microphone access denied. Please allow microphone permissions in your browser settings.');
+            }
+        };
+
+        recognition.onend = function () {
+            stopListening();
+        };
+
+        micBtn.addEventListener('click', function () {
+            if (listening) {
+                recognition.stop();
+            } else {
+                // Expand widget if collapsed
+                if (!expanded) {
+                    expanded = true;
+                    widget.classList.add('expanded');
+                    toggle.innerHTML = '&#9660;';
+                }
+                recognition.start();
+            }
+        });
+    } else if (micBtn) {
+        micBtn.classList.add('unsupported');
+    }
+
+    function stopListening() {
+        listening = false;
+        if (micBtn) {
+            micBtn.classList.remove('listening');
+        }
+        input.placeholder = 'Type or tap mic...';
+    }
+
+    /* ─── Core Chat Functions ────────────────────────────────── */
 
     header.addEventListener('click', function () {
         expanded = !expanded;
