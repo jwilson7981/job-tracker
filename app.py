@@ -1801,7 +1801,18 @@ def api_bids():
            ORDER BY b.updated_at DESC'''
     ).fetchall()
     conn.close()
-    return jsonify([dict(b) for b in bids])
+
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    results = []
+    for b in bids:
+        d = dict(b)
+        if os.path.isdir(proposals_dir):
+            pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{b["id"]}.pdf' in f])
+            if pdf_files:
+                d['proposal_pdf'] = f'/api/bids/{b["id"]}/proposal/{pdf_files[-1]}'
+        results.append(d)
+
+    return jsonify(results)
 
 def _bid_fields(data, calcs):
     """Extract all bid fields from request data + calculated values."""
@@ -1887,6 +1898,14 @@ def api_bid_detail(bid_id):
     result = dict(bid)
     result['partners'] = [dict(p) for p in partners]
     result['personnel'] = [dict(p) for p in personnel]
+
+    # Check if a proposal PDF exists for this bid
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    if os.path.isdir(proposals_dir):
+        pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{bid_id}.pdf' in f])
+        if pdf_files:
+            result['proposal_pdf'] = f'/api/bids/{bid_id}/proposal/{pdf_files[-1]}'
+
     return jsonify(result)
 
 @app.route('/api/bids/<int:bid_id>', methods=['PUT'])

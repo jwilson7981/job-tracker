@@ -17,7 +17,7 @@
 <div class="module-table-wrapper">
     <table class="data-table">
         <thead><tr>
-            <th>Bid Name</th><th>Job</th><th>Project Type</th><th>Total Bid</th><th>Status</th><th>Updated</th>
+            <th>Bid Name</th><th>Job</th><th>Project Type</th><th>Total Bid</th><th>Status</th><th>Proposal</th><th>Updated</th>
         </tr></thead>
         <tbody id="bidsBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
     </table>
@@ -34,17 +34,21 @@ async function loadBids() {
 function renderBids(bids) {
     const tbody = document.getElementById('bidsBody');
     if (!bids.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No bids yet. Create your first bid!</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No bids yet. Create your first bid!</td></tr>';
         return;
     }
     tbody.innerHTML = bids.map(b => {
         const statusClass = 'status-' + (b.status || 'draft').toLowerCase().replace(/ /g, '-');
+        const proposalCol = b.proposal_pdf
+            ? `<a href="${b.proposal_pdf}" target="_blank" class="link" style="font-size:13px;">View PDF</a>`
+            : `<span style="color:var(--gray-400);font-size:13px;">—</span>`;
         return `<tr>
             <td><a href="/bids/${b.id}" class="link">${b.bid_name || 'Untitled'}</a></td>
             <td>${b.job_name || '-'}</td>
             <td>${b.project_type || '-'}</td>
             <td style="text-align:right;font-weight:600;">$${(b.total_bid || 0).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
             <td><span class="status-badge ${statusClass}">${b.status || 'Draft'}</span></td>
+            <td style="text-align:center;">${proposalCol}</td>
             <td style="font-size:13px;color:var(--gray-500);">${b.updated_at || ''}</td>
         </tr>`;
     }).join('');

@@ -228,6 +228,16 @@ async function loadBid() {
     bidPersonnel = bid.personnel || [];
     renderPersonnel();
 
+    // Show proposal buttons if a PDF already exists
+    if (bid.proposal_pdf) {
+        $('btnPreview').href = bid.proposal_pdf;
+        $('btnPreview').style.display = '';
+        $('btnDownload').href = bid.proposal_pdf + '?download=1';
+        $('btnDownload').style.display = '';
+        $('btnEmail').style.display = '';
+        $('btnGenerate').textContent = 'Regenerate Proposal';
+    }
+
     recalculate();
 }
 
@@ -480,7 +490,13 @@ async function openEmailModal() {
         if (settings.team_emails) {
             $('emailTo').value = settings.team_emails;
         }
-    } catch(e) {}
+        // Auto-expand SMTP settings if not yet configured
+        if (!settings.smtp_host) {
+            $('smtpDetails').open = true;
+        }
+    } catch(e) {
+        $('smtpDetails').open = true;
+    }
 }
 
 function closeEmailModal() {
