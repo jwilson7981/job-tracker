@@ -1,40 +1,108 @@
 {% extends "base.html" %}
-{% block title %}Bids{% endblock %}
+{% block title %}Bid History{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>Bids</h1>
+    <h1>Bid History</h1>
     <a href="/bids/new" class="btn btn-primary">+ New Bid</a>
 </div>
-<div class="filter-bar">
-    <select id="statusFilter" onchange="filterBids()">
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <input type="text" id="searchInput" class="form-input" placeholder="Search bids..." oninput="filterBids()" style="max-width:280px;">
+    <select id="statusFilter" class="form-select" onchange="filterBids()" style="max-width:160px;">
         <option value="">All Statuses</option>
         <option value="Draft">Draft</option>
         <option value="Submitted">Submitted</option>
         <option value="Accepted">Accepted</option>
         <option value="Rejected">Rejected</option>
     </select>
+    <select id="gcFilter" class="form-select" onchange="filterBids()" style="max-width:200px;">
+        <option value="">All GCs / Developers</option>
+    </select>
+    <span id="bidCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
 </div>
 <div class="module-table-wrapper">
     <table class="data-table">
         <thead><tr>
-            <th>Bid Name</th><th>Job</th><th>Project Type</th><th>Total Bid</th><th>Status</th><th>Proposal</th><th>Updated</th>
+            <th class="sortable" data-col="bid_name">Bid Name</th>
+            <th class="sortable" data-col="contracting_gc">GC / Developer</th>
+            <th class="sortable" data-col="job_name">Job</th>
+            <th class="sortable" data-col="project_type">Type</th>
+            <th class="sortable" data-col="total_bid">Total Bid</th>
+            <th class="sortable" data-col="status">Status</th>
+            <th>Proposal</th>
+            <th class="sortable active-sort" data-col="bid_date">Bid Date</th>
         </tr></thead>
-        <tbody id="bidsBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+        <tbody id="bidsBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
     </table>
 </div>
+<style>
+    th.sortable { cursor: pointer; user-select: none; position: relative; }
+    th.sortable:hover { color: var(--blue-primary); }
+    th.sortable::after { content: '⇅'; font-size: 10px; margin-left: 4px; opacity: 0.3; }
+    th.sortable.sort-asc::after { content: '↑'; opacity: 0.8; }
+    th.sortable.sort-desc::after { content: '↓'; opacity: 0.8; }
+</style>
 <script>
 let allBids = [];
+let currentSort = { col: 'bid_date', dir: 'desc' };
 
 async function loadBids() {
     const res = await fetch('/api/bids');
     allBids = await res.json();
-    renderBids(allBids);
+
+    // Populate GC filter dropdown with unique GCs
+    const gcs = [...new Set(allBids.map(b => b.contracting_gc).filter(Boolean))].sort();
+    const gcSel = document.getElementById('gcFilter');
+    gcs.forEach(gc => {
+        const opt = document.createElement('option');
+        opt.value = gc;
+        opt.textContent = gc;
+        gcSel.appendChild(opt);
+    });
+
+    filterBids();
+}
+
+function getFiltered() {
+    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const status = document.getElementById('statusFilter').value;
+    const gc = document.getElementById('gcFilter').value;
+
+    return allBids.filter(b => {
+        if (status && b.status !== status) return false;
+        if (gc && b.contracting_gc !== gc) return false;
+        if (search) {
+            const fields = [b.bid_name, b.contracting_gc, b.gc_attention, b.job_name,
+                            b.project_type, b.bid_number, b.lead_name, b.status].map(f => (f || '').toLowerCase());
+            if (!fields.some(f => f.includes(search))) return false;
+        }
+        return true;
+    });
+}
+
+function sortBids(bids) {
+    const col = currentSort.col;
+    const dir = currentSort.dir === 'asc' ? 1 : -1;
+    return [...bids].sort((a, b) => {
+        let va = a[col], vb = b[col];
+        if (col === 'total_bid') {
+            return ((va || 0) - (vb || 0)) * dir;
+        }
+        va = (va || '').toString().toLowerCase();
+        vb = (vb || '').toString().toLowerCase();
+        return va < vb ? -dir : va > vb ? dir : 0;
+    });
+}
+
+function filterBids() {
+    const filtered = sortBids(getFiltered());
+    document.getElementById('bidCount').textContent = `${filtered.length} of ${allBids.length} bids`;
+    renderBids(filtered);
 }
 
 function renderBids(bids) {
     const tbody = document.getElementById('bidsBody');
     if (!bids.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No bids yet. Create your first bid!</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No bids match your filters.</td></tr>';
         return;
     }
     tbody.innerHTML = bids.map(b => {
@@ -42,23 +110,35 @@ function renderBids(bids) {
         const proposalCol = b.proposal_pdf
             ? `<a href="${b.proposal_pdf}" target="_blank" class="link" style="font-size:13px;">View PDF</a>`
             : `<span style="color:var(--gray-400);font-size:13px;">—</span>`;
-        return `<tr>
+        const bidDate = b.bid_date || '';
+        return `<tr onclick="window.location='/bids/${b.id}'" style="cursor:pointer;">
             <td><a href="/bids/${b.id}" class="link">${b.bid_name || 'Untitled'}</a></td>
+            <td>${b.contracting_gc || '-'}</td>
             <td>${b.job_name || '-'}</td>
             <td>${b.project_type || '-'}</td>
             <td style="text-align:right;font-weight:600;">$${(b.total_bid || 0).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
             <td><span class="status-badge ${statusClass}">${b.status || 'Draft'}</span></td>
-            <td style="text-align:center;">${proposalCol}</td>
-            <td style="font-size:13px;color:var(--gray-500);">${b.updated_at || ''}</td>
+            <td style="text-align:center;" onclick="event.stopPropagation()">${proposalCol}</td>
+            <td style="font-size:13px;color:var(--gray-500);">${bidDate}</td>
         </tr>`;
     }).join('');
 }
 
-function filterBids() {
-    const status = document.getElementById('statusFilter').value;
-    const filtered = status ? allBids.filter(b => b.status === status) : allBids;
-    renderBids(filtered);
-}
+// Sortable column headers
+document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (currentSort.col === col) {
+            currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort = { col, dir: 'asc' };
+        }
+        // Update header styles
+        document.querySelectorAll('th.sortable').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+        th.classList.add(currentSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+        filterBids();
+    });
+});
 
 document.addEventListener('DOMContentLoaded', loadBids);
 </script>
