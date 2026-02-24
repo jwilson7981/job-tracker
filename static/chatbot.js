@@ -2,7 +2,74 @@
 
 let currentSessionId = null;
 
-document.addEventListener('DOMContentLoaded', loadSessions);
+/* ─── Speech Recognition ─────────────────────────────────── */
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let listening = false;
+
+if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onstart = function () {
+        listening = true;
+        const btn = document.getElementById('chatMicBtn');
+        const input = document.getElementById('chatInput');
+        if (btn) btn.classList.add('listening');
+        if (input) input.placeholder = 'Listening...';
+    };
+
+    recognition.onresult = function (e) {
+        let transcript = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            transcript += e.results[i][0].transcript;
+        }
+        document.getElementById('chatInput').value = transcript;
+        if (e.results[e.results.length - 1].isFinal) {
+            stopMic();
+            sendMessage();
+        }
+    };
+
+    recognition.onerror = function (e) {
+        stopMic();
+        if (e.error === 'not-allowed') {
+            appendMessage('assistant', 'Microphone access denied. Please allow microphone permissions in your browser settings.');
+        }
+    };
+
+    recognition.onend = function () {
+        stopMic();
+    };
+}
+
+function toggleMic() {
+    if (!recognition) return;
+    if (listening) {
+        recognition.stop();
+    } else {
+        recognition.start();
+    }
+}
+
+function stopMic() {
+    listening = false;
+    const btn = document.getElementById('chatMicBtn');
+    const input = document.getElementById('chatInput');
+    if (btn) btn.classList.remove('listening');
+    if (input) input.placeholder = 'Type or tap mic...';
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    loadSessions();
+    // Hide mic button if unsupported
+    if (!SpeechRecognition) {
+        const btn = document.getElementById('chatMicBtn');
+        if (btn) btn.classList.add('unsupported');
+    }
+});
 
 async function loadSessions() {
     const res = await fetch('/api/chatbot/sessions');
@@ -109,8 +176,16 @@ async function sendMessage() {
         // Remove typing indicator
         typing.remove();
 
+        // Check for navigation marker
+        let botText = data.response;
+        const navMatch = botText.match(/^\[NAV:(\/[^\]]+)\]\s*/);
+        if (navMatch) {
+            botText = botText.replace(navMatch[0], '');
+            setTimeout(function () { window.location.href = navMatch[1]; }, 800);
+        }
+
         // Show bot response
-        appendMessage('assistant', data.response);
+        appendMessage('assistant', botText);
         scrollToBottom();
 
         // Refresh session list (title may have updated)
