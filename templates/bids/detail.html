@@ -7,8 +7,9 @@
         <button class="btn btn-primary" onclick="saveBid()">Save Bid</button>
         {% if bid_id %}
         <button class="btn btn-secondary" onclick="generateProposal()" id="btnGenerate">Generate Proposal</button>
-        <button class="btn btn-secondary" onclick="openEmailModal()" id="btnEmail" style="display:none;">Email Proposal</button>
+        <a id="btnPreview" href="#" class="btn btn-secondary" style="display:none;" target="_blank">Preview PDF</a>
         <a id="btnDownload" href="#" class="btn btn-secondary" style="display:none;" download>Download PDF</a>
+        <button class="btn btn-secondary" onclick="openEmailModal()" id="btnEmail" style="display:none;">Email Proposal</button>
         {% endif %}
         <a href="/bids" class="btn btn-secondary">Back to Bids</a>
     </div>

@@ -2034,12 +2034,15 @@ def api_generate_proposal(bid_id):
 @app.route('/api/bids/<int:bid_id>/proposal/<filename>')
 @api_role_required('owner', 'project_manager')
 def api_download_proposal(bid_id, filename):
-    """Download a generated proposal PDF."""
+    """View or download a generated proposal PDF."""
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
     filepath = os.path.join(proposals_dir, filename)
     if not os.path.exists(filepath):
         return jsonify({'error': 'File not found'}), 404
-    return send_file(filepath, as_attachment=True, download_name=filename)
+    # Serve inline for preview (browser renders PDF), download param forces download
+    if request.args.get('download'):
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    return send_file(filepath, mimetype='application/pdf')
 
 
 @app.route('/api/bids/<int:bid_id>/email-proposal', methods=['POST'])
@@ -2050,11 +2053,19 @@ def api_email_proposal(bid_id):
     recipients = [e.strip() for e in data.get('recipients', []) if e.strip()]
     subject = data.get('subject', 'HVAC Installation Proposal')
     body_text = data.get('body', '')
-    smtp_host = data.get('smtp_host', '')
-    smtp_port = int(data.get('smtp_port', 587) or 587)
-    smtp_user = data.get('smtp_user', '')
-    smtp_pass = data.get('smtp_pass', '')
-    from_email = data.get('from_email', smtp_user)
+
+    # Load saved SMTP settings as fallback (password is never sent to browser)
+    saved_settings = {}
+    settings_path = os.path.join(os.path.dirname(__file__), 'data', 'email_settings.json')
+    if os.path.exists(settings_path):
+        with open(settings_path) as f:
+            saved_settings = json.load(f)
+
+    smtp_host = data.get('smtp_host') or saved_settings.get('smtp_host', '')
+    smtp_port = int(data.get('smtp_port') or saved_settings.get('smtp_port', 587) or 587)
+    smtp_user = data.get('smtp_user') or saved_settings.get('smtp_user', '')
+    smtp_pass = data.get('smtp_pass') or saved_settings.get('smtp_pass', '')
+    from_email = data.get('from_email') or saved_settings.get('from_email', '') or smtp_user
 
     if not recipients:
         return jsonify({'error': 'No recipients specified'}), 400

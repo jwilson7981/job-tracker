@@ -445,11 +445,13 @@ async function generateProposal() {
         }
         const result = await res.json();
         if (result.error) { alert(result.error); return; }
-        // Show download + email buttons
+        // Show preview, download + email buttons
+        const previewBtn = $('btnPreview');
+        previewBtn.href = result.path;
+        previewBtn.style.display = '';
         const dlBtn = $('btnDownload');
-        dlBtn.href = result.path;
+        dlBtn.href = result.path + '?download=1';
         dlBtn.style.display = '';
-        dlBtn.textContent = 'Download PDF';
         $('btnEmail').style.display = '';
         btn.textContent = 'Regenerate Proposal';
     } catch (e) {
