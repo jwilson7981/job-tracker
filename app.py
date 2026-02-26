@@ -5546,6 +5546,67 @@ def api_billtrust_test(config_id):
         conn.close()
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/billtrust/import', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_billtrust_import():
+    """Import invoices from BillTrust CSV + PDF export files."""
+    csv_file = request.files.get('csv_file')
+    pdf_file = request.files.get('pdf_file')
+    supplier_name = request.form.get('supplier_name', 'Locke Supply')
+
+    if not csv_file:
+        return jsonify({'error': 'CSV file is required'}), 400
+
+    csv_content = csv_file.read()
+    pdf_content = pdf_file.read() if pdf_file else None
+
+    conn = get_db()
+    try:
+        # Look up supplier config
+        config = conn.execute(
+            'SELECT id FROM billtrust_config WHERE supplier_name = ?', (supplier_name,)
+        ).fetchone()
+        if not config:
+            conn.close()
+            return jsonify({'error': f'Supplier "{supplier_name}" not found in config'}), 404
+
+        supplier_config_id = config['id']
+
+        from invoice_import import import_billtrust_files
+        result = import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn)
+
+        # Log to sync log
+        stats = result.get('stats', {})
+        conn.execute('''
+            INSERT INTO billtrust_sync_log (config_id, sync_type, invoices_found, invoices_new, invoices_updated, errors)
+            VALUES (?, 'csv_pdf_import', ?, ?, ?, ?)
+        ''', (supplier_config_id, stats.get('total', 0), stats.get('new', 0),
+              stats.get('updated', 0), json.dumps([])))
+        conn.commit()
+
+        # Notify other owners/admins
+        current_user = session.get('user_id')
+        admins = conn.execute(
+            "SELECT id FROM users WHERE role IN ('owner','admin') AND id != ?",
+            (current_user,)
+        ).fetchall()
+        conn.close()
+
+        for admin in admins:
+            create_notification(
+                admin['id'], 'invoice',
+                f'BillTrust Import: {stats.get("new",0)} new, {stats.get("updated",0)} updated',
+                f'{supplier_name} — {stats.get("total",0)} invoices imported via CSV/PDF',
+                '/invoices'
+            )
+
+        return jsonify(result)
+    except Exception as e:
+        conn.close()
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 # ─── Plans ─────────────────────────────────────────────────────
 

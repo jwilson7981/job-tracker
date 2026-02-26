@@ -147,7 +147,10 @@
         var files = e.dataTransfer.files;
         if (!files || files.length === 0) return;
         droppedFiles = Array.from(files);
-        showModal();
+        // Check for BillTrust CSV before showing normal modal
+        detectBillTrustImport(droppedFiles).then(function (isBillTrust) {
+            if (!isBillTrust) showModal();
+        });
     });
 
     // ─── Duplicate Check (runs immediately on drop, no doc_type needed) ──
@@ -430,4 +433,249 @@
         d.textContent = text || '';
         return d.innerHTML;
     }
+
+    // ─── BillTrust CSV+PDF Import ───────────────────────────────
+    var btModal = null;
+
+    function createBtModal() {
+        if (btModal) return;
+        btModal = document.createElement('div');
+        btModal.className = 'drag-drop-modal-backdrop';
+        btModal.style.display = 'none';
+        btModal.innerHTML =
+            '<div class="drag-drop-modal" style="max-width:640px">' +
+                '<div class="drag-drop-modal-header">' +
+                    '<h3>BillTrust Invoice Import</h3>' +
+                    '<button class="drag-drop-modal-close" id="btModalClose">&times;</button>' +
+                '</div>' +
+                '<div class="drag-drop-modal-body">' +
+                    '<div id="btDetectedFiles" style="margin-bottom:12px"></div>' +
+                    '<div class="form-group">' +
+                        '<label class="form-label">Supplier</label>' +
+                        '<select id="btSupplier" class="form-select">' +
+                            '<option value="Locke Supply">Locke Supply</option>' +
+                            '<option value="Plumb Supply">Plumb Supply</option>' +
+                        '</select>' +
+                    '</div>' +
+                    '<div id="btProgress" style="display:none;margin-top:12px">' +
+                        '<div class="dd-progress-bar"><div class="dd-progress-bar-inner" id="btProgressBar" style="width:0%"></div></div>' +
+                        '<span id="btProgressText" class="dd-progress-text">Preparing...</span>' +
+                    '</div>' +
+                    '<div id="btResults" style="display:none;margin-top:14px"></div>' +
+                '</div>' +
+                '<div class="drag-drop-modal-footer">' +
+                    '<button class="btn" id="btCancelBtn">Cancel</button>' +
+                    '<button class="btn btn-primary" id="btImportBtn">Import Invoices</button>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(btModal);
+
+        document.getElementById('btModalClose').addEventListener('click', hideBtModal);
+        document.getElementById('btCancelBtn').addEventListener('click', hideBtModal);
+        btModal.addEventListener('click', function (e) { if (e.target === btModal) hideBtModal(); });
+        document.getElementById('btImportBtn').addEventListener('click', runBtImport);
+    }
+
+    function hideBtModal() {
+        if (btModal) btModal.style.display = 'none';
+        droppedFiles = [];
+    }
+
+    function detectBillTrustImport(files) {
+        // Find CSV files and check first 1KB for BillTrust headers
+        var csvFiles = [];
+        var pdfFiles = [];
+        for (var i = 0; i < files.length; i++) {
+            var name = files[i].name.toLowerCase();
+            if (name.endsWith('.csv')) csvFiles.push(files[i]);
+            else if (name.endsWith('.pdf')) pdfFiles.push(files[i]);
+        }
+        if (csvFiles.length === 0) return Promise.resolve(false);
+
+        return new Promise(function (resolve) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                var header = reader.result || '';
+                if (header.indexOf('INVOICE_NUMBER') !== -1 && header.indexOf('TOTAL_DUE') !== -1) {
+                    showBtModal(csvFiles, pdfFiles);
+                    resolve(true);
+                } else {
+                    resolve(false);
+                }
+            };
+            reader.onerror = function () { resolve(false); };
+            // Read only first 1KB
+            reader.readAsText(csvFiles[0].slice(0, 1024));
+        });
+    }
+
+    function showBtModal(csvFiles, pdfFiles) {
+        createBtModal();
+        var det = document.getElementById('btDetectedFiles');
+        var badges = '';
+        csvFiles.forEach(function (f) {
+            badges += '<span style="display:inline-block;padding:4px 10px;border-radius:4px;background:#e0f2fe;color:#0369a1;font-size:13px;margin:2px 4px 2px 0">' +
+                escapeHtml(f.name) + ' (CSV)</span>';
+        });
+        pdfFiles.forEach(function (f) {
+            badges += '<span style="display:inline-block;padding:4px 10px;border-radius:4px;background:#fce7f3;color:#be185d;font-size:13px;margin:2px 4px 2px 0">' +
+                escapeHtml(f.name) + ' (PDF)</span>';
+        });
+        if (pdfFiles.length === 0) {
+            badges += '<span style="display:inline-block;padding:4px 10px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:13px;margin:2px 4px 2px 0">No PDF — line items will be skipped</span>';
+        }
+        det.innerHTML = '<div style="font-size:13px;color:#6b7280;margin-bottom:4px">Detected BillTrust export files:</div>' + badges;
+
+        // Store references for import
+        btModal._csvFiles = csvFiles;
+        btModal._pdfFiles = pdfFiles;
+
+        // Reset state
+        document.getElementById('btProgress').style.display = 'none';
+        document.getElementById('btResults').style.display = 'none';
+        document.getElementById('btImportBtn').disabled = false;
+        document.getElementById('btImportBtn').textContent = 'Import Invoices';
+        document.getElementById('btProgressBar').style.width = '0%';
+        btModal.style.display = 'flex';
+    }
+
+    function runBtImport() {
+        var importBtn = document.getElementById('btImportBtn');
+        var progressDiv = document.getElementById('btProgress');
+        var progressBar = document.getElementById('btProgressBar');
+        var progressText = document.getElementById('btProgressText');
+        var resultsDiv = document.getElementById('btResults');
+
+        importBtn.disabled = true;
+        importBtn.textContent = 'Importing...';
+        progressDiv.style.display = 'flex';
+        resultsDiv.style.display = 'none';
+
+        // Animate progress
+        progressBar.style.width = '15%';
+        progressText.textContent = 'Uploading files...';
+
+        var formData = new FormData();
+        formData.append('csv_file', btModal._csvFiles[0]);
+        if (btModal._pdfFiles.length > 0) {
+            formData.append('pdf_file', btModal._pdfFiles[0]);
+        }
+        formData.append('supplier_name', document.getElementById('btSupplier').value);
+
+        // Animate progress while waiting
+        var pct = 15;
+        var animTimer = setInterval(function () {
+            if (pct < 85) {
+                pct += Math.random() * 8;
+                progressBar.style.width = Math.min(pct, 85) + '%';
+                if (pct > 30 && pct < 60) progressText.textContent = 'Extracting PDF line items with AI...';
+                else if (pct >= 60) progressText.textContent = 'Running AI review...';
+            }
+        }, 800);
+
+        fetch('/api/billtrust/import', { method: 'POST', body: formData })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                clearInterval(animTimer);
+                progressBar.style.width = '100%';
+
+                if (data.error) {
+                    progressText.textContent = 'Error: ' + data.error;
+                    importBtn.textContent = 'Retry';
+                    importBtn.disabled = false;
+                    return;
+                }
+
+                progressText.textContent = 'Complete!';
+                importBtn.style.display = 'none';
+                renderBtResults(data, resultsDiv);
+            })
+            .catch(function (err) {
+                clearInterval(animTimer);
+                progressText.textContent = 'Error: ' + err.message;
+                importBtn.textContent = 'Retry';
+                importBtn.disabled = false;
+            });
+    }
+
+    function renderBtResults(data, container) {
+        container.style.display = 'block';
+        var stats = data.stats || {};
+        var invoices = data.invoices || [];
+        var flags = data.ai_flags || [];
+        var jobLinks = data.job_links || {};
+
+        var html = '';
+
+        // Summary
+        html += '<div style="padding:10px 14px;background:#f0fdf4;border-radius:6px;border:1px solid #bbf7d0;margin-bottom:10px">' +
+            '<strong>' + (stats.new || 0) + ' new</strong>, ' +
+            '<strong>' + (stats.updated || 0) + ' updated</strong>, ' +
+            (stats.errors ? '<span style="color:#dc2626">' + stats.errors + ' errors</span>' : '0 errors') +
+            ' &mdash; ' + (stats.total || 0) + ' invoices processed</div>';
+
+        // Job links
+        var linkKeys = Object.keys(jobLinks);
+        if (linkKeys.length > 0) {
+            html += '<div style="margin-bottom:10px">';
+            html += '<div style="font-size:12px;color:#6b7280;margin-bottom:4px">Auto-linked to jobs:</div>';
+            linkKeys.forEach(function (invNum) {
+                html += '<div style="font-size:13px;padding:2px 0"><code>' + escapeHtml(invNum) + '</code> &rarr; <strong>' + escapeHtml(jobLinks[invNum]) + '</strong></div>';
+            });
+            html += '</div>';
+        }
+
+        // AI Review Flags
+        if (flags.length > 0) {
+            html += '<div style="margin-bottom:10px">';
+            html += '<div style="font-size:12px;color:#6b7280;margin-bottom:4px">AI Review Flags:</div>';
+            flags.forEach(function (flag) {
+                var color, bg;
+                if (flag.severity === 'error') { color = '#dc2626'; bg = '#fef2f2'; }
+                else if (flag.severity === 'warning') { color = '#d97706'; bg = '#fffbeb'; }
+                else { color = '#2563eb'; bg = '#eff6ff'; }
+                html += '<div style="padding:6px 10px;margin-bottom:4px;border-radius:4px;background:' + bg + ';font-size:13px;border-left:3px solid ' + color + '">' +
+                    '<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:' + color + ';color:#fff;font-size:11px;margin-right:6px">' +
+                    escapeHtml(flag.severity) + '</span>' +
+                    '<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:#e5e7eb;color:#374151;font-size:11px;margin-right:6px">' +
+                    escapeHtml(flag.category || '') + '</span>' +
+                    (flag.invoice_number ? '<code style="font-size:12px;margin-right:6px">' + escapeHtml(flag.invoice_number) + '</code>' : '') +
+                    escapeHtml(flag.message || '') +
+                    '</div>';
+            });
+            html += '</div>';
+        }
+
+        // Invoice table
+        if (invoices.length > 0) {
+            html += '<div style="max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px">';
+            html += '<table style="width:100%;font-size:13px;border-collapse:collapse">';
+            html += '<thead><tr style="background:#f9fafb;position:sticky;top:0">' +
+                '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #e5e7eb">Invoice #</th>' +
+                '<th style="padding:6px 8px;text-align:right;border-bottom:1px solid #e5e7eb">Total</th>' +
+                '<th style="padding:6px 8px;text-align:center;border-bottom:1px solid #e5e7eb">Items</th>' +
+                '<th style="padding:6px 8px;text-align:center;border-bottom:1px solid #e5e7eb">Status</th>' +
+                '</tr></thead><tbody>';
+            invoices.forEach(function (inv) {
+                var badge = inv.is_new
+                    ? '<span style="padding:1px 6px;border-radius:3px;background:#dcfce7;color:#166534;font-size:11px">New</span>'
+                    : '<span style="padding:1px 6px;border-radius:3px;background:#e0f2fe;color:#0369a1;font-size:11px">Updated</span>';
+                html += '<tr>' +
+                    '<td style="padding:5px 8px;border-bottom:1px solid #f3f4f6"><code>' + escapeHtml(inv.invoice_number) + '</code></td>' +
+                    '<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f3f4f6">$' + (inv.total || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                    '<td style="padding:5px 8px;text-align:center;border-bottom:1px solid #f3f4f6">' + (inv.line_item_count || 0) + '</td>' +
+                    '<td style="padding:5px 8px;text-align:center;border-bottom:1px solid #f3f4f6">' + badge + '</td>' +
+                    '</tr>';
+            });
+            html += '</tbody></table></div>';
+        }
+
+        // View All link
+        html += '<div style="text-align:center;margin-top:12px">' +
+            '<a href="/invoices" class="btn btn-primary" style="font-size:13px">View All Invoices</a>' +
+            '</div>';
+
+        container.innerHTML = html;
+    }
+
 })();
