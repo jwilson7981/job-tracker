@@ -492,11 +492,11 @@ def ai_review_invoices(invoices, conn=None, job_id=None):
 [{"severity": "error|warning|info", "category": "string", "invoice_number": "string", "message": "string"}]
 
 Check for:
-1. MATH ERRORS: qty × unit_price ≠ extended_price (tolerance $0.02)
-2. DUPLICATE LINE ITEMS: same product code appearing multiple times on one invoice
+1. MATH ERRORS: qty × unit_price ≠ extended_price (tolerance $0.02). IMPORTANT: Many HVAC supply items are priced "per C" (per 100 units) or "per M" (per 1000 units), especially pipe, flex duct, collars, and fittings. If qty × unit_price / 100 = extended_price (within $0.02), this is per-C pricing and is NOT an error — do not flag it. Same for /1000 (per M). Only flag if the math doesn't work with any standard pricing unit (per each, per C, per M).
+2. DUPLICATE LINE ITEMS: same product code appearing multiple times on one invoice (note: same product across DIFFERENT invoices is fine)
 3. BACKORDER SPLITS: items with qty_backordered > 0 (info - may have split invoice)
 4. TAX ANOMALIES: effective tax rate outside 5-12% range
-5. PRICING CONCERNS: $0 unit price, single item qty > 100, extended_price > $10,000
+5. PRICING CONCERNS: $0 unit price, extended_price > $10,000
 
 If no issues found, return an empty array [].
 
