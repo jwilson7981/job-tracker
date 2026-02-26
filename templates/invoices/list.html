@@ -60,6 +60,18 @@
     </table>
 </div>
 
+<!-- Review Flags Section -->
+<div class="bid-section" style="margin-top:24px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3>Review Flags <span id="flagCount" style="font-size:13px;color:var(--gray-500);font-weight:normal;"></span></h3>
+        <a href="/invoices/reports" class="btn btn-secondary btn-small">View All Reports</a>
+    </div>
+    <table class="data-table" style="margin-top:8px;">
+        <thead><tr><th>Severity</th><th>Category</th><th>Invoice #</th><th>Job</th><th>Supplier</th><th>Message</th><th>Date</th><th>Action</th></tr></thead>
+        <tbody id="flagsBody"><tr><td colspan="8" class="empty-state">No unresolved flags</td></tr></tbody>
+    </table>
+</div>
+
 <!-- Sync Log Section -->
 <div class="bid-section" style="margin-top:24px;">
     <h3>Sync History</h3>
@@ -117,7 +129,7 @@ function filterInvoices() {
         const statusCls = 'status-' + (i.status||'open').toLowerCase();
         const dupeFlag = i.is_duplicate ? ' <span style="color:var(--red);font-size:11px;">[DUPE]</span>' : '';
         const quoteMatch = i.supplier_quote_id ? `<span style="color:var(--green,#22c55e);">Matched</span>` : '-';
-        return `<tr>
+        return `<tr onclick="window.location='/invoices/${i.id}'" style="cursor:pointer;">
             <td>${i.invoice_number || '-'}${dupeFlag}</td>
             <td>${i.supplier_name || '-'}</td>
             <td>${i.job_name || '-'}</td>
@@ -226,6 +238,34 @@ async function loadSyncLog() {
     </tr>`).join('');
 }
 
-document.addEventListener('DOMContentLoaded', loadInvoices);
+async function loadFlags() {
+    const res = await fetch('/api/invoice-flags?resolved=0');
+    const flags = await res.json();
+    const tbody = document.getElementById('flagsBody');
+    document.getElementById('flagCount').textContent = flags.length ? `(${flags.length} unresolved)` : '';
+    if (!flags.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No unresolved flags</td></tr>'; return; }
+    tbody.innerHTML = flags.map(f => {
+        const sevColor = f.severity === 'error' ? '#DC2626' : f.severity === 'warning' ? '#D97706' : '#2563EB';
+        return `<tr>
+            <td><span class="status-badge" style="background:${sevColor};color:#fff;">${f.severity}</span></td>
+            <td>${f.category || '-'}</td>
+            <td>${f.invoice_number || '-'}</td>
+            <td>${f.job_name || '-'}</td>
+            <td>${f.supplier_name || '-'}</td>
+            <td style="max-width:300px;">${f.message || '-'}</td>
+            <td>${f.created_at || '-'}</td>
+            <td><button class="btn btn-secondary btn-small" onclick="resolveFlag(${f.id}, this)">Resolve</button></td>
+        </tr>`;
+    }).join('');
+}
+
+async function resolveFlag(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    await fetch(`/api/invoice-flags/${id}/resolve`, {method:'PUT'});
+    loadFlags();
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadInvoices(); loadFlags(); });
 </script>
 {% endblock %}

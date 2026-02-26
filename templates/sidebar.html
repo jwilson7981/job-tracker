@@ -27,52 +27,130 @@
         </a>
         {% endif %}
 
+        {% if current_user.role in ('owner', 'admin', 'project_manager') %}
+        <!-- Customers & Bids -->
+        <div class="sidebar-group" data-group="customers">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Customers & Bids
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/customers" class="sidebar-link {% if '/customers' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9819;</span> Customers
+                </a>
+                <a href="/bids" class="sidebar-link {% if '/bids' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9998;</span> Bids
+                </a>
+                <a href="/supplier-quotes" class="sidebar-link {% if '/supplier-quotes' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128203;</span> Supplier Quotes
+                </a>
+            </div>
+        </div>
+
+        <!-- Projects & Scheduling -->
+        <div class="sidebar-group" data-group="projects">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Projects & Scheduling
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/projects" class="sidebar-link {% if '/projects' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9635;</span> Projects
+                </a>
+                <a href="/schedule" class="sidebar-link {% if '/schedule' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128197;</span> Schedule
+                </a>
+                <a href="/workflow" class="sidebar-link {% if '/workflow' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128202;</span> Workflow
+                </a>
+            </div>
+        </div>
+        {% endif %}
+
         {% if current_user.role in ('owner', 'admin', 'project_manager', 'warehouse') %}
-        <a href="/materials" class="sidebar-link {% if '/materials' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9634;</span> Materials
-        </a>
+        <!-- Materials & Inventory -->
+        <div class="sidebar-group" data-group="materials">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Materials & Inventory
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/materials" class="sidebar-link {% if request.path == '/materials' or '/materials/job' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9634;</span> Materials
+                </a>
+                <a href="/inventory" class="sidebar-link {% if '/inventory' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128230;</span> Inventory
+                </a>
+                <a href="/material-requests" class="sidebar-link {% if '/material-requests' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128196;</span> Material Requests
+                </a>
+            </div>
+        </div>
         {% endif %}
 
         {% if current_user.role in ('owner', 'admin', 'project_manager') %}
-        <a href="/projects" class="sidebar-link {% if '/projects' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9635;</span> Projects
-        </a>
-        <a href="/schedule" class="sidebar-link {% if '/schedule' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128197;</span> Schedule
-        </a>
-        <a href="/bids" class="sidebar-link {% if '/bids' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9998;</span> Bids
-        </a>
-        <a href="/payapps" class="sidebar-link {% if '/payapps' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128179;</span> Pay Apps
-        </a>
-        <a href="/rfis" class="sidebar-link {% if '/rfis' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#10067;</span> RFIs
-        </a>
-        <a href="/change-orders" class="sidebar-link {% if '/change-orders' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128221;</span> Change Orders
-        </a>
-        <a href="/submittals" class="sidebar-link {% if '/submittals' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128230;</span> Submittals
-        </a>
-        <a href="/documents" class="sidebar-link {% if '/documents' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128196;</span> Documents
-        </a>
+        <!-- Job Documents -->
+        <div class="sidebar-group" data-group="jobdocs">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Job Documents
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/plans" class="sidebar-link {% if '/plans' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128208;</span> Plans
+                </a>
+                <a href="/contracts" class="sidebar-link {% if '/contracts' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128203;</span> Contracts
+                </a>
+                <a href="/rfis" class="sidebar-link {% if '/rfis' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#10067;</span> RFIs
+                </a>
+                <a href="/change-orders" class="sidebar-link {% if '/change-orders' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128221;</span> Change Orders
+                </a>
+                <a href="/submittals" class="sidebar-link {% if '/submittals' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128230;</span> Submittals
+                </a>
+                <a href="/documents" class="sidebar-link {% if '/documents' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128196;</span> Documents
+                </a>
+                <a href="/payapps" class="sidebar-link {% if '/payapps' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128179;</span> Pay Apps
+                </a>
+                <a href="/lien-waivers" class="sidebar-link {% if '/lien-waivers' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128220;</span> Lien Waivers
+                </a>
+            </div>
+        </div>
         {% endif %}
 
         {% if current_user.role in ('owner', 'admin') %}
-        <a href="/accounting" class="sidebar-link {% if '/accounting' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">$</span> Accounting
-        </a>
-        <a href="/expenses" class="sidebar-link {% if request.path == '/expenses' %}active{% endif %}">
-            <span class="sidebar-icon">&#128176;</span> Expenses
-        </a>
-        {% endif %}
-
-        {% if current_user.role == 'owner' %}
-        <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/employee' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9636;</span> Payroll
-        </a>
+        <!-- Finance -->
+        <div class="sidebar-group" data-group="finance">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Finance
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/accounting" class="sidebar-link {% if '/accounting' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">$</span> Accounting
+                </a>
+                <a href="/invoices" class="sidebar-link {% if request.path == '/invoices' %}active{% endif %}">
+                    <span class="sidebar-icon">&#128179;</span> Invoices
+                </a>
+                <a href="/invoices/reports" class="sidebar-link {% if '/invoices/reports' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128202;</span> Reports
+                </a>
+                <a href="/expenses" class="sidebar-link {% if request.path == '/expenses' %}active{% endif %}">
+                    <span class="sidebar-icon">&#128176;</span> Expenses
+                </a>
+                {% if current_user.role == 'owner' %}
+                <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/employee' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9636;</span> Payroll
+                </a>
+                {% endif %}
+            </div>
+        </div>
         {% endif %}
 
         {% if current_user.role in ('employee', 'warehouse') %}
@@ -82,31 +160,50 @@
         {% endif %}
 
         {% if current_user.role in ('owner', 'admin', 'project_manager') %}
-        <a href="/warranty" class="sidebar-link {% if '/warranty' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9745;</span> Warranty
-        </a>
-        {% endif %}
-
-        <div class="sidebar-divider"></div>
-
+        <!-- Service & Warranty -->
+        <div class="sidebar-group" data-group="service">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Service & Warranty
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/warranty" class="sidebar-link {% if '/warranty' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9745;</span> Warranty
+                </a>
+                <a href="/service-calls" class="sidebar-link {% if '/service-calls' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9742;</span> Service Calls
+                </a>
+            </div>
+        </div>
+        {% else %}
         <a href="/service-calls" class="sidebar-link {% if '/service-calls' in request.path %}active{% endif %}">
             <span class="sidebar-icon">&#9742;</span> Service Calls
         </a>
-        <a href="/howtos" class="sidebar-link {% if '/howtos' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9997;</span> How To's
-        </a>
-        <a href="/codebooks" class="sidebar-link {% if '/codebooks' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#9783;</span> Code Books
-        </a>
-        <a href="/manuals" class="sidebar-link {% if '/manuals' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128214;</span> Manuals
-        </a>
-
-        {% if current_user.role == 'owner' %}
-        <a href="/licenses" class="sidebar-link {% if '/licenses' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128203;</span> Licenses
-        </a>
         {% endif %}
+
+        <!-- Resources -->
+        <div class="sidebar-group" data-group="resources">
+            <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                Resources
+                <span class="sidebar-group-arrow">&#9660;</span>
+            </div>
+            <div class="sidebar-group-items">
+                <a href="/howtos" class="sidebar-link {% if '/howtos' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9997;</span> How To's
+                </a>
+                <a href="/codebooks" class="sidebar-link {% if '/codebooks' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#9783;</span> Code Books
+                </a>
+                <a href="/manuals" class="sidebar-link {% if '/manuals' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128214;</span> Manuals
+                </a>
+                {% if current_user.role == 'owner' %}
+                <a href="/licenses" class="sidebar-link {% if '/licenses' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128203;</span> Licenses
+                </a>
+                {% endif %}
+            </div>
+        </div>
 
         <div class="sidebar-divider"></div>
 
@@ -115,7 +212,6 @@
         </a>
 
         {% if current_user.role == 'owner' %}
-        <div class="sidebar-divider"></div>
         <a href="/admin/users" class="sidebar-link {% if '/admin/users' in request.path %}active{% endif %}">
             <span class="sidebar-icon">&#9881;</span> User Mgmt
         </a>
@@ -132,3 +228,30 @@
 <button class="sidebar-toggle" id="sidebarToggle" onclick="document.getElementById('sidebar').classList.toggle('open');this.classList.toggle('active');">
     <span></span><span></span><span></span>
 </button>
+
+<script>
+function toggleSidebarGroup(header) {
+    const group = header.parentElement;
+    const key = 'sb_' + group.dataset.group;
+    group.classList.toggle('collapsed');
+    localStorage.setItem(key, group.classList.contains('collapsed') ? '1' : '0');
+}
+
+// On load: restore state, but always expand groups with an active link
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.sidebar-group').forEach(function(group) {
+        const key = 'sb_' + group.dataset.group;
+        const hasActive = group.querySelector('.sidebar-link.active');
+
+        if (hasActive) {
+            // Always expand if a child is active
+            group.classList.remove('collapsed');
+            group.classList.add('has-active');
+            localStorage.setItem(key, '0');
+        } else if (localStorage.getItem(key) === '1') {
+            // Restore collapsed state
+            group.classList.add('collapsed');
+        }
+    });
+});
+</script>

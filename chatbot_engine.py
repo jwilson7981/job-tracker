@@ -1,5 +1,6 @@
 """Smart chatbot engine with intent classification, entity extraction, and role-based permissions."""
 
+import json
 import re
 from datetime import datetime, timedelta
 
@@ -27,6 +28,9 @@ NAV_MAP = {
     'howtos': '/howtos', 'how tos': '/howtos', 'how to': '/howtos', 'how-tos': '/howtos',
     'code books': '/codebooks', 'codebooks': '/codebooks', 'codes': '/codebooks',
     'manuals': '/manuals', 'equipment manuals': '/manuals',
+    'reports': '/invoices/reports', 'invoice reports': '/invoices/reports',
+    'contracts': '/contracts', 'contract': '/contracts',
+    'workflow': '/workflow', 'workflow dashboard': '/workflow',
     'chat': '/chatbot', 'chatbot': '/chatbot',
     'user management': '/admin/users', 'users': '/admin/users', 'admin': '/admin/users',
 }
@@ -283,6 +287,28 @@ INTENTS = [
         'priority': 24,
     },
     {
+        'name': 'contracts_status',
+        'patterns': [
+            r'(contract|contracts)\s*(status|summary|overview|list)?',
+            r'(active|pending|draft)\s+contracts?',
+            r'how\s+many\s+contracts?',
+        ],
+        'keywords': ['contracts', 'contract status', 'active contracts'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 25,
+    },
+    {
+        'name': 'workflow_status',
+        'patterns': [
+            r'workflow\s*(status|summary|overview|dashboard)?',
+            r'project\s+(status|progress|overview)',
+            r'(what|how).*(pending|open|outstanding)',
+        ],
+        'keywords': ['workflow status', 'workflow summary', 'project progress'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 25,
+    },
+    {
         'name': 'code_search',
         'patterns': [
             r'(search|find|look\s*up)\s+(code|ibc|nec|irc)',
@@ -303,6 +329,77 @@ INTENTS = [
         'keywords': ['howto', 'how-to'],
         'roles': ALL_ROLES,
         'priority': 15,
+    },
+    {
+        'name': 'invoice_job_spend',
+        'patterns': [
+            r'(total\s+)?spend\s+(on|for)\s+',
+            r'how\s+much\s+(have\s+we\s+)?(spent|invoiced)\s+(on|for)\s+',
+            r'invoice(d|s)?\s+(total|amount|sum)\s+(for|on)\s+',
+            r'cost\s+(of|for|on)\s+',
+        ],
+        'keywords': ['job spend', 'total spend', 'total invoiced'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 37,
+    },
+    {
+        'name': 'invoice_supplier_spend',
+        'patterns': [
+            r'(spend|spent|total|invoiced)\s+(by|per|from|with)\s+supplier',
+            r'supplier\s+(spend|total|breakdown|cost)',
+            r'how\s+much\s+(from|to|with)\s+(locke|plumb)',
+        ],
+        'keywords': ['supplier spend', 'supplier breakdown', 'supplier totals'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 37,
+    },
+    {
+        'name': 'invoice_overdue',
+        'patterns': [
+            r'overdue\s+invoices?',
+            r'invoices?\s+(overdue|past\s+due|late)',
+            r'outstanding\s+(balance|invoices?)',
+            r'unpaid\s+invoices?',
+            r'what.*(overdue|past\s+due).*invoice',
+        ],
+        'keywords': ['overdue invoices', 'unpaid invoices', 'outstanding invoices'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 37,
+    },
+    {
+        'name': 'invoice_flags',
+        'patterns': [
+            r'invoice\s*(review\s+)?flags?',
+            r'review\s+(flags?|issues?)',
+            r'(any|show|list)\s+(invoice\s+)?flags?',
+            r'import\s+(issues?|flags?|problems?)',
+        ],
+        'keywords': ['invoice flags', 'review flags', 'review issues'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 37,
+    },
+    {
+        'name': 'invoice_compare',
+        'patterns': [
+            r'compare\s+(costs?|spend|invoices?)\s+(between|for)\s+',
+            r'(cost|spend)\s+comparison',
+            r'compare\s+\w+\s+(and|vs\.?|versus)\s+',
+        ],
+        'keywords': ['compare costs', 'compare spend', 'cost comparison'],
+        'roles': ['owner', 'admin', 'project_manager'],
+        'priority': 38,
+    },
+    {
+        'name': 'material_pricing',
+        'patterns': [
+            r'(price|pricing|cost)\s+(for|of|on)\s+\w',
+            r'how\s+much\s+(does|is|for)\s+\w.*cost',
+            r'(look\s*up|find|check)\s+(price|pricing)',
+            r'(recent|latest|last)\s+(price|cost)\s+(for|of)',
+        ],
+        'keywords': ['material price', 'product price', 'material cost'],
+        'roles': ['owner', 'admin', 'project_manager', 'warehouse'],
+        'priority': 36,
     },
 ]
 
@@ -535,10 +632,24 @@ def handle_help(conn, msg, role, user_id):
         lines.append("- **pending change orders** — Change order status & totals")
         lines.append("- **pending submittals** — Submittal status overview")
         lines.append("- **closeout status** — Incomplete closeout items")
+        lines.append("- **contract status** — Active/pending contracts")
+        lines.append("- **workflow status** — Cross-feature summary")
         lines.append("")
         lines.append("**Company:**")
         lines.append("- **overdue expenses** — Past-due recurring bills")
         lines.append("- **expired licenses** — License expiration status")
+        lines.append("")
+
+    lines.append("**General:**")
+    if role in ('owner', 'admin', 'project_manager'):
+        lines.append("")
+        lines.append("**Invoice Analytics:**")
+        lines.append("- **spend on [job name]** — Total invoiced for a job")
+        lines.append("- **supplier spend** — Breakdown by supplier")
+        lines.append("- **overdue invoices** — List past-due invoices")
+        lines.append("- **invoice flags** — Unresolved review flags")
+        lines.append("- **compare [job1] and [job2]** — Side-by-side cost comparison")
+        lines.append("- **price for [product code]** — Recent material pricing")
         lines.append("")
 
     lines.append("**General:**")
@@ -1132,6 +1243,65 @@ def handle_employee_hours(conn, msg, role, user_id):
     return '\n'.join(lines)
 
 
+def handle_contracts_status(conn, msg, role, user_id):
+    contracts = conn.execute(
+        """SELECT c.*, j.name as job_name FROM contracts c
+           JOIN jobs j ON c.job_id = j.id
+           ORDER BY c.created_at DESC"""
+    ).fetchall()
+
+    if not contracts:
+        return "No contracts found. [Go to Contracts](/contracts) to add one."
+
+    by_status = {}
+    total_value = 0
+    for c in contracts:
+        s = c['status']
+        if s not in by_status:
+            by_status[s] = []
+        by_status[s].append(c)
+        total_value += c['value'] or 0
+
+    lines = [f"**{len(contracts)}** contract(s) — total value **${total_value:,.2f}**\n"]
+    for status in ['Active', 'Draft', 'Complete', 'Terminated']:
+        items = by_status.get(status, [])
+        if items:
+            lines.append(f"**{status}** ({len(items)}):")
+            for c in items[:3]:
+                val = f" — ${c['value']:,.2f}" if c['value'] else ""
+                lines.append(f"- {c['job_name']}: {c['title']}{val}")
+            if len(items) > 3:
+                lines.append(f"  ...and {len(items) - 3} more")
+
+    lines.append(f"\n[View All Contracts](/contracts)")
+    return '\n'.join(lines)
+
+
+def handle_workflow_status(conn, msg, role, user_id):
+    # Get counts across features
+    rfis = conn.execute("SELECT COUNT(*) as cnt FROM rfis WHERE status = 'Open'").fetchone()['cnt']
+    submittals = conn.execute("SELECT COUNT(*) as cnt FROM submittals WHERE status IN ('Pending','Submitted')").fetchone()['cnt']
+    cos = conn.execute("SELECT COUNT(*) as cnt FROM change_orders WHERE status IN ('Draft','Submitted')").fetchone()['cnt']
+    sched = conn.execute("SELECT COUNT(*) as cnt FROM job_schedule_events WHERE status = 'In Progress'").fetchone()['cnt']
+    pa = conn.execute("SELECT COUNT(*) as cnt FROM pay_applications WHERE status IN ('Draft','Submitted')").fetchone()['cnt']
+
+    lines = ["**Workflow Summary:**\n"]
+    lines.append(f"- **Open RFIs:** {rfis}")
+    lines.append(f"- **Pending Submittals:** {submittals}")
+    lines.append(f"- **Pending Change Orders:** {cos}")
+    lines.append(f"- **In-Progress Schedule Items:** {sched}")
+    lines.append(f"- **Pending Pay Apps:** {pa}")
+
+    total = rfis + submittals + cos + sched + pa
+    if total == 0:
+        lines.append("\nAll clear — no pending items!")
+    else:
+        lines.append(f"\n**{total}** total pending items across all features.")
+
+    lines.append(f"\n[View Workflow Dashboard](/workflow)")
+    return '\n'.join(lines)
+
+
 def handle_code_search(conn, msg, role, user_id):
     query = extract_code_query(msg)
     if not query:
@@ -1177,6 +1347,239 @@ def handle_howto(conn, msg, role, user_id):
     return '\n'.join(lines)
 
 
+# ─── Invoice Analytics Handlers ───────────────────────────────────
+
+def _extract_job_name(msg):
+    """Extract job name from message like 'spend on Quail Creek' or 'cost for Smith Residence'."""
+    patterns = [
+        r'(?:spend|spent|invoiced?|cost|total)\s+(?:on|for)\s+(.+?)(?:\?|$|\.)',
+        r'(?:on|for)\s+(.+?)(?:\?|$|\.)',
+    ]
+    for p in patterns:
+        m = re.search(p, msg, re.IGNORECASE)
+        if m:
+            name = m.group(1).strip().rstrip('?.,!')
+            if len(name) > 2 and name.lower() not in ('the', 'all', 'each', 'every', 'a', 'this'):
+                return name
+    return None
+
+
+def _find_job_by_name(conn, name):
+    """Fuzzy-find a job by name substring."""
+    if not name:
+        return None
+    row = conn.execute("SELECT id, name FROM jobs WHERE LOWER(name) LIKE ? ORDER BY name LIMIT 1",
+                       (f'%{name.lower()}%',)).fetchone()
+    return row
+
+
+def handle_invoice_job_spend(conn, msg, role, user_id):
+    job_name = _extract_job_name(msg)
+    if not job_name:
+        # Show top jobs by spend
+        rows = conn.execute('''
+            SELECT j.name, COUNT(si.id) as cnt, COALESCE(SUM(si.total),0) as total,
+                   COALESCE(SUM(si.balance_due),0) as balance
+            FROM supplier_invoices si
+            LEFT JOIN jobs j ON si.job_id = j.id
+            WHERE si.is_duplicate = 0
+            GROUP BY si.job_id ORDER BY total DESC LIMIT 10
+        ''').fetchall()
+        if not rows:
+            return "No invoices found."
+        lines = ["**Top Jobs by Invoice Spend:**\n"]
+        lines.append("| Job | Invoices | Total | Balance |")
+        lines.append("|-----|----------|-------|---------|")
+        for r in rows:
+            lines.append(f"| {r['name'] or 'Unassigned'} | {r['cnt']} | ${r['total']:,.2f} | ${r['balance']:,.2f} |")
+        return '\n'.join(lines)
+
+    job = _find_job_by_name(conn, job_name)
+    if not job:
+        return f"No job found matching **{job_name}**. Try a different name."
+
+    row = conn.execute('''
+        SELECT COUNT(*) as cnt, COALESCE(SUM(total),0) as total,
+               COALESCE(SUM(balance_due),0) as balance
+        FROM supplier_invoices WHERE job_id = ? AND is_duplicate = 0
+    ''', (job['id'],)).fetchone()
+
+    lines = [f"**Invoice Spend for {job['name']}:**\n"]
+    lines.append(f"- **Invoices:** {row['cnt']}")
+    lines.append(f"- **Total Invoiced:** ${row['total']:,.2f}")
+    lines.append(f"- **Outstanding Balance:** ${row['balance']:,.2f}")
+    lines.append(f"\n[View Invoices](/invoices) | [View Reports](/invoices/reports)")
+    return '\n'.join(lines)
+
+
+def handle_invoice_supplier_spend(conn, msg, role, user_id):
+    rows = conn.execute('''
+        SELECT bc.supplier_name, COUNT(si.id) as cnt,
+               COALESCE(SUM(si.total),0) as total,
+               COALESCE(SUM(si.balance_due),0) as balance
+        FROM supplier_invoices si
+        LEFT JOIN billtrust_config bc ON si.supplier_config_id = bc.id
+        WHERE si.is_duplicate = 0
+        GROUP BY si.supplier_config_id ORDER BY total DESC
+    ''').fetchall()
+    if not rows:
+        return "No supplier invoices found."
+    lines = ["**Supplier Spend Breakdown:**\n"]
+    lines.append("| Supplier | Invoices | Total | Balance |")
+    lines.append("|----------|----------|-------|---------|")
+    for r in rows:
+        lines.append(f"| {r['supplier_name'] or 'Unknown'} | {r['cnt']} | ${r['total']:,.2f} | ${r['balance']:,.2f} |")
+    grand = sum(r['total'] for r in rows)
+    lines.append(f"\n**Grand Total:** ${grand:,.2f}")
+    lines.append(f"\n[View Reports](/invoices/reports)")
+    return '\n'.join(lines)
+
+
+def handle_invoice_overdue(conn, msg, role, user_id):
+    today = datetime.now().strftime('%Y-%m-%d')
+    rows = conn.execute('''
+        SELECT si.invoice_number, si.due_date, si.total, si.balance_due,
+               bc.supplier_name, j.name as job_name
+        FROM supplier_invoices si
+        LEFT JOIN billtrust_config bc ON si.supplier_config_id = bc.id
+        LEFT JOIN jobs j ON si.job_id = j.id
+        WHERE si.due_date < ? AND si.due_date != '' AND si.balance_due > 0
+              AND si.is_duplicate = 0
+        ORDER BY si.due_date ASC LIMIT 20
+    ''', (today,)).fetchall()
+    if not rows:
+        return "No overdue invoices found. All caught up!"
+    total_overdue = sum(r['balance_due'] for r in rows)
+    lines = [f"**{len(rows)} Overdue Invoice(s)** — Total: ${total_overdue:,.2f}\n"]
+    lines.append("| Invoice # | Supplier | Job | Due Date | Balance |")
+    lines.append("|-----------|----------|-----|----------|---------|")
+    for r in rows:
+        lines.append(f"| {r['invoice_number']} | {r['supplier_name'] or '-'} | {r['job_name'] or '-'} | {r['due_date']} | ${r['balance_due']:,.2f} |")
+    lines.append(f"\n[View Invoices](/invoices)")
+    return '\n'.join(lines)
+
+
+def handle_invoice_flags(conn, msg, role, user_id):
+    rows = conn.execute('''
+        SELECT irf.severity, irf.category, irf.invoice_number, irf.message,
+               irf.supplier_name, j.name as job_name
+        FROM invoice_review_flags irf
+        LEFT JOIN jobs j ON irf.job_id = j.id
+        WHERE irf.resolved = 0
+        ORDER BY CASE irf.severity WHEN 'error' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
+                 irf.created_at DESC
+        LIMIT 15
+    ''').fetchall()
+    if not rows:
+        return "No unresolved invoice flags. Everything looks clean!"
+    error_cnt = sum(1 for r in rows if r['severity'] == 'error')
+    warn_cnt = sum(1 for r in rows if r['severity'] == 'warning')
+    info_cnt = sum(1 for r in rows if r['severity'] == 'info')
+    lines = [f"**Unresolved Invoice Flags:** {len(rows)} total"]
+    if error_cnt: lines.append(f"- Errors: {error_cnt}")
+    if warn_cnt: lines.append(f"- Warnings: {warn_cnt}")
+    if info_cnt: lines.append(f"- Info: {info_cnt}")
+    lines.append("")
+    for r in rows:
+        sev = r['severity'].upper()
+        lines.append(f"- **[{sev}]** {r['category']}: {r['invoice_number']} — {r['message']}")
+    lines.append(f"\n[View All Flags](/invoices/reports)")
+    return '\n'.join(lines)
+
+
+def handle_invoice_compare(conn, msg, role, user_id):
+    # Try to extract two job names: "compare X and Y" or "compare X vs Y"
+    m = re.search(r'compare\s+(.+?)\s+(?:and|vs\.?|versus|with)\s+(.+?)(?:\?|$|\.)', msg, re.IGNORECASE)
+    if not m:
+        return "Please specify two jobs to compare, e.g. **compare spend on Quail Creek and Smith Residence**"
+    name1, name2 = m.group(1).strip().rstrip('?.,!'), m.group(2).strip().rstrip('?.,!')
+    # Strip leading words
+    for prefix in ('costs for ', 'spend for ', 'spend on ', 'costs on ', 'invoices for '):
+        if name1.lower().startswith(prefix):
+            name1 = name1[len(prefix):]
+        if name2.lower().startswith(prefix):
+            name2 = name2[len(prefix):]
+
+    job1 = _find_job_by_name(conn, name1)
+    job2 = _find_job_by_name(conn, name2)
+    if not job1:
+        return f"Could not find a job matching **{name1}**."
+    if not job2:
+        return f"Could not find a job matching **{name2}**."
+
+    def get_stats(jid):
+        return conn.execute('''
+            SELECT COUNT(*) as cnt, COALESCE(SUM(total),0) as total,
+                   COALESCE(SUM(balance_due),0) as balance
+            FROM supplier_invoices WHERE job_id = ? AND is_duplicate = 0
+        ''', (jid,)).fetchone()
+
+    s1, s2 = get_stats(job1['id']), get_stats(job2['id'])
+    lines = ["**Cost Comparison:**\n"]
+    lines.append("| | " + job1['name'] + " | " + job2['name'] + " |")
+    lines.append("|---|---|---|")
+    lines.append(f"| Invoices | {s1['cnt']} | {s2['cnt']} |")
+    lines.append(f"| Total | ${s1['total']:,.2f} | ${s2['total']:,.2f} |")
+    lines.append(f"| Balance | ${s1['balance']:,.2f} | ${s2['balance']:,.2f} |")
+    diff = s1['total'] - s2['total']
+    higher = job1['name'] if diff > 0 else job2['name']
+    lines.append(f"\n**{higher}** has ${abs(diff):,.2f} more in total invoices.")
+    return '\n'.join(lines)
+
+
+def handle_material_pricing(conn, msg, role, user_id):
+    # Extract product code or search term
+    m = re.search(r'(?:price|pricing|cost)\s+(?:for|of|on)\s+(.+?)(?:\?|$|\.)', msg, re.IGNORECASE)
+    if not m:
+        m = re.search(r'(?:look\s*up|find|check)\s+(?:price|pricing)\s+(?:for|of|on)?\s*(.+?)(?:\?|$|\.)', msg, re.IGNORECASE)
+    if not m:
+        return "Please specify a product code or item, e.g. **price for L0100** or **price for flex duct**"
+
+    query = m.group(1).strip().rstrip('?.,!')
+
+    # Search in line_items JSON of supplier_invoices
+    rows = conn.execute('''
+        SELECT si.invoice_number, si.invoice_date, si.line_items,
+               bc.supplier_name
+        FROM supplier_invoices si
+        LEFT JOIN billtrust_config bc ON si.supplier_config_id = bc.id
+        WHERE si.line_items LIKE ? AND si.is_duplicate = 0
+        ORDER BY si.invoice_date DESC LIMIT 20
+    ''', (f'%{query}%',)).fetchall()
+
+    found = []
+    for r in rows:
+        try:
+            items = json.loads(r['line_items']) if r['line_items'] else []
+        except Exception:
+            continue
+        for item in items:
+            code = item.get('product_code', '') or ''
+            desc = item.get('description', '') or ''
+            if query.lower() in code.lower() or query.lower() in desc.lower():
+                found.append({
+                    'code': code,
+                    'desc': desc,
+                    'price': item.get('unit_price', 0),
+                    'date': r['invoice_date'],
+                    'supplier': r['supplier_name'],
+                    'invoice': r['invoice_number'],
+                })
+        if len(found) >= 10:
+            break
+
+    if not found:
+        return f"No pricing found for **{query}**. Try a product code like **L0100** or a description keyword."
+
+    lines = [f"**Recent Prices for \"{query}\":**\n"]
+    lines.append("| Product | Description | Unit Price | Date | Supplier |")
+    lines.append("|---------|-------------|-----------|------|----------|")
+    for f in found[:10]:
+        lines.append(f"| {f['code']} | {f['desc'][:40]} | ${f['price']:,.2f} | {f['date']} | {f['supplier'] or '-'} |")
+    lines.append(f"\n*Showing {len(found[:10])} most recent matches.*")
+    return '\n'.join(lines)
+
+
 # ─── Fallback ─────────────────────────────────────────────────────
 
 def get_fallback(role):
@@ -1190,6 +1593,8 @@ def get_fallback(role):
         lines.append("- **bids from last month** / **bid [name]**")
         lines.append("- **job status** / **open RFIs** / **pending change orders**")
         lines.append("- **overdue expenses** / **expired licenses**")
+        lines.append("- **spend on [job]** / **supplier spend** / **overdue invoices**")
+        lines.append("- **invoice flags** / **compare [job1] and [job2]** / **price for [item]**")
 
     if role == 'owner':
         lines.append("- **profit for [job name]** / **hours for [employee]**")
@@ -1228,6 +1633,14 @@ HANDLERS = {
     'employee_hours': handle_employee_hours,
     'code_search': handle_code_search,
     'howto': handle_howto,
+    'contracts_status': handle_contracts_status,
+    'workflow_status': handle_workflow_status,
+    'invoice_job_spend': handle_invoice_job_spend,
+    'invoice_supplier_spend': handle_invoice_supplier_spend,
+    'invoice_overdue': handle_invoice_overdue,
+    'invoice_flags': handle_invoice_flags,
+    'invoice_compare': handle_invoice_compare,
+    'material_pricing': handle_material_pricing,
 }
 
 

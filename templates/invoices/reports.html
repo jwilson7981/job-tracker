@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Invoice Reports{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Invoice Reports</h1>
+    <button class="btn btn-secondary" onclick="window.print()">Print</button>
+</div>
+
+<!-- Global Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <label style="font-size:13px;">From: <input type="date" id="dateFrom" class="form-input" style="width:150px;" onchange="applyFilters()"></label>
+    <label style="font-size:13px;">To: <input type="date" id="dateTo" class="form-input" style="width:150px;" onchange="applyFilters()"></label>
+    <select id="rptJobFilter" class="form-select" onchange="applyFilters()" style="max-width:200px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="rptSupplierFilter" class="form-select" onchange="applyFilters()" style="max-width:200px;">
+        <option value="">All Suppliers</option>
+    </select>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar" style="display:flex;gap:0;border-bottom:2px solid var(--gray-200,#e2e8f0);margin-bottom:20px;">
+    <button class="tab-btn active" data-tab="flags" onclick="switchTab('flags',this)">Review Flags</button>
+    <button class="tab-btn" data-tab="spend" onclick="switchTab('spend',this)">Spend by Job</button>
+    <button class="tab-btn" data-tab="supplier" onclick="switchTab('supplier',this)">Supplier Breakdown</button>
+    <button class="tab-btn" data-tab="trends" onclick="switchTab('trends',this)">Monthly Trends</button>
+</div>
+
+<style>
+.tab-btn { padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:500;color:var(--gray-500,#64748b);border-bottom:2px solid transparent;margin-bottom:-2px; }
+.tab-btn.active { color:var(--primary,#2563EB);border-bottom-color:var(--primary,#2563EB); }
+.tab-panel { display:none; }
+.tab-panel.active { display:block; }
+@media print { .filter-bar,.tab-bar,.btn,.no-print { display:none!important; } .tab-panel { display:block!important;page-break-after:always; } }
+</style>
+
+<!-- Tab: Review Flags -->
+<div class="tab-panel active" id="tab-flags">
+    <div style="margin-bottom:12px;">
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="showResolved" onchange="renderFlags()"> Show Resolved
+        </label>
+    </div>
+    <div class="module-table-wrapper">
+        <table class="data-table">
+            <thead><tr><th>Severity</th><th>Category</th><th>Invoice #</th><th>Job</th><th>Supplier</th><th>Message</th><th>Status</th><th>Date</th><th class="no-print">Action</th></tr></thead>
+            <tbody id="rptFlagsBody"><tr><td colspan="9" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Tab: Spend by Job -->
+<div class="tab-panel" id="tab-spend">
+    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:400px;">
+            <table class="data-table">
+                <thead><tr><th>Job</th><th style="text-align:right;">Invoices</th><th style="text-align:right;">Total</th><th style="text-align:right;">Balance</th></tr></thead>
+                <tbody id="rptSpendBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
+            </table>
+        </div>
+        <div style="flex:0 0 350px;"><canvas id="spendChart"></canvas></div>
+    </div>
+</div>
+
+<!-- Tab: Supplier Breakdown -->
+<div class="tab-panel" id="tab-supplier">
+    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:400px;">
+            <table class="data-table">
+                <thead><tr><th>Supplier</th><th style="text-align:right;">Invoices</th><th style="text-align:right;">Total</th><th style="text-align:right;">Avg Invoice</th></tr></thead>
+                <tbody id="rptSupplierBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
+            </table>
+        </div>
+        <div style="flex:0 0 300px;"><canvas id="supplierChart"></canvas></div>
+    </div>
+</div>
+
+<!-- Tab: Monthly Trends -->
+<div class="tab-panel" id="tab-trends">
+    <div style="max-width:800px;"><canvas id="trendsChart"></canvas></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let allInvoices = [], allFlags = [];
+let spendChart = null, supplierChart = null, trendsChart = null;
+const fmt = n => '$' + Number(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+function switchTab(tab, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    btn.classList.add('active');
+}
+
+async function loadData() {
+    const [invRes, flagRes] = await Promise.all([
+        fetch('/api/invoices'),
+        fetch('/api/invoice-flags?limit=1000')
+    ]);
+    allInvoices = await invRes.json();
+    allFlags = await flagRes.json();
+
+    // Populate filters
+    const jobs = [...new Set(allInvoices.map(i => i.job_name).filter(Boolean))].sort();
+    const suppliers = [...new Set(allInvoices.map(i => i.supplier_name).filter(Boolean))].sort();
+    const jobSel = document.getElementById('rptJobFilter');
+    jobs.forEach(j => { const o = document.createElement('option'); o.value = j; o.textContent = j; jobSel.appendChild(o); });
+    const supSel = document.getElementById('rptSupplierFilter');
+    suppliers.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; supSel.appendChild(o); });
+
+    applyFilters();
+}
+
+function getFilteredInvoices() {
+    const dateFrom = document.getElementById('dateFrom').value;
+    const dateTo = document.getElementById('dateTo').value;
+    const job = document.getElementById('rptJobFilter').value;
+    const supplier = document.getElementById('rptSupplierFilter').value;
+    return allInvoices.filter(i => {
+        if (dateFrom && (i.invoice_date || '') < dateFrom) return false;
+        if (dateTo && (i.invoice_date || '') > dateTo) return false;
+        if (job && i.job_name !== job) return false;
+        if (supplier && i.supplier_name !== supplier) return false;
+        return true;
+    });
+}
+
+function applyFilters() {
+    const filtered = getFilteredInvoices();
+    renderFlags();
+    renderSpend(filtered);
+    renderSupplier(filtered);
+    renderTrends(filtered);
+}
+
+function renderFlags() {
+    const showResolved = document.getElementById('showResolved').checked;
+    const job = document.getElementById('rptJobFilter').value;
+    const supplier = document.getElementById('rptSupplierFilter').value;
+    const dateFrom = document.getElementById('dateFrom').value;
+    const dateTo = document.getElementById('dateTo').value;
+    const filtered = allFlags.filter(f => {
+        if (!showResolved && f.resolved) return false;
+        if (job && f.job_name !== job) return false;
+        if (supplier && f.supplier_name !== supplier) return false;
+        if (dateFrom && (f.created_at || '') < dateFrom) return false;
+        if (dateTo && (f.created_at || '') > dateTo) return false;
+        return true;
+    });
+    const tbody = document.getElementById('rptFlagsBody');
+    if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No flags match filters</td></tr>'; return; }
+    tbody.innerHTML = filtered.map(f => {
+        const sevColor = f.severity === 'error' ? '#DC2626' : f.severity === 'warning' ? '#D97706' : '#2563EB';
+        const statusText = f.resolved ? '<span style="color:#22C55E;">Resolved</span>' : '<span style="color:#D97706;">Open</span>';
+        const action = f.resolved ? '-' : `<button class="btn btn-secondary btn-small no-print" onclick="resolveFlag(${f.id}, this)">Resolve</button>`;
+        return `<tr>
+            <td><span class="status-badge" style="background:${sevColor};color:#fff;">${f.severity}</span></td>
+            <td>${f.category || '-'}</td>
+            <td>${f.invoice_number || '-'}</td>
+            <td>${f.job_name || '-'}</td>
+            <td>${f.supplier_name || '-'}</td>
+            <td style="max-width:300px;">${f.message || '-'}</td>
+            <td>${statusText}</td>
+            <td>${f.created_at || '-'}</td>
+            <td class="no-print">${action}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function resolveFlag(id, btn) {
+    btn.disabled = true; btn.textContent = '...';
+    await fetch(`/api/invoice-flags/${id}/resolve`, {method:'PUT'});
+    const res = await fetch('/api/invoice-flags?limit=1000');
+    allFlags = await res.json();
+    renderFlags();
+}
+
+function renderSpend(invoices) {
+    const byJob = {};
+    invoices.forEach(i => {
+        const name = i.job_name || 'Unassigned';
+        if (!byJob[name]) byJob[name] = {count:0, total:0, balance:0};
+        byJob[name].count++;
+        byJob[name].total += Number(i.total||0);
+        byJob[name].balance += Number(i.balance_due||0);
+    });
+    const rows = Object.entries(byJob).map(([name,d]) => ({name,...d})).sort((a,b) => b.total - a.total);
+    const tbody = document.getElementById('rptSpendBody');
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No data</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `<tr><td>${r.name}</td><td style="text-align:right;">${r.count}</td><td style="text-align:right;">${fmt(r.total)}</td><td style="text-align:right;">${fmt(r.balance)}</td></tr>`).join('');
+
+    if (spendChart) spendChart.destroy();
+    const top10 = rows.slice(0, 10);
+    spendChart = new Chart(document.getElementById('spendChart'), {
+        type: 'bar',
+        data: { labels: top10.map(r=>r.name), datasets: [{ label:'Total', data:top10.map(r=>r.total), backgroundColor:'#2563EB' }] },
+        options: { indexAxis:'y', responsive:true, plugins:{legend:{display:false}}, scales:{x:{ticks:{callback:v=>'$'+v.toLocaleString()}}} }
+    });
+}
+
+function renderSupplier(invoices) {
+    const bySup = {};
+    invoices.forEach(i => {
+        const name = i.supplier_name || 'Unknown';
+        if (!bySup[name]) bySup[name] = {count:0, total:0};
+        bySup[name].count++;
+        bySup[name].total += Number(i.total||0);
+    });
+    const rows = Object.entries(bySup).map(([name,d]) => ({name,...d, avg:d.total/d.count})).sort((a,b) => b.total - a.total);
+    const tbody = document.getElementById('rptSupplierBody');
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No data</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `<tr><td>${r.name}</td><td style="text-align:right;">${r.count}</td><td style="text-align:right;">${fmt(r.total)}</td><td style="text-align:right;">${fmt(r.avg)}</td></tr>`).join('');
+
+    if (supplierChart) supplierChart.destroy();
+    const colors = ['#2563EB','#DC2626','#22C55E','#D97706','#8B5CF6','#EC4899','#14B8A6','#F97316'];
+    supplierChart = new Chart(document.getElementById('supplierChart'), {
+        type: 'doughnut',
+        data: { labels: rows.map(r=>r.name), datasets: [{ data:rows.map(r=>r.total), backgroundColor:rows.map((_,i)=>colors[i%colors.length]) }] },
+        options: { responsive:true, plugins:{legend:{position:'bottom'}} }
+    });
+}
+
+function renderTrends(invoices) {
+    const monthMap = {};
+    invoices.forEach(i => {
+        const d = i.invoice_date || '';
+        const key = d.length >= 7 ? d.substring(0,7) : '';
+        if (!key) return;
+        monthMap[key] = (monthMap[key]||0) + Number(i.total||0);
+    });
+    const keys = Object.keys(monthMap).sort();
+    const labels = keys.map(k => {
+        const [y,m] = k.split('-');
+        return new Date(Number(y), Number(m)-1, 1).toLocaleString('default', {month:'short', year:'2-digit'});
+    });
+
+    if (trendsChart) trendsChart.destroy();
+    trendsChart = new Chart(document.getElementById('trendsChart'), {
+        type: 'bar',
+        data: { labels, datasets: [{ label:'Monthly Spend', data:keys.map(k=>monthMap[k]), backgroundColor:'#2563EB', borderColor:'#1E40AF', borderWidth:1 }] },
+        options: { responsive:true, plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true, ticks:{callback:v=>'$'+v.toLocaleString()}} } }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', loadData);
+</script>
+{% endblock %}

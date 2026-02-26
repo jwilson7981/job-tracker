@@ -7038,6 +7038,62 @@ def api_billtrust_sync_log():
     return jsonify([dict(r) for r in rows])
 
 
+# ─── Invoice Review Flags & Detail ───────────────────────────────
+
+@app.route('/api/invoice-flags')
+@api_login_required
+def api_list_invoice_flags():
+    job_id = request.args.get('job_id')
+    severity = request.args.get('severity')
+    resolved = request.args.get('resolved')
+    limit = request.args.get('limit', 200, type=int)
+    conn = get_db()
+    sql = '''
+        SELECT irf.*, j.name as job_name
+        FROM invoice_review_flags irf
+        LEFT JOIN jobs j ON irf.job_id = j.id
+        WHERE 1=1
+    '''
+    params = []
+    if job_id:
+        sql += ' AND irf.job_id = ?'
+        params.append(job_id)
+    if severity:
+        sql += ' AND irf.severity = ?'
+        params.append(severity)
+    if resolved is not None and resolved != '':
+        sql += ' AND irf.resolved = ?'
+        params.append(int(resolved))
+    sql += ' ORDER BY irf.created_at DESC LIMIT ?'
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/invoice-flags/<int:fid>/resolve', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_resolve_invoice_flag(fid):
+    conn = get_db()
+    conn.execute('''
+        UPDATE invoice_review_flags
+        SET resolved = 1, resolved_by = ?, resolved_at = datetime('now','localtime')
+        WHERE id = ?
+    ''', (session['user_id'], fid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/invoices/reports')
+@role_required('owner', 'admin')
+def invoice_reports_page():
+    return render_template('invoices/reports.html')
+
+@app.route('/invoices/<int:iid>')
+@login_required
+def invoice_detail_page(iid):
+    return render_template('invoices/detail.html', invoice_id=iid)
+
+
 # ─── Phase 6: Material Requests ──────────────────────────────────
 
 @app.route('/material-requests')

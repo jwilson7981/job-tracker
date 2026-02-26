@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Invoice Detail{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <div>
+        <a href="/invoices" style="font-size:13px;color:var(--gray-500);text-decoration:none;">&larr; Back to Invoices</a>
+        <h1 id="invTitle" style="margin-top:4px;">Invoice</h1>
+    </div>
+    <div id="invStatusBadge"></div>
+</div>
+
+<!-- Info Grid -->
+<div class="kpi-grid" id="invInfo" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+    <div class="kpi-card"><div class="kpi-label">Supplier</div><div class="kpi-value" style="font-size:16px;" id="dSupplier">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Job</div><div class="kpi-value" style="font-size:16px;" id="dJob">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Invoice Date</div><div class="kpi-value" style="font-size:16px;" id="dDate">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Due Date</div><div class="kpi-value" style="font-size:16px;" id="dDue">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">PO #</div><div class="kpi-value" style="font-size:16px;" id="dPO">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Terms</div><div class="kpi-value" style="font-size:16px;" id="dTerms">-</div></div>
+</div>
+
+<!-- Totals -->
+<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:16px;">
+    <div class="kpi-card"><div class="kpi-label">Subtotal</div><div class="kpi-value" style="color:#475569;" id="dSubtotal">$0.00</div></div>
+    <div class="kpi-card"><div class="kpi-label">Tax</div><div class="kpi-value" style="color:#475569;" id="dTax">$0.00</div></div>
+    <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value" style="color:#2563EB;" id="dTotal">$0.00</div></div>
+    <div class="kpi-card"><div class="kpi-label">Amount Paid</div><div class="kpi-value" style="color:#22C55E;" id="dPaid">$0.00</div></div>
+    <div class="kpi-card"><div class="kpi-label">Balance Due</div><div class="kpi-value" style="color:#DC2626;" id="dBalance">$0.00</div></div>
+</div>
+
+<!-- Line Items -->
+<div class="bid-section" style="margin-top:24px;">
+    <h3>Line Items</h3>
+    <div class="module-table-wrapper">
+        <table class="data-table" style="margin-top:8px;">
+            <thead><tr>
+                <th>Line</th><th>Product Code</th><th>Description</th>
+                <th style="text-align:right;">Qty Ordered</th><th style="text-align:right;">Qty Shipped</th><th style="text-align:right;">Qty B/O</th>
+                <th>Unit</th><th style="text-align:right;">Unit Price</th><th style="text-align:right;">Extended</th>
+            </tr></thead>
+            <tbody id="lineItemsBody"><tr><td colspan="9" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Review Flags -->
+<div class="bid-section" style="margin-top:24px;">
+    <h3>Review Flags <span id="detailFlagCount" style="font-size:13px;color:var(--gray-500);font-weight:normal;"></span></h3>
+    <table class="data-table" style="margin-top:8px;">
+        <thead><tr><th>Severity</th><th>Category</th><th>Message</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+        <tbody id="detailFlagsBody"><tr><td colspan="6" class="empty-state">No flags</td></tr></tbody>
+    </table>
+</div>
+
+<script>
+const invoiceId = {{ invoice_id }};
+const fmt = n => '$' + Number(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+async function loadInvoiceDetail() {
+    const res = await fetch(`/api/invoices/${invoiceId}`);
+    if (!res.ok) { document.getElementById('invTitle').textContent = 'Invoice Not Found'; return; }
+    const inv = await res.json();
+
+    document.getElementById('invTitle').textContent = `Invoice #${inv.invoice_number || invoiceId}`;
+    const statusCls = 'status-' + (inv.status||'open').toLowerCase();
+    document.getElementById('invStatusBadge').innerHTML = `<span class="status-badge ${statusCls}" style="font-size:14px;">${inv.status||'open'}</span>`;
+
+    document.getElementById('dSupplier').textContent = inv.supplier_name || '-';
+    const jobEl = document.getElementById('dJob');
+    if (inv.job_id && inv.job_name) {
+        jobEl.innerHTML = `<a href="/materials/job/${inv.job_id}">${inv.job_name}</a>`;
+    } else {
+        jobEl.textContent = inv.job_name || 'Unassigned';
+    }
+    document.getElementById('dDate').textContent = inv.invoice_date || '-';
+    document.getElementById('dDue').textContent = inv.due_date || '-';
+    document.getElementById('dPO').textContent = inv.po_number || '-';
+    document.getElementById('dTerms').textContent = inv.terms || '-';
+
+    document.getElementById('dSubtotal').textContent = fmt(inv.subtotal);
+    document.getElementById('dTax').textContent = fmt(inv.tax_amount);
+    document.getElementById('dTotal').textContent = fmt(inv.total);
+    document.getElementById('dPaid').textContent = fmt(inv.amount_paid);
+    document.getElementById('dBalance').textContent = fmt(inv.balance_due);
+
+    // Line items — try structured items first, fall back to JSON blob
+    let items = inv.items || [];
+    if (!items.length && inv.line_items) {
+        try { items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : inv.line_items; } catch(e) { items = []; }
+    }
+    const liBody = document.getElementById('lineItemsBody');
+    if (!items.length) {
+        liBody.innerHTML = '<tr><td colspan="9" class="empty-state">No line items</td></tr>';
+    } else {
+        liBody.innerHTML = items.map(li => `<tr>
+            <td>${li.line_number || '-'}</td>
+            <td>${li.product_code || ''}</td>
+            <td>${li.description || ''}</td>
+            <td style="text-align:right;">${li.qty_ordered ?? '-'}</td>
+            <td style="text-align:right;">${li.qty_shipped ?? '-'}</td>
+            <td style="text-align:right;">${li.qty_backordered ?? li.qty_bo ?? '-'}</td>
+            <td>${li.unit || ''}</td>
+            <td style="text-align:right;">${fmt(li.unit_price)}</td>
+            <td style="text-align:right;">${fmt(li.extended_price)}</td>
+        </tr>`).join('');
+    }
+
+    loadInvoiceFlags();
+}
+
+async function loadInvoiceFlags() {
+    const res = await fetch(`/api/invoice-flags?limit=100`);
+    const allFlags = await res.json();
+    const flags = allFlags.filter(f => f.invoice_id == invoiceId || f.invoice_number == document.getElementById('invTitle').textContent.replace('Invoice #',''));
+    const tbody = document.getElementById('detailFlagsBody');
+    document.getElementById('detailFlagCount').textContent = flags.length ? `(${flags.length})` : '';
+    if (!flags.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No flags for this invoice</td></tr>'; return; }
+    tbody.innerHTML = flags.map(f => {
+        const sevColor = f.severity === 'error' ? '#DC2626' : f.severity === 'warning' ? '#D97706' : '#2563EB';
+        const statusText = f.resolved ? '<span style="color:#22C55E;">Resolved</span>' : '<span style="color:#D97706;">Open</span>';
+        const action = f.resolved ? '-' : `<button class="btn btn-secondary btn-small" onclick="resolveFlag(${f.id}, this)">Resolve</button>`;
+        return `<tr>
+            <td><span class="status-badge" style="background:${sevColor};color:#fff;">${f.severity}</span></td>
+            <td>${f.category || '-'}</td>
+            <td style="max-width:400px;">${f.message || '-'}</td>
+            <td>${statusText}</td>
+            <td>${f.created_at || '-'}</td>
+            <td>${action}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function resolveFlag(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    await fetch(`/api/invoice-flags/${id}/resolve`, {method:'PUT'});
+    loadInvoiceFlags();
+}
+
+document.addEventListener('DOMContentLoaded', loadInvoiceDetail);
+</script>
+{% endblock %}

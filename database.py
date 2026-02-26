@@ -685,6 +685,28 @@ def init_db():
             UNIQUE(invoice_number, supplier_config_id)
         );
 
+        /* ─── Invoice Review Flags ─── */
+
+        CREATE TABLE IF NOT EXISTS invoice_review_flags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER,
+            invoice_number TEXT NOT NULL DEFAULT '',
+            job_id INTEGER,
+            supplier_name TEXT DEFAULT '',
+            severity TEXT NOT NULL DEFAULT 'info'
+                CHECK(severity IN ('error','warning','info')),
+            category TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            resolved INTEGER NOT NULL DEFAULT 0,
+            resolved_by INTEGER,
+            resolved_at TEXT,
+            import_batch TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE SET NULL,
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+            FOREIGN KEY (resolved_by) REFERENCES users(id)
+        );
+
         /* ─── Documents (Closeout) ─── */
 
         CREATE TABLE IF NOT EXISTS closeout_checklists (
@@ -774,6 +796,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_supplier_invoices_config ON supplier_invoices(supplier_config_id);
         CREATE INDEX IF NOT EXISTS idx_supplier_invoices_job ON supplier_invoices(job_id);
         CREATE INDEX IF NOT EXISTS idx_supplier_invoices_number ON supplier_invoices(invoice_number);
+        CREATE INDEX IF NOT EXISTS idx_invoice_flags_invoice ON invoice_review_flags(invoice_id);
+        CREATE INDEX IF NOT EXISTS idx_invoice_flags_job ON invoice_review_flags(job_id);
+        CREATE INDEX IF NOT EXISTS idx_invoice_flags_resolved ON invoice_review_flags(resolved);
 
         /* ─── Plans ─── */
 

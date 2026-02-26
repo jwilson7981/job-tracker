@@ -594,6 +594,43 @@ def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn, j
     # 5. AI Review
     ai_flags = ai_review_invoices(merged, conn=conn, job_id=job_id)
 
+    # 6. Persist flags to invoice_review_flags table
+    if ai_flags:
+        import_batch = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Look up supplier name
+        supplier_row = conn.execute(
+            'SELECT supplier_name FROM billtrust_config WHERE id = ?',
+            (supplier_config_id,)
+        ).fetchone()
+        supplier_name = supplier_row['supplier_name'] if supplier_row else ''
+
+        for flag in ai_flags:
+            inv_num = flag.get('invoice_number', '')
+            # Look up invoice_id and job_id from just-upserted invoices
+            inv_row = conn.execute(
+                'SELECT id, job_id FROM supplier_invoices WHERE invoice_number = ? AND supplier_config_id = ?',
+                (inv_num, supplier_config_id)
+            ).fetchone()
+            flag_invoice_id = inv_row['id'] if inv_row else None
+            flag_job_id = inv_row['job_id'] if inv_row else job_id
+
+            conn.execute('''
+                INSERT INTO invoice_review_flags
+                    (invoice_id, invoice_number, job_id, supplier_name,
+                     severity, category, message, import_batch)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                flag_invoice_id,
+                inv_num,
+                flag_job_id,
+                supplier_name,
+                flag.get('severity', 'info'),
+                flag.get('category', ''),
+                flag.get('message', ''),
+                import_batch,
+            ))
+        conn.commit()
+
     return {
         'stats': stats,
         'invoices': imported_invoices,
