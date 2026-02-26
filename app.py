@@ -5546,6 +5546,29 @@ def api_billtrust_test(config_id):
         conn.close()
         return jsonify({'success': False, 'message': str(e)})
 
+@app.route('/api/billtrust/detect-pdf', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_billtrust_detect_pdf():
+    """Check if a PDF is a BillTrust supplier invoice by reading page 1."""
+    pdf_file = request.files.get('pdf_file')
+    if not pdf_file:
+        return jsonify({'is_billtrust': False})
+    try:
+        import pdfplumber, io
+        content = pdf_file.read()
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            if not pdf.pages:
+                return jsonify({'is_billtrust': False})
+            text = (pdf.pages[0].extract_text() or '').upper()
+        # Check for known supplier names
+        if 'LOCKE SUPPLY' in text:
+            return jsonify({'is_billtrust': True, 'supplier_name': 'Locke Supply'})
+        if 'PLUMB SUPPLY' in text:
+            return jsonify({'is_billtrust': True, 'supplier_name': 'Plumb Supply'})
+        return jsonify({'is_billtrust': False})
+    except Exception:
+        return jsonify({'is_billtrust': False})
+
 @app.route('/api/billtrust/import', methods=['POST'])
 @api_role_required('owner', 'admin')
 def api_billtrust_import():
@@ -5554,10 +5577,17 @@ def api_billtrust_import():
     pdf_file = request.files.get('pdf_file')
     supplier_name = request.form.get('supplier_name', 'Locke Supply')
 
-    if not csv_file:
-        return jsonify({'error': 'CSV file is required'}), 400
+    if not csv_file and not pdf_file:
+        return jsonify({'error': 'CSV or PDF file is required'}), 400
 
-    csv_content = csv_file.read()
+    job_id = request.form.get('job_id', '').strip() or None
+    if job_id:
+        try:
+            job_id = int(job_id)
+        except ValueError:
+            job_id = None
+
+    csv_content = csv_file.read() if csv_file else None
     pdf_content = pdf_file.read() if pdf_file else None
 
     conn = get_db()
@@ -5573,7 +5603,7 @@ def api_billtrust_import():
         supplier_config_id = config['id']
 
         from invoice_import import import_billtrust_files
-        result = import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn)
+        result = import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn, job_id=job_id)
 
         # Log to sync log
         stats = result.get('stats', {})

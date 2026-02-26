@@ -424,26 +424,50 @@ def auto_link_job(conn, ship_to_name, ship_to_address):
 # AI Review
 # ---------------------------------------------------------------------------
 
-def ai_review_invoices(invoices):
+def ai_review_invoices(invoices, conn=None, job_id=None):
     """Review all imported invoices for anomalies using Claude Haiku.
 
     Checks: math errors, duplicate line items, backorder splits,
-    tax anomalies, pricing concerns.
+    tax anomalies, pricing concerns, cross-job duplicates.
 
     Args:
         invoices: List of merged invoice dicts.
+        conn: Optional SQLite connection for cross-job duplicate check.
+        job_id: Optional job_id of current import.
 
     Returns:
         List of flag dicts with severity, category, invoice_number, message.
     """
+    flags = []
+
+    # Check for cross-job duplicates (same invoice number on a different job)
+    if conn and job_id:
+        for inv in invoices:
+            inv_num = inv.get('invoice_number', '')
+            if not inv_num:
+                continue
+            existing = conn.execute(
+                'SELECT si.invoice_number, j.name as job_name FROM supplier_invoices si '
+                'LEFT JOIN jobs j ON si.job_id = j.id '
+                'WHERE si.invoice_number = ? AND si.job_id IS NOT NULL AND si.job_id != ?',
+                (inv_num, job_id)
+            ).fetchall()
+            for row in existing:
+                flags.append({
+                    'severity': 'warning',
+                    'category': 'CROSS-JOB DUPLICATE',
+                    'invoice_number': inv_num,
+                    'message': f'This invoice also exists on job "{row["job_name"]}". Verify it is not billed to the wrong job.'
+                })
+
     api_key = os.environ.get('ANTHROPIC_API_KEY', '')
     if not api_key or not invoices:
-        return []
+        return flags
 
     try:
         import anthropic
     except ImportError:
-        return []
+        return flags
 
     # Build summary for AI review
     summary = []
@@ -489,18 +513,20 @@ Invoices:
         text = response.content[0].text.strip()
         json_match = re.search(r'\[[\s\S]*\]', text)
         if json_match:
-            return json.loads(json_match.group())
+            ai_flags = json.loads(json_match.group())
+            if isinstance(ai_flags, list):
+                flags.extend(ai_flags)
     except Exception as exc:
         print(f'[InvoiceImport] AI review error: {exc}')
 
-    return []
+    return flags
 
 
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn):
+def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn, job_id=None):
     """Full import pipeline: parse -> extract -> merge -> upsert -> AI review.
 
     Args:
@@ -508,6 +534,7 @@ def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn):
         pdf_content: bytes of PDF file (may be None).
         supplier_config_id: FK to billtrust_config.id.
         conn: SQLite connection.
+        job_id: Optional job ID to assign all invoices to.
 
     Returns:
         Dict with stats, invoices, ai_flags, job_links.
@@ -535,12 +562,13 @@ def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn):
     imported_invoices = []
 
     for inv in merged:
-        # Try auto-linking job
-        job_id = auto_link_job(conn, inv.get('ship_to_name', ''), inv.get('ship_to_address', ''))
-        if job_id:
-            inv['job_id'] = job_id
-            # Look up job name for results display
-            job_row = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
+        # Use explicitly provided job_id, fall back to auto-linking
+        linked_job_id = job_id
+        if not linked_job_id:
+            linked_job_id = auto_link_job(conn, inv.get('ship_to_name', ''), inv.get('ship_to_address', ''))
+        if linked_job_id:
+            inv['job_id'] = linked_job_id
+            job_row = conn.execute('SELECT name FROM jobs WHERE id = ?', (linked_job_id,)).fetchone()
             if job_row:
                 job_links[inv['invoice_number']] = job_row['name']
 
@@ -564,7 +592,7 @@ def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn):
     conn.commit()
 
     # 5. AI Review
-    ai_flags = ai_review_invoices(merged)
+    ai_flags = ai_review_invoices(merged, conn=conn, job_id=job_id)
 
     return {
         'stats': stats,

@@ -457,6 +457,12 @@
                             '<option value="Plumb Supply">Plumb Supply</option>' +
                         '</select>' +
                     '</div>' +
+                    '<div class="form-group" style="margin-top:8px">' +
+                        '<label class="form-label">Job</label>' +
+                        '<select id="btJobSelect" class="form-select">' +
+                            '<option value="">Loading jobs...</option>' +
+                        '</select>' +
+                    '</div>' +
                     '<div id="btProgress" style="display:none;margin-top:12px">' +
                         '<div class="dd-progress-bar"><div class="dd-progress-bar-inner" id="btProgressBar" style="width:0%"></div></div>' +
                         '<span id="btProgressText" class="dd-progress-text">Preparing...</span>' +
@@ -482,7 +488,7 @@
     }
 
     function detectBillTrustImport(files) {
-        // Find CSV files and check first 1KB for BillTrust headers
+        // Find CSV and PDF files
         var csvFiles = [];
         var pdfFiles = [];
         for (var i = 0; i < files.length; i++) {
@@ -490,26 +496,45 @@
             if (name.endsWith('.csv')) csvFiles.push(files[i]);
             else if (name.endsWith('.pdf')) pdfFiles.push(files[i]);
         }
-        if (csvFiles.length === 0) return Promise.resolve(false);
 
-        return new Promise(function (resolve) {
-            var reader = new FileReader();
-            reader.onload = function () {
-                var header = reader.result || '';
-                if (header.indexOf('INVOICE_NUMBER') !== -1 && header.indexOf('TOTAL_DUE') !== -1) {
-                    showBtModal(csvFiles, pdfFiles);
-                    resolve(true);
-                } else {
-                    resolve(false);
-                }
-            };
-            reader.onerror = function () { resolve(false); };
-            // Read only first 1KB
-            reader.readAsText(csvFiles[0].slice(0, 1024));
-        });
+        // Path 1: CSV present — check header for BillTrust columns
+        if (csvFiles.length > 0) {
+            return new Promise(function (resolve) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    var header = reader.result || '';
+                    if (header.indexOf('INVOICE_NUMBER') !== -1 && header.indexOf('TOTAL_DUE') !== -1) {
+                        showBtModal(csvFiles, pdfFiles);
+                        resolve(true);
+                    } else {
+                        resolve(false);
+                    }
+                };
+                reader.onerror = function () { resolve(false); };
+                reader.readAsText(csvFiles[0].slice(0, 1024));
+            });
+        }
+
+        // Path 2: PDF only — ask server to check first page for supplier names
+        if (pdfFiles.length > 0 && pdfFiles.length <= 2) {
+            var formData = new FormData();
+            formData.append('pdf_file', pdfFiles[0]);
+            return fetch('/api/billtrust/detect-pdf', { method: 'POST', body: formData })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.is_billtrust) {
+                        showBtModal([], pdfFiles, data.supplier_name || '');
+                        return true;
+                    }
+                    return false;
+                })
+                .catch(function () { return false; });
+        }
+
+        return Promise.resolve(false);
     }
 
-    function showBtModal(csvFiles, pdfFiles) {
+    function showBtModal(csvFiles, pdfFiles, detectedSupplier) {
         createBtModal();
         var det = document.getElementById('btDetectedFiles');
         var badges = '';
@@ -521,10 +546,21 @@
             badges += '<span style="display:inline-block;padding:4px 10px;border-radius:4px;background:#fce7f3;color:#be185d;font-size:13px;margin:2px 4px 2px 0">' +
                 escapeHtml(f.name) + ' (PDF)</span>';
         });
+        if (csvFiles.length === 0) {
+            badges += '<span style="display:inline-block;padding:4px 10px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:13px;margin:2px 4px 2px 0">No CSV — headers from PDF only</span>';
+        }
         if (pdfFiles.length === 0) {
             badges += '<span style="display:inline-block;padding:4px 10px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:13px;margin:2px 4px 2px 0">No PDF — line items will be skipped</span>';
         }
         det.innerHTML = '<div style="font-size:13px;color:#6b7280;margin-bottom:4px">Detected BillTrust export files:</div>' + badges;
+
+        // Auto-select supplier if detected from PDF
+        if (detectedSupplier) {
+            var sel = document.getElementById('btSupplier');
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === detectedSupplier) { sel.selectedIndex = i; break; }
+            }
+        }
 
         // Store references for import
         btModal._csvFiles = csvFiles;
@@ -536,6 +572,20 @@
         document.getElementById('btImportBtn').disabled = false;
         document.getElementById('btImportBtn').textContent = 'Import Invoices';
         document.getElementById('btProgressBar').style.width = '0%';
+
+        // Populate job selector
+        var btJobSel = document.getElementById('btJobSelect');
+        loadJobs().then(function (jobs) {
+            btJobSel.innerHTML = '<option value="">-- Select Job --</option>';
+            jobs.forEach(function (j) {
+                var opt = document.createElement('option');
+                opt.value = j.id;
+                opt.textContent = j.name;
+                btJobSel.appendChild(opt);
+            });
+            if (jobs.length === 1) btJobSel.value = jobs[0].id;
+        });
+
         btModal.style.display = 'flex';
     }
 
@@ -555,12 +605,24 @@
         progressBar.style.width = '15%';
         progressText.textContent = 'Uploading files...';
 
+        var btJobId = document.getElementById('btJobSelect').value;
+        if (!btJobId) {
+            alert('Please select a job for these invoices.');
+            importBtn.disabled = false;
+            importBtn.textContent = 'Import Invoices';
+            progressDiv.style.display = 'none';
+            return;
+        }
+
         var formData = new FormData();
-        formData.append('csv_file', btModal._csvFiles[0]);
+        if (btModal._csvFiles.length > 0) {
+            formData.append('csv_file', btModal._csvFiles[0]);
+        }
         if (btModal._pdfFiles.length > 0) {
             formData.append('pdf_file', btModal._pdfFiles[0]);
         }
         formData.append('supplier_name', document.getElementById('btSupplier').value);
+        formData.append('job_id', btJobId);
 
         // Animate progress while waiting
         var pct = 15;
