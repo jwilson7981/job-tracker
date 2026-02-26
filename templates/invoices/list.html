@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Invoices{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Supplier Invoices</h1>
+</div>
+
+<!-- Analytics Dashboard -->
+<div class="kpi-grid" id="invoiceKpis">
+    <div class="kpi-card"><div class="kpi-value" style="color:#2563EB;" id="kpiTotalInvoiced">$0.00</div><div class="kpi-label">Total Invoiced</div></div>
+    <div class="kpi-card"><div class="kpi-value" style="color:#DC2626;" id="kpiOutstanding">$0.00</div><div class="kpi-label">Outstanding Balance</div></div>
+    <div class="kpi-card"><div class="kpi-value" style="color:#475569;" id="kpiCount">0</div><div class="kpi-label">Invoices</div></div>
+    <div class="kpi-card"><div class="kpi-value" style="color:#D97706;" id="kpiOpen">0</div><div class="kpi-label">Open</div></div>
+    <div class="kpi-card"><div class="kpi-value" style="color:#EF4444;" id="kpiOverdue">0</div><div class="kpi-label">Overdue</div></div>
+    <div class="kpi-card"><div class="kpi-value" style="color:#22C55E;" id="kpiPaid">0</div><div class="kpi-label">Paid</div></div>
+</div>
+<div class="charts-row">
+    <div class="chart-card">
+        <h3>Invoices by Status</h3>
+        <canvas id="statusChart"></canvas>
+    </div>
+    <div class="chart-card">
+        <h3>Monthly Spend</h3>
+        <canvas id="monthlyChart"></canvas>
+    </div>
+</div>
+<div class="chart-card" style="margin-top:16px;">
+    <h3>Supplier Breakdown</h3>
+    <table class="data-table" style="margin-top:8px;">
+        <thead><tr><th>Supplier</th><th>Invoices</th><th style="text-align:right;">Total Invoiced</th><th style="text-align:right;">Balance Due</th><th style="text-align:right;">Avg Invoice</th></tr></thead>
+        <tbody id="supplierBreakdownBody"><tr><td colspan="5" class="empty-state">No data</td></tr></tbody>
+    </table>
+</div>
+
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <input type="text" id="searchInput" class="form-input" placeholder="Search invoices..." oninput="filterInvoices()" style="max-width:280px;">
+    <select id="jobFilter" class="form-select" onchange="filterInvoices()" style="max-width:200px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="statusFilter" class="form-select" onchange="filterInvoices()" style="max-width:160px;">
+        <option value="">All Statuses</option>
+        <option value="open">Open</option>
+        <option value="paid">Paid</option>
+        <option value="overdue">Overdue</option>
+    </select>
+    <select id="supplierFilter" class="form-select" onchange="filterInvoices()" style="max-width:180px;">
+        <option value="">All Suppliers</option>
+    </select>
+    <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="showDupes" onchange="filterInvoices()"> Duplicates Only
+    </label>
+    <span id="invoiceCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>Invoice #</th><th>Supplier</th><th>Job</th><th>Date</th><th>Due Date</th><th>Total</th><th>Balance</th><th>Status</th><th>Quote Match</th>
+        </tr></thead>
+        <tbody id="invoicesBody"><tr><td colspan="9" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<!-- Sync Log Section -->
+<div class="bid-section" style="margin-top:24px;">
+    <h3>Sync History</h3>
+    <table class="data-table" style="margin-top:8px;">
+        <thead><tr><th>Supplier</th><th>Type</th><th>Found</th><th>New</th><th>Updated</th><th>Duplicates</th><th>Errors</th><th>Date</th></tr></thead>
+        <tbody id="syncLogBody"><tr><td colspan="8" class="empty-state">No sync history</td></tr></tbody>
+    </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let allInvoices = [];
+let statusChart = null, monthlyChart = null;
+const fmt = n => '$' + Number(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+async function loadInvoices() {
+    const res = await fetch('/api/invoices');
+    allInvoices = await res.json();
+    // Populate filters
+    const jobs = [...new Set(allInvoices.map(i => i.job_name).filter(Boolean))].sort();
+    const suppliers = [...new Set(allInvoices.map(i => i.supplier_name).filter(Boolean))].sort();
+    const jobSel = document.getElementById('jobFilter');
+    jobs.forEach(j => { const o = document.createElement('option'); o.value = j; o.textContent = j; jobSel.appendChild(o); });
+    const supSel = document.getElementById('supplierFilter');
+    suppliers.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; supSel.appendChild(o); });
+    filterInvoices();
+    loadSyncLog();
+}
+
+function filterInvoices() {
+    const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+    const job = document.getElementById('jobFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    const supplier = document.getElementById('supplierFilter').value;
+    const dupesOnly = document.getElementById('showDupes').checked;
+    const filtered = allInvoices.filter(i => {
+        if (dupesOnly && !i.is_duplicate) return false;
+        if (job && i.job_name !== job) return false;
+        if (status && i.status !== status) return false;
+        if (supplier && i.supplier_name !== supplier) return false;
+        if (search) {
+            const fields = [i.invoice_number, i.supplier_name, i.job_name, i.po_number].map(f => (f||'').toLowerCase());
+            if (!fields.some(f => f.includes(search))) return false;
+        }
+        return true;
+    });
+    document.getElementById('invoiceCount').textContent = `${filtered.length} of ${allInvoices.length} invoices`;
+    const tbody = document.getElementById('invoicesBody');
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No invoices match.</td></tr>';
+        updateAnalytics(filtered);
+        return;
+    }
+    tbody.innerHTML = filtered.map(i => {
+        const statusCls = 'status-' + (i.status||'open').toLowerCase();
+        const dupeFlag = i.is_duplicate ? ' <span style="color:var(--red);font-size:11px;">[DUPE]</span>' : '';
+        const quoteMatch = i.supplier_quote_id ? `<span style="color:var(--green,#22c55e);">Matched</span>` : '-';
+        return `<tr>
+            <td>${i.invoice_number || '-'}${dupeFlag}</td>
+            <td>${i.supplier_name || '-'}</td>
+            <td>${i.job_name || '-'}</td>
+            <td>${i.invoice_date || '-'}</td>
+            <td>${i.due_date || '-'}</td>
+            <td style="text-align:right;">${fmt(i.total)}</td>
+            <td style="text-align:right;">${fmt(i.balance_due)}</td>
+            <td><span class="status-badge ${statusCls}">${i.status || 'open'}</span></td>
+            <td style="text-align:center;">${quoteMatch}</td>
+        </tr>`;
+    }).join('');
+    updateAnalytics(filtered);
+}
+
+function updateAnalytics(invoices) {
+    const totalInvoiced = invoices.reduce((s, i) => s + Number(i.total || 0), 0);
+    const outstanding = invoices.reduce((s, i) => s + Number(i.balance_due || 0), 0);
+    const openCount = invoices.filter(i => (i.status||'').toLowerCase() === 'open').length;
+    const overdueCount = invoices.filter(i => (i.status||'').toLowerCase() === 'overdue').length;
+    const paidCount = invoices.filter(i => (i.status||'').toLowerCase() === 'paid').length;
+
+    document.getElementById('kpiTotalInvoiced').textContent = fmt(totalInvoiced);
+    document.getElementById('kpiOutstanding').textContent = fmt(outstanding);
+    document.getElementById('kpiCount').textContent = invoices.length;
+    document.getElementById('kpiOpen').textContent = openCount;
+    document.getElementById('kpiOverdue').textContent = overdueCount;
+    document.getElementById('kpiPaid').textContent = paidCount;
+
+    // Status doughnut chart
+    if (statusChart) statusChart.destroy();
+    statusChart = new Chart(document.getElementById('statusChart'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Open', 'Paid', 'Overdue'],
+            datasets: [{
+                data: [openCount, paidCount, overdueCount],
+                backgroundColor: ['#D97706', '#22C55E', '#EF4444']
+            }]
+        },
+        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+    });
+
+    // Monthly spend bar chart (last 6 months)
+    const now = new Date();
+    const months = [];
+    for (let m = 5; m >= 0; m--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+        months.push({ key: d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'),
+                       label: d.toLocaleString('default',{month:'short',year:'2-digit'}) });
+    }
+    const monthTotals = months.map(m => {
+        return invoices.filter(i => (i.invoice_date||'').startsWith(m.key))
+                       .reduce((s, i) => s + Number(i.total || 0), 0);
+    });
+    if (monthlyChart) monthlyChart.destroy();
+    monthlyChart = new Chart(document.getElementById('monthlyChart'), {
+        type: 'bar',
+        data: {
+            labels: months.map(m => m.label),
+            datasets: [{ label: 'Invoiced', data: monthTotals, backgroundColor: '#2563EB' }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + v.toLocaleString() } } }
+        }
+    });
+
+    // Supplier breakdown table
+    const bySupplier = {};
+    invoices.forEach(i => {
+        const name = i.supplier_name || 'Unknown';
+        if (!bySupplier[name]) bySupplier[name] = { count: 0, total: 0, balance: 0 };
+        bySupplier[name].count++;
+        bySupplier[name].total += Number(i.total || 0);
+        bySupplier[name].balance += Number(i.balance_due || 0);
+    });
+    const suppliers = Object.entries(bySupplier)
+        .map(([name, d]) => ({ name, ...d, avg: d.total / d.count }))
+        .sort((a, b) => b.total - a.total);
+    const stBody = document.getElementById('supplierBreakdownBody');
+    if (!suppliers.length) {
+        stBody.innerHTML = '<tr><td colspan="5" class="empty-state">No data</td></tr>';
+    } else {
+        stBody.innerHTML = suppliers.map(s => `<tr>
+            <td>${s.name}</td><td>${s.count}</td>
+            <td style="text-align:right;">${fmt(s.total)}</td>
+            <td style="text-align:right;">${fmt(s.balance)}</td>
+            <td style="text-align:right;">${fmt(s.avg)}</td>
+        </tr>`).join('');
+    }
+}
+
+async function loadSyncLog() {
+    const res = await fetch('/api/billtrust/sync-log');
+    const logs = await res.json();
+    const tbody = document.getElementById('syncLogBody');
+    if (!logs.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No sync history</td></tr>'; return; }
+    tbody.innerHTML = logs.map(l => `<tr>
+        <td>${l.supplier_name}</td><td>${l.sync_type}</td>
+        <td>${l.invoices_found}</td><td>${l.invoices_new}</td><td>${l.invoices_updated}</td>
+        <td>${l.duplicates_found}</td><td>${l.errors || '-'}</td><td>${l.created_at}</td>
+    </tr>`).join('');
+}
+
+document.addEventListener('DOMContentLoaded', loadInvoices);
+</script>
+{% endblock %}
