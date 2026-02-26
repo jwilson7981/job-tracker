@@ -111,6 +111,90 @@ def extract_pdf_pages(file_content):
     return pages
 
 
+def ai_extract_all_invoices(pages):
+    """Use Claude to extract all invoices from a multi-page PDF at once.
+
+    Args:
+        pages: List of page text strings from extract_pdf_pages().
+
+    Returns:
+        List of invoice dicts with invoice_number, totals, and line_items.
+    """
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key or not pages:
+        return []
+
+    try:
+        import anthropic
+    except ImportError:
+        return []
+
+    # Number pages and combine
+    combined = ''
+    for idx, text in enumerate(pages):
+        if text.strip():
+            combined += f'\n--- PAGE {idx+1} ---\n{text}\n'
+
+    prompt = """Extract ALL invoices from this supplier PDF document. The PDF may contain multiple separate invoices, and some invoices may span multiple pages.
+
+Return ONLY a valid JSON array of invoice objects with this structure:
+[
+  {
+    "invoice_number": "string",
+    "invoice_date": "string (YYYY-MM-DD format if possible)",
+    "ship_to_name": "string (job/project name from ship-to section)",
+    "ship_to_address": "string",
+    "subtotal": number,
+    "tax_amount": number,
+    "total": number,
+    "line_items": [
+      {
+        "line_number": number,
+        "product_code": "string",
+        "description": "string",
+        "qty_ordered": number,
+        "qty_backordered": number,
+        "qty_shipped": number,
+        "unit": "string",
+        "unit_price": number,
+        "extended_price": number
+      }
+    ]
+  }
+]
+
+IMPORTANT:
+- Each unique invoice number = one object in the array
+- If an invoice spans multiple pages, combine ALL its line items into one object
+- Extract the correct total for each invoice (not subtotals of individual pages)
+- If a field is missing, use null for strings and 0 for numbers
+- Make sure every invoice in the document is captured — do not skip any
+
+PDF document text:
+"""
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=8192,
+            messages=[{"role": "user", "content": prompt + combined}],
+        )
+        text = response.content[0].text.strip()
+        json_match = re.search(r'\[[\s\S]*\]', text)
+        if json_match:
+            results = json.loads(json_match.group())
+            if isinstance(results, list):
+                for inv in results:
+                    print(f'[InvoiceImport] Extracted: {inv.get("invoice_number")} '
+                          f'total={inv.get("total")} items={len(inv.get("line_items", []))}')
+                return results
+    except Exception as exc:
+        print(f'[InvoiceImport] AI extraction error: {exc}')
+
+    return []
+
+
 def ai_extract_line_items(page_text):
     """Use Claude Haiku to extract structured invoice data from one PDF page.
 
@@ -153,6 +237,8 @@ def ai_extract_line_items(page_text):
   ]
 }
 
+IMPORTANT: This may be a continuation page of a multi-page invoice. Even if the page only has line items and no header, still extract the invoice number (it is usually shown at the top or in a header row) and all line items. Set subtotal/tax_amount/total to 0 if they are not on this page (they typically only appear on the last page).
+
 If a field is missing or unclear, use null for strings and 0 for numbers. Extract ALL line items.
 
 Invoice page text:
@@ -190,11 +276,26 @@ def merge_csv_and_pdf(csv_invoices, pdf_extractions):
     Returns:
         List of merged invoice dicts ready for upsert.
     """
-    # Index PDF extractions by invoice number
+    # Index PDF extractions by invoice number, merging multi-page invoices
     pdf_by_num = {}
     for ext in pdf_extractions:
-        if ext and ext.get('invoice_number'):
-            pdf_by_num[ext['invoice_number']] = ext
+        if not ext or not ext.get('invoice_number'):
+            continue
+        inv_num = ext['invoice_number']
+        if inv_num in pdf_by_num:
+            # Merge: combine line items, keep best header data
+            existing = pdf_by_num[inv_num]
+            existing['line_items'] = existing.get('line_items', []) + ext.get('line_items', [])
+            # Use non-zero totals (typically on last page)
+            for field in ('subtotal', 'tax_amount', 'total'):
+                if ext.get(field) and (not existing.get(field) or existing[field] == 0):
+                    existing[field] = ext[field]
+            # Use non-empty header fields from first page
+            for field in ('ship_to_name', 'ship_to_address'):
+                if ext.get(field) and not existing.get(field):
+                    existing[field] = ext[field]
+        else:
+            pdf_by_num[inv_num] = ext
 
     merged = []
     seen = set()
@@ -239,8 +340,8 @@ def merge_csv_and_pdf(csv_invoices, pdf_extractions):
         if inv_num not in seen:
             merged.append({
                 'invoice_number': inv_num,
-                'invoice_date': '',
-                'due_date': '',
+                'invoice_date': pdf.get('invoice_date', '') or '',
+                'due_date': pdf.get('due_date', '') or '',
                 'po_number': '',
                 'terms': '',
                 'discount_amount': 0,
@@ -403,7 +504,7 @@ def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn):
     """Full import pipeline: parse -> extract -> merge -> upsert -> AI review.
 
     Args:
-        csv_content: bytes of CSV file.
+        csv_content: bytes of CSV file (may be None for PDF-only import).
         pdf_content: bytes of PDF file (may be None).
         supplier_config_id: FK to billtrust_config.id.
         conn: SQLite connection.
@@ -413,18 +514,17 @@ def import_billtrust_files(csv_content, pdf_content, supplier_config_id, conn):
     """
     from billtrust import _upsert_invoice
 
-    # 1. Parse CSV
-    csv_invoices = parse_billtrust_csv(csv_content)
+    # 1. Parse CSV (skip if PDF-only)
+    csv_invoices = parse_billtrust_csv(csv_content) if csv_content else {}
 
-    # 2. Extract PDF pages
+    # 2. Extract PDF — send all pages together for better context
     pdf_extractions = []
     if pdf_content:
         pages = extract_pdf_pages(pdf_content)
-        for page_text in pages:
-            if page_text.strip():
-                extraction = ai_extract_line_items(page_text)
-                if extraction:
-                    pdf_extractions.append(extraction)
+        print(f'[InvoiceImport] PDF has {len(pages)} pages')
+        if pages:
+            pdf_extractions = ai_extract_all_invoices(pages)
+            print(f'[InvoiceImport] AI extracted {len(pdf_extractions)} invoices from PDF')
 
     # 3. Merge
     merged = merge_csv_and_pdf(csv_invoices, pdf_extractions)
