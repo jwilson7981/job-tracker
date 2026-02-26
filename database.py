@@ -583,6 +583,21 @@ def init_db():
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
 
+        /* ─── Submittal Library (shared PDFs across jobs) ─── */
+
+        CREATE TABLE IF NOT EXISTS submittal_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT '',
+            file_path TEXT DEFAULT '',
+            file_hash TEXT DEFAULT '',
+            vendor TEXT DEFAULT '',
+            category TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_submittal_files_hash ON submittal_files(file_hash);
+
         /* ─── Submittals ─── */
 
         CREATE TABLE IF NOT EXISTS submittals (
@@ -606,6 +621,68 @@ def init_db():
             updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
             FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── Contracts ─── */
+
+        CREATE TABLE IF NOT EXISTS contracts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            contractor TEXT DEFAULT '',
+            contract_type TEXT DEFAULT 'Prime'
+                CHECK(contract_type IN ('Prime','Sub','Vendor')),
+            file_path TEXT DEFAULT '',
+            upload_date TEXT DEFAULT '',
+            value REAL DEFAULT 0,
+            status TEXT DEFAULT 'Draft'
+                CHECK(status IN ('Draft','Active','Complete','Terminated')),
+            notes TEXT DEFAULT '',
+            ai_review TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        /* ─── BillTrust Integration ─── */
+
+        CREATE TABLE IF NOT EXISTS billtrust_config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_name TEXT NOT NULL DEFAULT '',
+            client_id TEXT NOT NULL DEFAULT '',
+            client_secret TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            use_mock INTEGER NOT NULL DEFAULT 0,
+            last_sync_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS supplier_invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_config_id INTEGER NOT NULL,
+            billtrust_id TEXT DEFAULT '',
+            invoice_number TEXT NOT NULL DEFAULT '',
+            invoice_date TEXT DEFAULT '',
+            due_date TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            po_number TEXT DEFAULT '',
+            subtotal REAL DEFAULT 0,
+            tax_amount REAL DEFAULT 0,
+            total REAL DEFAULT 0,
+            amount_paid REAL DEFAULT 0,
+            balance_due REAL DEFAULT 0,
+            paid_date TEXT,
+            line_items TEXT DEFAULT '[]',
+            job_id INTEGER,
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (supplier_config_id) REFERENCES billtrust_config(id) ON DELETE CASCADE,
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+            UNIQUE(invoice_number, supplier_config_id)
         );
 
         /* ─── Documents (Closeout) ─── */
@@ -691,6 +768,324 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_submittals_job ON submittals(job_id);
         CREATE INDEX IF NOT EXISTS idx_closeout_checklists_job ON closeout_checklists(job_id);
         CREATE INDEX IF NOT EXISTS idx_transmittals_job ON transmittals(job_id);
+        CREATE INDEX IF NOT EXISTS idx_contracts_job ON contracts(job_id);
+        CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+        CREATE INDEX IF NOT EXISTS idx_billtrust_config_active ON billtrust_config(is_active);
+        CREATE INDEX IF NOT EXISTS idx_supplier_invoices_config ON supplier_invoices(supplier_config_id);
+        CREATE INDEX IF NOT EXISTS idx_supplier_invoices_job ON supplier_invoices(job_id);
+        CREATE INDEX IF NOT EXISTS idx_supplier_invoices_number ON supplier_invoices(invoice_number);
+
+        /* ─── Plans ─── */
+
+        CREATE TABLE IF NOT EXISTS plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            file_path TEXT DEFAULT '',
+            upload_date TEXT DEFAULT '',
+            plan_type TEXT DEFAULT 'Mechanical'
+                CHECK(plan_type IN ('Mechanical','Architectural','Structural','Plumbing','Electrical','Site','Full Set')),
+            status TEXT DEFAULT 'Uploaded'
+                CHECK(status IN ('Uploaded','Reviewing','Reviewed','Takeoff Complete')),
+            notes TEXT DEFAULT '',
+            ai_review TEXT DEFAULT '',
+            takeoff_data TEXT DEFAULT '',
+            page_count INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_plans_job ON plans(job_id);
+        CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
+
+        /* ─── Customers (Phase 1) ─── */
+
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_name TEXT NOT NULL,
+            company_type TEXT NOT NULL DEFAULT 'General Contractor'
+                CHECK(company_type IN ('General Contractor','Developer','Owner','Subcontractor','Supplier','Other')),
+            primary_contact TEXT DEFAULT '',
+            contact_email TEXT DEFAULT '',
+            contact_phone TEXT DEFAULT '',
+            address TEXT DEFAULT '',
+            city TEXT DEFAULT '',
+            state TEXT DEFAULT '',
+            zip_code TEXT DEFAULT '',
+            website TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS customer_contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            title TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_customers_active ON customers(is_active);
+        CREATE INDEX IF NOT EXISTS idx_customers_type ON customers(company_type);
+        CREATE INDEX IF NOT EXISTS idx_customer_contacts_customer ON customer_contacts(customer_id);
+
+        /* ─── Supplier Quotes (Phase 2) ─── */
+
+        CREATE TABLE IF NOT EXISTS supplier_quotes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            plan_id INTEGER,
+            supplier_name TEXT NOT NULL DEFAULT '',
+            supplier_config_id INTEGER,
+            quote_number TEXT DEFAULT '',
+            quote_date TEXT DEFAULT '',
+            expiration_date TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Requested'
+                CHECK(status IN ('Requested','Received','Reviewing','Selected','Rejected','Expired')),
+            subtotal REAL DEFAULT 0,
+            tax_amount REAL DEFAULT 0,
+            freight REAL DEFAULT 0,
+            total REAL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            is_baseline INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE SET NULL,
+            FOREIGN KEY (supplier_config_id) REFERENCES billtrust_config(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS supplier_quote_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quote_id INTEGER NOT NULL,
+            line_number INTEGER NOT NULL DEFAULT 0,
+            sku TEXT DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            quantity REAL DEFAULT 0,
+            unit_price REAL DEFAULT 0,
+            extended_price REAL DEFAULT 0,
+            takeoff_sku TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            FOREIGN KEY (quote_id) REFERENCES supplier_quotes(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_supplier_quotes_job ON supplier_quotes(job_id);
+        CREATE INDEX IF NOT EXISTS idx_supplier_quotes_status ON supplier_quotes(status);
+        CREATE INDEX IF NOT EXISTS idx_supplier_quote_items_quote ON supplier_quote_items(quote_id);
+
+        /* ─── Inventory (Phase 3) ─── */
+
+        CREATE TABLE IF NOT EXISTS inventory_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sku TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            category TEXT DEFAULT '',
+            quantity_on_hand REAL NOT NULL DEFAULT 0,
+            unit TEXT DEFAULT 'each',
+            location TEXT DEFAULT 'Warehouse',
+            reorder_point REAL DEFAULT 0,
+            last_count_date TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS inventory_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inventory_item_id INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL CHECK(transaction_type IN ('receive','issue','adjust','count','return')),
+            quantity REAL NOT NULL DEFAULT 0,
+            job_id INTEGER,
+            reference TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_inventory_items_sku ON inventory_items(sku);
+        CREATE INDEX IF NOT EXISTS idx_inventory_items_category ON inventory_items(category);
+        CREATE INDEX IF NOT EXISTS idx_inventory_transactions_item ON inventory_transactions(inventory_item_id);
+        CREATE INDEX IF NOT EXISTS idx_inventory_transactions_job ON inventory_transactions(job_id);
+
+        /* ─── Bid Follow-ups & Precon Meetings (Phase 4) ─── */
+
+        CREATE TABLE IF NOT EXISTS bid_followups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bid_id INTEGER NOT NULL,
+            followup_date TEXT NOT NULL,
+            followup_type TEXT DEFAULT 'Call' CHECK(followup_type IN ('Call','Email','In Person','Other')),
+            notes TEXT DEFAULT '',
+            result TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Scheduled' CHECK(status IN ('Scheduled','Completed','Skipped')),
+            assigned_to INTEGER,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE,
+            FOREIGN KEY (assigned_to) REFERENCES users(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS precon_meetings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL UNIQUE,
+            meeting_date TEXT DEFAULT '',
+            attendees TEXT DEFAULT '',
+            location TEXT DEFAULT '',
+            agenda TEXT DEFAULT '',
+            minutes TEXT DEFAULT '',
+            gc_contact TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Not Scheduled'
+                CHECK(status IN ('Not Scheduled','Scheduled','Completed')),
+            file_path TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bid_followups_bid ON bid_followups(bid_id);
+        CREATE INDEX IF NOT EXISTS idx_bid_followups_date ON bid_followups(followup_date);
+        CREATE INDEX IF NOT EXISTS idx_precon_meetings_job ON precon_meetings(job_id);
+
+        /* ─── BillTrust Sync Log (Phase 5) ─── */
+
+        CREATE TABLE IF NOT EXISTS billtrust_sync_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_id INTEGER NOT NULL,
+            sync_type TEXT DEFAULT 'manual',
+            invoices_found INTEGER DEFAULT 0,
+            invoices_new INTEGER DEFAULT 0,
+            invoices_updated INTEGER DEFAULT 0,
+            duplicates_found INTEGER DEFAULT 0,
+            errors TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (config_id) REFERENCES billtrust_config(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_billtrust_sync_log_config ON billtrust_sync_log(config_id);
+
+        /* ─── Material Requests (Phase 6) ─── */
+
+        CREATE TABLE IF NOT EXISTS material_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            requested_by INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending'
+                CHECK(status IN ('Pending','Approved','Fulfilled','Partial','Rejected','Cancelled')),
+            priority TEXT NOT NULL DEFAULT 'Normal'
+                CHECK(priority IN ('Low','Normal','High','Urgent')),
+            needed_by TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            approved_by INTEGER,
+            approved_at TEXT DEFAULT '',
+            fulfilled_by INTEGER,
+            fulfilled_at TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (requested_by) REFERENCES users(id),
+            FOREIGN KEY (approved_by) REFERENCES users(id),
+            FOREIGN KEY (fulfilled_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS material_request_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id INTEGER NOT NULL,
+            sku TEXT DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            quantity_requested REAL DEFAULT 0,
+            quantity_approved REAL DEFAULT 0,
+            quantity_fulfilled REAL DEFAULT 0,
+            unit TEXT DEFAULT 'each',
+            notes TEXT DEFAULT '',
+            inventory_item_id INTEGER,
+            FOREIGN KEY (request_id) REFERENCES material_requests(id) ON DELETE CASCADE,
+            FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE SET NULL
+        );
+
+        /* ─── PM Benchmarks (Phase 6) ─── */
+
+        CREATE TABLE IF NOT EXISTS pm_benchmarks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            phase TEXT NOT NULL DEFAULT '',
+            task_name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Not Started'
+                CHECK(status IN ('Not Started','In Progress','Complete','N/A')),
+            completed_date TEXT DEFAULT '',
+            completed_by INTEGER,
+            notes TEXT DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (completed_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_material_requests_job ON material_requests(job_id);
+        CREATE INDEX IF NOT EXISTS idx_material_requests_status ON material_requests(status);
+        CREATE INDEX IF NOT EXISTS idx_material_request_items_request ON material_request_items(request_id);
+        CREATE INDEX IF NOT EXISTS idx_pm_benchmarks_job ON pm_benchmarks(job_id);
+        CREATE INDEX IF NOT EXISTS idx_pm_benchmarks_phase ON pm_benchmarks(phase);
+
+        /* ─── Lien Waivers ─── */
+
+        CREATE TABLE IF NOT EXISTS lien_waivers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            waiver_number INTEGER NOT NULL DEFAULT 1,
+            waiver_type TEXT NOT NULL DEFAULT 'Conditional Progress'
+                CHECK(waiver_type IN ('Conditional Progress','Unconditional Progress',
+                                      'Conditional Final','Unconditional Final')),
+            waiver_date TEXT DEFAULT '',
+            title_company TEXT DEFAULT '',
+            file_number TEXT DEFAULT '',
+            state TEXT DEFAULT '',
+            county TEXT DEFAULT '',
+            contract_amount REAL DEFAULT 0,
+            previous_payments REAL DEFAULT 0,
+            current_payment REAL DEFAULT 0,
+            contract_balance REAL DEFAULT 0,
+            claimant TEXT DEFAULT 'LGHVAC Mechanical, LLC',
+            against_company TEXT DEFAULT '',
+            premises_description TEXT DEFAULT '',
+            through_date TEXT DEFAULT '',
+            signer_name TEXT DEFAULT '',
+            signer_title TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Draft'
+                CHECK(status IN ('Draft','Sent','Executed')),
+            notes TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            proposal_file TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_lien_waivers_job ON lien_waivers(job_id);
+        CREATE INDEX IF NOT EXISTS idx_lien_waivers_status ON lien_waivers(status);
+        CREATE INDEX IF NOT EXISTS idx_lien_waivers_type ON lien_waivers(waiver_type);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -716,9 +1111,117 @@ def init_db():
     if 'content' not in code_cols:
         conn.execute("ALTER TABLE code_sections ADD COLUMN content TEXT DEFAULT ''")
 
+    # Migration: add missing columns to billtrust_config if table was created earlier
+    bt_cols = [row[1] for row in conn.execute("PRAGMA table_info(billtrust_config)").fetchall()]
+    if bt_cols:  # table exists
+        for col, typedef in [
+            ('use_mock', "INTEGER NOT NULL DEFAULT 0"),
+            ('last_sync_at', "TEXT"),
+            ('client_id', "TEXT NOT NULL DEFAULT ''"),
+            ('client_secret', "TEXT NOT NULL DEFAULT ''"),
+            ('is_active', "INTEGER NOT NULL DEFAULT 1"),
+        ]:
+            if col not in bt_cols:
+                conn.execute(f"ALTER TABLE billtrust_config ADD COLUMN {col} {typedef}")
+        # Ensure existing configs default to mock mode if use_mock was just added
+        if 'use_mock' not in bt_cols:
+            conn.execute("UPDATE billtrust_config SET use_mock = 1")
+
+    # Migration: add missing columns to supplier_invoices if table was created earlier
+    si_cols = [row[1] for row in conn.execute("PRAGMA table_info(supplier_invoices)").fetchall()]
+    if si_cols:  # table exists
+        for col, typedef in [
+            ('billtrust_id', "TEXT DEFAULT ''"),
+            ('subtotal', "REAL DEFAULT 0"),
+            ('tax_amount', "REAL DEFAULT 0"),
+            ('total', "REAL DEFAULT 0"),
+            ('amount_paid', "REAL DEFAULT 0"),
+            ('balance_due', "REAL DEFAULT 0"),
+            ('paid_date', "TEXT"),
+            ('notes', "TEXT DEFAULT ''"),
+            ('po_number', "TEXT DEFAULT ''"),
+        ]:
+            if col not in si_cols:
+                conn.execute(f"ALTER TABLE supplier_invoices ADD COLUMN {col} {typedef}")
+        # Also add created_at/updated_at if missing
+        for col, typedef in [
+            ('created_at', "TEXT NOT NULL DEFAULT (datetime('now','localtime'))"),
+            ('updated_at', "TEXT NOT NULL DEFAULT (datetime('now','localtime'))"),
+        ]:
+            if col not in si_cols:
+                conn.execute(f"ALTER TABLE supplier_invoices ADD COLUMN {col} {typedef}")
+
     # Migration: convert old statuses to new pipeline stages
     conn.execute("UPDATE jobs SET status = 'Needs Bid' WHERE status = 'Active'")
     conn.execute("UPDATE jobs SET status = 'In Progress' WHERE status = 'On Hold'")
+
+    # Migration: add customer_id, awarded_date, project_manager_id to jobs (Phase 1)
+    job_cols = [row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()]
+    for col, typedef in [
+        ('customer_id', "INTEGER"),
+        ('awarded_date', "TEXT DEFAULT ''"),
+        ('project_manager_id', "INTEGER"),
+    ]:
+        if col not in job_cols:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {typedef}")
+
+    # Migration: add customer_id to bids (Phase 1)
+    bid_cols = [row[1] for row in conn.execute("PRAGMA table_info(bids)").fetchall()]
+    if 'customer_id' not in bid_cols:
+        conn.execute("ALTER TABLE bids ADD COLUMN customer_id INTEGER")
+
+    # Migration: add duplicate/quote columns to supplier_invoices (Phase 5)
+    si_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(supplier_invoices)").fetchall()]
+    for col, typedef in [
+        ('duplicate_hash', "TEXT DEFAULT ''"),
+        ('is_duplicate', "INTEGER NOT NULL DEFAULT 0"),
+        ('duplicate_of_id', "INTEGER"),
+        ('supplier_quote_id', "INTEGER"),
+    ]:
+        if col not in si_cols2:
+            conn.execute(f"ALTER TABLE supplier_invoices ADD COLUMN {col} {typedef}")
+
+    # Migration: add columns to time_entries (Phase 7)
+    te_cols = [row[1] for row in conn.execute("PRAGMA table_info(time_entries)").fetchall()]
+    for col, typedef in [
+        ('pay_period', "TEXT DEFAULT ''"),
+        ('entry_type', "TEXT DEFAULT 'regular'"),
+    ]:
+        if col not in te_cols:
+            conn.execute(f"ALTER TABLE time_entries ADD COLUMN {col} {typedef}")
+
+    # Migration: add columns to equipment_manuals (Phase 8)
+    em_cols = [row[1] for row in conn.execute("PRAGMA table_info(equipment_manuals)").fetchall()]
+    for col, typedef in [
+        ('brand', "TEXT DEFAULT ''"),
+        ('equipment_type', "TEXT DEFAULT ''"),
+        ('tonnage', "TEXT DEFAULT ''"),
+        ('fuel_type', "TEXT DEFAULT ''"),
+        ('tags', "TEXT DEFAULT ''"),
+    ]:
+        if col not in em_cols:
+            conn.execute(f"ALTER TABLE equipment_manuals ADD COLUMN {col} {typedef}")
+
+    # Migration: add columns to code_sections (Phase 8)
+    cs_cols = [row[1] for row in conn.execute("PRAGMA table_info(code_sections)").fetchall()]
+    for col, typedef in [
+        ('source_url', "TEXT DEFAULT ''"),
+        ('is_complete', "INTEGER NOT NULL DEFAULT 0"),
+    ]:
+        if col not in cs_cols:
+            conn.execute(f"ALTER TABLE code_sections ADD COLUMN {col} {typedef}")
+
+    # Migration: add submittal_file_id to submittals for library linking
+    sub_cols = [row[1] for row in conn.execute("PRAGMA table_info(submittals)").fetchall()]
+    if 'submittal_file_id' not in sub_cols:
+        conn.execute("ALTER TABLE submittals ADD COLUMN submittal_file_id INTEGER")
+
+    # Migration: add file_hash column to tables for duplicate detection
+    for tbl in ('plans', 'supplier_quotes', 'contracts', 'licenses', 'closeout_checklists'):
+        tbl_cols = [row[1] for row in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
+        if 'file_hash' not in tbl_cols:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN file_hash TEXT DEFAULT ''")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{tbl}_file_hash ON {tbl}(file_hash)")
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -734,6 +1237,30 @@ def init_db():
     book_count = conn.execute("SELECT COUNT(*) FROM code_books").fetchone()[0]
     if book_count == 0:
         _seed_code_books(conn)
+
+    # Seed detailed code book sections (depth > 0) if not yet populated
+    detailed_count = conn.execute("SELECT COUNT(*) FROM code_sections WHERE depth > 0").fetchone()[0]
+    if detailed_count == 0:
+        try:
+            from seed_codebooks import seed_detailed_sections
+            seed_detailed_sections(conn)
+        except ImportError:
+            pass
+
+    # Seed default BillTrust supplier configs if none exist
+    bt_count = conn.execute("SELECT COUNT(*) FROM billtrust_config").fetchone()[0]
+    if bt_count == 0:
+        conn.execute("INSERT INTO billtrust_config (supplier_name, use_mock) VALUES (?, 1)", ('Locke Supply',))
+        conn.execute("INSERT INTO billtrust_config (supplier_name, use_mock) VALUES (?, 1)", ('Plumb Supply',))
+
+    # Seed equipment manuals if none exist
+    manual_count = conn.execute("SELECT COUNT(*) FROM equipment_manuals").fetchone()[0]
+    if manual_count == 0:
+        try:
+            from seed_manuals import seed_equipment_manuals
+            seed_equipment_manuals(conn)
+        except ImportError:
+            pass
 
     conn.commit()
     conn.close()

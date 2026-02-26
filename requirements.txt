@@ -3,3 +3,5 @@ openpyxl
 pdfplumber
 python-docx
 weasyprint
+anthropic
+python-dotenv

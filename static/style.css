@@ -123,6 +123,60 @@ body {
     margin: 8px 16px;
 }
 
+/* Collapsible sidebar groups */
+.sidebar-group {}
+
+.sidebar-group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 16px;
+    color: rgba(203, 213, 225, 0.8);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+    margin-top: 12px;
+}
+
+.sidebar-group-header:hover {
+    color: var(--gray-300);
+}
+
+.sidebar-group-header .sidebar-group-arrow {
+    font-size: 9px;
+    transition: transform 0.2s;
+    margin-left: auto;
+    opacity: 0.5;
+}
+
+.sidebar-group.collapsed .sidebar-group-arrow {
+    transform: rotate(-90deg);
+}
+
+.sidebar-group-items {
+    overflow: hidden;
+    max-height: 500px;
+    transition: max-height 0.25s ease;
+}
+
+.sidebar-group.collapsed .sidebar-group-items {
+    max-height: 0;
+}
+
+.sidebar-group-items .sidebar-link {
+    padding-left: 24px;
+    font-size: 13px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+}
+
+/* Active group highlight */
+.sidebar-group.has-active > .sidebar-group-header {
+    color: var(--sidebar-active);
+}
+
 .sidebar-footer {
     padding: 16px;
     border-top: 1px solid rgba(255,255,255,0.08);
@@ -413,6 +467,7 @@ body {
 .status-bid-complete { background: #E0E7FF; color: #3730A3; }
 .status-in-progress { background: var(--amber-bg); color: #92400E; }
 .status-complete { background: var(--green-bg); color: #166534; }
+.status-approved { background: var(--green-bg); color: #166534; }
 .status-draft { background: var(--gray-100); color: var(--gray-700); }
 .status-sent { background: #DBEAFE; color: #1E40AF; }
 .status-paid { background: var(--green-bg); color: #166534; }
@@ -2302,6 +2357,62 @@ body.page-chatbot .chat-widget {
 .form-row .form-group {
     flex: 1;
 }
+.form-group {
+    margin-bottom: 16px;
+}
+
+/* Loading spinner */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Completion dot indicators for codebook sections */
+.completion-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+.completion-dot.complete {
+    background-color: #22C55E;
+}
+.completion-dot.incomplete {
+    background-color: #D1D5DB;
+}
+
+/* Status badge for pending content */
+.status-pending {
+    background: #FEF3C7;
+    color: #92400E;
+}
+
+/* Manual tag badges */
+.manual-tags {
+    margin-top: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.tag-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--gray-100);
+    color: var(--gray-700);
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
 
 @media (max-width: 768px) {
     .manual-search-bar {
@@ -2314,3 +2425,146 @@ body.page-chatbot .chat-widget {
         flex-direction: column;
     }
 }
+
+/* ─── Drag & Drop Overlay ───────────────────────────────────── */
+.drag-drop-overlay {
+    position: fixed; inset: 0; z-index: 10000;
+    background: rgba(37, 99, 235, 0.12);
+    border: 3px dashed var(--blue-primary);
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; opacity: 0;
+    transition: opacity 0.2s ease;
+}
+.drag-drop-overlay.visible { opacity: 1; pointer-events: auto; }
+.drag-drop-overlay-content {
+    text-align: center; color: var(--blue-primary);
+}
+.drag-drop-overlay-content svg { margin-bottom: 8px; }
+.drag-drop-overlay-content p {
+    font-size: 18px; font-weight: 600;
+}
+
+/* ─── Drag & Drop Modal ─────────────────────────────────────── */
+.drag-drop-modal-backdrop, .dup-modal-backdrop {
+    position: fixed; inset: 0; z-index: 10001;
+    background: rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center;
+}
+.drag-drop-modal, .dup-modal {
+    background: var(--white); border-radius: var(--radius);
+    box-shadow: var(--shadow-md); width: 480px; max-width: 90vw;
+    max-height: 80vh; display: flex; flex-direction: column;
+}
+.drag-drop-modal-header, .dup-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--gray-200);
+}
+.drag-drop-modal-header h3, .dup-modal-header h3 {
+    font-size: 16px; font-weight: 600; color: var(--gray-900);
+}
+.drag-drop-modal-close {
+    background: none; border: none; font-size: 22px;
+    cursor: pointer; color: var(--gray-400); line-height: 1;
+}
+.drag-drop-modal-close:hover { color: var(--gray-700); }
+.drag-drop-modal-body, .dup-modal-body {
+    padding: 16px 20px; overflow-y: auto; flex: 1;
+}
+.drag-drop-modal-footer, .dup-modal-footer {
+    padding: 12px 20px; border-top: 1px solid var(--gray-200);
+    display: flex; justify-content: flex-end; gap: 8px;
+}
+
+/* File list in modal */
+.dd-file-list { display: flex; flex-direction: column; gap: 4px; }
+.dd-file-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: var(--gray-50);
+    border-radius: 6px; font-size: 13px;
+    transition: opacity 0.2s;
+}
+.dd-file-row.deselected { opacity: 0.45; }
+.dd-file-cb { flex-shrink: 0; width: 16px; height: 16px; cursor: pointer; }
+.dd-file-info { flex: 1; min-width: 0; }
+.dd-file-name { font-weight: 500; color: var(--gray-900); word-break: break-all; }
+.dd-file-size { color: var(--gray-500); margin-left: 8px; font-size: 12px; }
+.dd-file-match { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.dd-file-badge {
+    flex-shrink: 0; padding: 2px 10px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.dd-file-badge.checking { background: var(--gray-200); color: var(--gray-500); }
+.dd-file-badge.new-file { background: var(--green-bg); color: #166534; }
+.dd-file-badge.exact { background: #FEE2E2; color: #991B1B; }
+.dd-file-badge.near { background: var(--amber-bg); color: #92400E; }
+
+/* Bulk actions */
+.dd-bulk-actions {
+    display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;
+}
+
+/* Progress bar */
+.dd-progress {
+    margin-top: 12px; display: flex; align-items: center; gap: 10px;
+}
+.dd-progress-bar {
+    flex: 1; height: 6px; background: var(--gray-200);
+    border-radius: 3px; overflow: hidden;
+}
+.dd-progress-bar-inner {
+    height: 100%; width: 0%;
+    background: var(--blue-primary); border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.dd-progress-text { font-size: 12px; color: var(--gray-500); white-space: nowrap; }
+
+/* ─── Duplicate Warning Modal ───────────────────────────────── */
+.dup-message { font-size: 14px; color: var(--gray-700); margin-bottom: 12px; }
+.dup-matches { display: flex; flex-direction: column; gap: 6px; }
+.dup-match-item {
+    padding: 8px 12px; background: var(--amber-bg);
+    border-radius: 6px; font-size: 13px; color: var(--gray-900);
+}
+.dup-match-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; margin-right: 6px;
+    background: var(--amber-light); color: var(--gray-700);
+}
+
+/* ─── Inline Duplicate Warning (inside drop modal) ──────────── */
+.dd-dup-warning {
+    margin-top: 10px; padding: 10px 14px;
+    background: #FEF3C7; border: 1px solid #F59E0B;
+    border-radius: var(--radius); font-size: 13px;
+}
+.dd-dup-header {
+    font-weight: 700; color: #92400E; margin-bottom: 6px; font-size: 13px;
+}
+.dd-dup-item {
+    padding: 4px 0; color: var(--gray-700);
+}
+.dd-dup-badge {
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; margin-right: 4px;
+}
+.dd-dup-badge.exact { background: #FCA5A5; color: #991B1B; }
+.dd-dup-badge.near { background: var(--amber-light); color: #92400E; }
+.dd-dup-hint {
+    margin-top: 6px; font-size: 12px; color: var(--gray-500); font-style: italic;
+}
+
+/* Destination info */
+.dd-dest-info {
+    margin-top: 6px; font-size: 12px; color: var(--gray-500);
+}
+
+/* ─── Upload Success Toast ──────────────────────────────────── */
+.dd-toast {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    background: var(--gray-900); color: #fff; padding: 12px 24px;
+    border-radius: var(--radius); font-size: 14px; z-index: 10002;
+    box-shadow: var(--shadow-md); opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.dd-toast.visible { opacity: 1; }
+.dd-toast a { color: #93C5FD; text-decoration: underline; margin-left: 4px; }
