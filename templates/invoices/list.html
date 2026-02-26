@@ -160,18 +160,21 @@ function updateAnalytics(invoices) {
         options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
     });
 
-    // Monthly spend bar chart (last 6 months)
-    const now = new Date();
-    const months = [];
-    for (let m = 5; m >= 0; m--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
-        months.push({ key: d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'),
-                       label: d.toLocaleString('default',{month:'short',year:'2-digit'}) });
-    }
-    const monthTotals = months.map(m => {
-        return invoices.filter(i => (i.invoice_date||'').startsWith(m.key))
-                       .reduce((s, i) => s + Number(i.total || 0), 0);
+    // Monthly spend bar chart — build from actual invoice dates
+    const monthMap = {};
+    invoices.forEach(i => {
+        const d = i.invoice_date || '';
+        const key = d.length >= 7 ? d.substring(0, 7) : '';
+        if (!key) return;
+        monthMap[key] = (monthMap[key] || 0) + Number(i.total || 0);
     });
+    const monthKeys = Object.keys(monthMap).sort();
+    const months = monthKeys.map(k => {
+        const [y, m] = k.split('-');
+        const d = new Date(Number(y), Number(m) - 1, 1);
+        return { key: k, label: d.toLocaleString('default', { month: 'short', year: '2-digit' }) };
+    });
+    const monthTotals = months.map(m => monthMap[m.key]);
     if (monthlyChart) monthlyChart.destroy();
     monthlyChart = new Chart(document.getElementById('monthlyChart'), {
         type: 'bar',
