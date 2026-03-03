@@ -168,6 +168,8 @@
                 <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/employee' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#9636;</span> Payroll
                 </a>
+                {% endif %}
+                {% if current_user.role == 'owner' %}
                 <a href="/team-pay" class="sidebar-link {% if '/team-pay' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128101;</span> Team Pay
                 </a>

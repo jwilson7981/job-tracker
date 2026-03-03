@@ -12612,22 +12612,22 @@ def api_quick_add_job():
 # ─── Team Pay (Internal Progress Payroll) ─────────────────────────
 
 @app.route('/team-pay')
-@role_required('owner', 'admin')
+@role_required('owner')
 def team_pay_list_page():
     return render_template('team_pay/list.html')
 
 @app.route('/team-pay/job/<int:schedule_id>')
-@role_required('owner', 'admin')
+@role_required('owner')
 def team_pay_job_page(schedule_id):
     return render_template('team_pay/job.html', schedule_id=schedule_id)
 
 @app.route('/team-pay/period/<int:period_id>')
-@role_required('owner', 'admin')
+@role_required('owner')
 def team_pay_period_page(period_id):
     return render_template('team_pay/period.html', period_id=period_id)
 
 @app.route('/api/team-pay/schedules', methods=['GET'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_schedules_list():
     conn = get_db()
     rows = conn.execute('''
@@ -12646,7 +12646,7 @@ def api_team_pay_schedules_list():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules', methods=['POST'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_schedules_create():
     data = request.get_json()
     job_id = data.get('job_id')
@@ -12667,7 +12667,7 @@ def api_team_pay_schedules_create():
     return jsonify({'ok': True, 'id': schedule_id}), 201
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['GET'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_schedule_detail(sid):
     conn = get_db()
     row = conn.execute('''
@@ -12682,7 +12682,7 @@ def api_team_pay_schedule_detail(sid):
     return jsonify(dict(row))
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['PUT'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_schedule_update(sid):
     data = request.get_json()
     conn = get_db()
@@ -12695,7 +12695,7 @@ def api_team_pay_schedule_update(sid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['DELETE'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_schedule_delete(sid):
     conn = get_db()
     conn.execute('DELETE FROM team_pay_schedules WHERE id = ?', (sid,))
@@ -12706,7 +12706,7 @@ def api_team_pay_schedule_delete(sid):
 # --- Team Pay Members ---
 
 @app.route('/api/team-pay/schedules/<int:sid>/members', methods=['GET'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_members_list(sid):
     conn = get_db()
     rows = conn.execute('''
@@ -12723,7 +12723,7 @@ def api_team_pay_members_list(sid):
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules/<int:sid>/members', methods=['POST'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_member_add(sid):
     data = request.get_json()
     user_id = data.get('user_id')
@@ -12744,7 +12744,7 @@ def api_team_pay_member_add(sid):
     return jsonify({'ok': True}), 201
 
 @app.route('/api/team-pay/members/<int:mid>', methods=['PUT'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_member_update(mid):
     data = request.get_json()
     conn = get_db()
@@ -12763,7 +12763,7 @@ def api_team_pay_member_update(mid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/members/<int:mid>', methods=['DELETE'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_member_delete(mid):
     conn = get_db()
     conn.execute('DELETE FROM team_pay_members WHERE id = ?', (mid,))
@@ -12774,7 +12774,7 @@ def api_team_pay_member_delete(mid):
 # --- Team Pay Periods ---
 
 @app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['GET'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_periods_list(sid):
     conn = get_db()
     rows = conn.execute('''
@@ -12788,7 +12788,7 @@ def api_team_pay_periods_list(sid):
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['POST'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_period_create(sid):
     conn = get_db()
     max_num = conn.execute('SELECT COALESCE(MAX(period_number), 0) FROM team_pay_periods WHERE schedule_id = ?', (sid,)).fetchone()[0]
@@ -12806,7 +12806,7 @@ def api_team_pay_period_create(sid):
     return jsonify({'ok': True, 'id': period_id}), 201
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['GET'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_period_detail(pid):
     """Main G703 endpoint — returns members with calculated previous/total/balance."""
     conn = get_db()
@@ -12867,7 +12867,7 @@ def api_team_pay_period_detail(pid):
     return jsonify(result)
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['PUT'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_period_update(pid):
     data = request.get_json()
     conn = get_db()
@@ -12909,7 +12909,7 @@ def api_team_pay_period_update(pid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['DELETE'])
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_period_delete(pid):
     conn = get_db()
     period = conn.execute('SELECT status FROM team_pay_periods WHERE id = ?', (pid,)).fetchone()
@@ -12922,7 +12922,7 @@ def api_team_pay_period_delete(pid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/dashboard')
-@api_role_required('owner', 'admin')
+@api_role_required('owner')
 def api_team_pay_dashboard():
     """Cross-job summary per member."""
     conn = get_db()
