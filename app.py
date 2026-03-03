@@ -30,6 +30,8 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
             return redirect(url_for('login'))
+        if session.get('must_change_password') and request.path != '/change-password':
+            return redirect('/change-password')
         return f(*args, **kwargs)
     return decorated
 
@@ -39,6 +41,8 @@ def role_required(*roles):
         def decorated(*args, **kwargs):
             if 'user_id' not in session:
                 return redirect(url_for('login'))
+            if session.get('must_change_password') and request.path != '/change-password':
+                return redirect('/change-password')
             if session.get('role') not in roles:
                 return 'Access denied', 403
             return f(*args, **kwargs)
@@ -93,6 +97,9 @@ def login():
             session['username'] = user['username']
             session['display_name'] = user['display_name']
             session['role'] = user['role']
+            session['must_change_password'] = bool(user['must_change_password'])
+            if user['must_change_password']:
+                return redirect('/change-password')
             return redirect(url_for('index'))
         return render_template('login.html', error='Invalid username or password')
     return render_template('login.html')
@@ -101,6 +108,25 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        new_pw = request.form.get('new_password', '')
+        confirm_pw = request.form.get('confirm_password', '')
+        if not new_pw or len(new_pw) < 6:
+            return render_template('change_password.html', error='Password must be at least 6 characters')
+        if new_pw != confirm_pw:
+            return render_template('change_password.html', error='Passwords do not match')
+        conn = get_db()
+        conn.execute('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
+                     (generate_password_hash(new_pw), session['user_id']))
+        conn.commit()
+        conn.close()
+        session['must_change_password'] = False
+        return redirect(url_for('index'))
+    return render_template('change_password.html')
 
 # ─── Index / Role Redirect ──────────────────────────────────────
 
@@ -2069,11 +2095,11 @@ def api_create_user():
         return jsonify({'error': 'Username already taken'}), 400
 
     conn.execute(
-        '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate)
-           VALUES (?,?,?,?,?,?,?)''',
+        '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate, must_change_password)
+           VALUES (?,?,?,?,?,?,?,?)''',
         (username, data.get('display_name', username), generate_password_hash(password),
          data.get('role', 'employee'), data.get('email', ''), data.get('phone', ''),
-         float(data.get('hourly_rate', 0)))
+         float(data.get('hourly_rate', 0)), 1 if data.get('must_change_password', False) else 0)
     )
     conn.commit()
     conn.close()

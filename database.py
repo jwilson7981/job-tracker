@@ -1553,6 +1553,11 @@ def init_db():
     if 'days_to_pay' not in ci_cols:
         conn.execute("ALTER TABLE client_invoices ADD COLUMN days_to_pay INTEGER")
 
+    # Migration: add must_change_password to users
+    u_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if 'must_change_password' not in u_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:
