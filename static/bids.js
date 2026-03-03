@@ -13,6 +13,39 @@ const val = id => parseFloat($(id)?.value || 0) || 0;
 const ival = id => parseInt($(id)?.value || 0) || 0;
 const fmt = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Customer autocomplete for GC field
+let _searchTimeout = null;
+function searchCustomers(q) {
+    clearTimeout(_searchTimeout);
+    const dd = $('gcDropdown');
+    if (!dd) return;
+    if (q.length < 1) { dd.style.display = 'none'; return; }
+    $('bidCustomerId').value = '';
+    _searchTimeout = setTimeout(async () => {
+        const res = await fetch(`/api/customers/search?q=${encodeURIComponent(q)}`);
+        const results = await res.json();
+        if (!results.length) { dd.style.display = 'none'; return; }
+        dd.innerHTML = results.map(c =>
+            `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--gray-100);"
+                  onmousedown="selectCustomer(${c.id}, '${c.company_name.replace(/'/g, "\\'")}')"
+                  onmouseover="this.style.background='var(--gray-50)'" onmouseout="this.style.background=''">
+                <strong>${c.company_name}</strong> <span style="color:var(--gray-400);margin-left:4px;">${c.company_type}</span>
+                ${c.primary_contact ? `<br><small style="color:var(--gray-500);">${c.primary_contact}</small>` : ''}
+            </div>`
+        ).join('');
+        dd.style.display = 'block';
+    }, 200);
+}
+function selectCustomer(id, name) {
+    $('bidGC').value = name;
+    $('bidCustomerId').value = id;
+    $('gcDropdown').style.display = 'none';
+}
+document.addEventListener('click', e => {
+    const dd = $('gcDropdown');
+    if (dd && !dd.contains(e.target) && e.target.id !== 'bidGC') dd.style.display = 'none';
+});
+
 function toggleClubhouse() {
     const show = $('bidHasClub').value === '1';
     document.querySelectorAll('.clubhouse-field').forEach(el => el.style.display = show ? '' : 'none');
@@ -178,6 +211,7 @@ async function loadBid() {
     $('bidLead').value = bid.lead_name || '';
 
     $('bidGC').value = bid.contracting_gc || '';
+    if ($('bidCustomerId')) $('bidCustomerId').value = bid.customer_id || '';
     $('bidAttention').value = bid.gc_attention || '';
     $('bidNumber').value = bid.bid_number || '';
     $('bidDate').value = bid.bid_date || '';
@@ -349,6 +383,7 @@ async function saveBid() {
         lead_name: $('bidLead').value,
 
         contracting_gc: $('bidGC').value,
+        customer_id: $('bidCustomerId')?.value || null,
         gc_attention: $('bidAttention').value,
         bid_number: $('bidNumber').value,
         bid_date: $('bidDate').value,
@@ -552,4 +587,114 @@ async function sendEmail() {
         btn.textContent = 'Send Email';
         btn.disabled = false;
     }
+}
+
+// ─── Follow-ups ─────────────────────────────────────────────
+let followups = [];
+
+async function loadFollowups() {
+    if (!window.BID_ID || window.BID_ID <= 0) return;
+    document.getElementById('followupsSection').style.display = '';
+    const res = await fetch(`/api/bids/${window.BID_ID}/followups`);
+    followups = await res.json();
+    renderFollowups();
+    // Show award button if bid is Submitted
+    const status = document.getElementById('bidStatus')?.value;
+    if (status === 'Submitted' || status === 'Draft') {
+        document.getElementById('awardSection').style.display = '';
+    }
+}
+
+function renderFollowups() {
+    const tbody = document.getElementById('followupsBody');
+    if (!followups.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No follow-ups yet</td></tr>';
+        return;
+    }
+    tbody.innerHTML = followups.map(f => {
+        const statusClass = f.status === 'Completed' ? 'status-complete' : f.status === 'Skipped' ? 'status-cancelled' : 'status-in-progress';
+        return `<tr>
+            <td>${f.followup_date || '-'}</td>
+            <td>${f.followup_type || '-'}</td>
+            <td>${f.assigned_name || '-'}</td>
+            <td><span class="status-badge ${statusClass}">${f.status}</span></td>
+            <td>${f.notes || '-'}</td>
+            <td>${f.result || '-'}</td>
+            <td style="text-align:right;">
+                <select class="form-select" style="width:auto;display:inline;font-size:12px;padding:2px 4px;" onchange="updateFollowupStatus(${f.id}, this.value)">
+                    <option value="Scheduled" ${f.status==='Scheduled'?'selected':''}>Scheduled</option>
+                    <option value="Completed" ${f.status==='Completed'?'selected':''}>Completed</option>
+                    <option value="Skipped" ${f.status==='Skipped'?'selected':''}>Skipped</option>
+                </select>
+                <button class="btn btn-secondary btn-small" onclick="deleteFollowup(${f.id})" style="color:red;margin-left:4px;">Del</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function showAddFollowup() {
+    const date = new Date();
+    date.setDate(date.getDate() + 3);
+    const dateStr = date.toISOString().split('T')[0];
+    const html = `<div style="display:grid;gap:12px;padding:12px;background:var(--gray-50);border-radius:8px;margin-top:8px;" id="newFollowupForm">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <div><label class="form-label">Date</label><input type="date" id="fuDate" class="form-input" value="${dateStr}"></div>
+            <div><label class="form-label">Type</label><select id="fuType" class="form-select"><option>Call</option><option>Email</option><option>In Person</option><option>Other</option></select></div>
+            <div><label class="form-label">Assigned To</label><select id="fuAssigned" class="form-select"><option value="">--</option></select></div>
+        </div>
+        <div><label class="form-label">Notes</label><input type="text" id="fuNotes" class="form-input"></div>
+        <div style="display:flex;gap:8px;"><button class="btn btn-primary btn-small" onclick="saveFollowup()">Save</button><button class="btn btn-secondary btn-small" onclick="document.getElementById('newFollowupForm').remove()">Cancel</button></div>
+    </div>`;
+    document.getElementById('followupsSection').insertAdjacentHTML('beforeend', html);
+    fetch('/api/users').then(r => r.json()).then(users => {
+        const sel = document.getElementById('fuAssigned');
+        users.forEach(u => { const o = document.createElement('option'); o.value = u.id; o.textContent = u.display_name; sel.appendChild(o); });
+    });
+}
+
+async function saveFollowup() {
+    await fetch(`/api/bids/${window.BID_ID}/followups`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+            followup_date: document.getElementById('fuDate').value,
+            followup_type: document.getElementById('fuType').value,
+            assigned_to: document.getElementById('fuAssigned').value || null,
+            notes: document.getElementById('fuNotes').value
+        })
+    });
+    const form = document.getElementById('newFollowupForm');
+    if (form) form.remove();
+    loadFollowups();
+}
+
+async function updateFollowupStatus(fid, status) {
+    const f = followups.find(x => x.id === fid);
+    await fetch(`/api/bids/${window.BID_ID}/followups/${fid}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({...f, status})
+    });
+    loadFollowups();
+}
+
+async function deleteFollowup(fid) {
+    if (!confirm('Delete this follow-up?')) return;
+    await fetch(`/api/bids/${window.BID_ID}/followups/${fid}`, { method: 'DELETE' });
+    loadFollowups();
+}
+
+async function awardBid() {
+    if (!confirm('Award this bid? This will:\n- Set bid status to Accepted\n- Set job status to Awarded\n- Create precon meeting\n- Seed schedule phases and PM benchmarks\n- Notify team')) return;
+    const res = await fetch(`/api/bids/${window.BID_ID}/award`, { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+        alert('Bid awarded successfully!');
+        location.reload();
+    } else {
+        alert(data.error || 'Failed to award bid');
+    }
+}
+
+// Load followups after bid loads
+if (window.BID_ID > 0) {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(loadFollowups, 500));
 }

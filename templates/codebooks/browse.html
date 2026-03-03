@@ -25,6 +25,33 @@
         <div id="bookmarkList"><p class="text-muted">Loading...</p></div>
     </div>
 </div>
-<script>window.BOOK_ID = {{ book.id }};</script>
+
+<!-- Edit Section Content Modal (owner/admin only) -->
+{% if current_user.role in ('owner', 'admin') %}
+<div class="modal-overlay" id="editSectionModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+            <h2 id="editSectionTitle">Edit Section Content</h2>
+            <button class="modal-close" onclick="document.getElementById('editSectionModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveSectionContent(event)">
+            <input type="hidden" id="editSectionId">
+            <div class="form-group">
+                <label class="form-label">Content</label>
+                <textarea id="editSectionContent" class="form-input" rows="15" style="font-family:monospace;font-size:13px;"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('editSectionModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Content</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<script>
+window.BOOK_ID = {{ book.id }};
+window.USER_ROLE = '{{ current_user.role }}';
+</script>
 <script src="/static/codebooks.js"></script>
 {% endblock %}

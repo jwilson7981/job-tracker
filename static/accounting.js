@@ -57,11 +57,12 @@ function renderExpenses(expenses) {
 function renderInvoices(invoices) {
     const tbody = document.getElementById('invoicesBody');
     if (!tbody) return;
-    if (!invoices.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No invoices.</td></tr>'; return; }
+    if (!invoices.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No invoices.</td></tr>'; return; }
     tbody.innerHTML = invoices.map(i => `<tr>
         <td>${i.invoice_number || '-'}</td><td>${i.issue_date || '-'}</td><td>${i.due_date || '-'}</td>
         <td class="cell-computed">${fmt(i.amount)}</td>
         <td><span class="status-badge status-${(i.status||'Draft').toLowerCase().replace(' ','-')}">${i.status}</span></td>
+        <td>${i.days_to_pay != null ? i.days_to_pay + ' days' : '-'}</td>
         <td>
             <select onchange="updateInvoiceStatus(${i.id}, this.value)" style="padding:4px;border-radius:4px;border:1px solid var(--gray-300);">
                 ${['Draft','Sent','Paid','Overdue'].map(s => `<option value="${s}" ${i.status===s?'selected':''}>${s}</option>`).join('')}
@@ -139,6 +140,10 @@ async function deleteExpense(id) { if (confirm('Delete this expense?')) { await 
 async function deleteInvoice(id) { if (confirm('Delete this invoice?')) { await fetch(`/api/accounting/invoices/${id}`, {method:'DELETE'}); loadJobAccounting(); } }
 async function deletePayment(id) { if (confirm('Delete this payment?')) { await fetch(`/api/accounting/payments/${id}`, {method:'DELETE'}); loadJobAccounting(); } }
 async function updateInvoiceStatus(id, status) {
-    await fetch(`/api/accounting/invoices/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status}) });
+    const payload = {status};
+    if (status === 'Paid') {
+        payload.paid_date = new Date().toISOString().split('T')[0];
+    }
+    await fetch(`/api/accounting/invoices/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     loadJobAccounting();
 }

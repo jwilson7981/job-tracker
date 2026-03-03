@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Dashboard - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>32-Step Job Pipeline</h1>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" onclick="seedAllPipelines()">Sync All Jobs</button>
+    </div>
+</div>
+
+<!-- Legend -->
+<div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
+    <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#D1D5DB;display:inline-block;"></span> Pending</span>
+    <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#3B82F6;display:inline-block;"></span> Active</span>
+    <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#10B981;display:inline-block;"></span> Complete</span>
+    <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#F59E0B;display:inline-block;"></span> Skipped</span>
+    <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#EF4444;display:inline-block;"></span> Blocked</span>
+</div>
+
+<!-- Category Labels -->
+<div id="categoryLabels" style="display:flex;gap:0;margin-bottom:4px;font-size:10px;font-weight:600;text-transform:uppercase;padding-left:200px;">
+    <span style="width:calc(8 * 28px);text-align:center;color:#6366F1;">Bidding</span>
+    <span style="width:calc(5 * 28px);text-align:center;color:#8B5CF6;">Contract</span>
+    <span style="width:calc(6 * 28px);text-align:center;color:#EC4899;">Pre-Con</span>
+    <span style="width:calc(3 * 28px);text-align:center;color:#F59E0B;">Materials</span>
+    <span style="width:calc(2 * 28px);text-align:center;color:#10B981;">Finance</span>
+    <span style="width:calc(6 * 28px);text-align:center;color:#06B6D4;">Construction</span>
+    <span style="width:calc(2 * 28px);text-align:center;color:#EF4444;">Closeout</span>
+</div>
+
+<!-- Pipeline Matrix -->
+<div id="pipelineMatrix" style="overflow-x:auto;">
+    <p class="loading" style="text-align:center;padding:40px;color:#6B7280;">Loading pipeline data...</p>
+</div>
+
+<!-- Expanded Job Detail (shows when clicking a row) -->
+<div id="jobDetail" style="display:none;margin-top:20px;">
+    <div class="card" style="padding:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h2 id="detailJobName" style="font-size:18px;font-weight:700;margin:0;"></h2>
+            <button class="btn btn-secondary btn-small" onclick="closeDetail()">Close</button>
+        </div>
+        <div id="detailSteps" style="display:grid;grid-template-columns:1fr;gap:8px;"></div>
+    </div>
+</div>
+
+<script src="/static/pipeline.js"></script>
+{% endblock %}

@@ -61,8 +61,13 @@
                     <span class="sidebar-icon">&#128197;</span> Schedule
                 </a>
                 <a href="/workflow" class="sidebar-link {% if '/workflow' in request.path %}active{% endif %}">
-                    <span class="sidebar-icon">&#128202;</span> Workflow
+                    <span class="sidebar-icon">&#128202;</span> Pipeline
                 </a>
+                {% if current_user.role in ('owner', 'admin') %}
+                <a href="/jobs/import" class="sidebar-link {% if '/jobs/import' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128228;</span> Import Jobs
+                </a>
+                {% endif %}
             </div>
         </div>
         {% endif %}
@@ -83,6 +88,12 @@
                 </a>
                 <a href="/material-requests" class="sidebar-link {% if '/material-requests' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128196;</span> Material Requests
+                </a>
+                <a href="/receiving" class="sidebar-link {% if '/receiving' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128230;</span> Receiving
+                </a>
+                <a href="/material-shipments" class="sidebar-link {% if '/material-shipments' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128666;</span> Shipments
                 </a>
             </div>
         </div>
@@ -119,6 +130,9 @@
                 </a>
                 <a href="/lien-waivers" class="sidebar-link {% if '/lien-waivers' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128220;</span> Lien Waivers
+                </a>
+                <a href="/photos" class="sidebar-link {% if '/photos' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128247;</span> Photos
                 </a>
             </div>
         </div>
@@ -197,6 +211,11 @@
                 <a href="/manuals" class="sidebar-link {% if '/manuals' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128214;</span> Manuals
                 </a>
+                {% if current_user.role in ('owner', 'admin', 'project_manager') %}
+                <a href="/coi" class="sidebar-link {% if '/coi' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128203;</span> COI
+                </a>
+                {% endif %}
                 {% if current_user.role == 'owner' %}
                 <a href="/licenses" class="sidebar-link {% if '/licenses' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128203;</span> Licenses
@@ -207,8 +226,12 @@
 
         <div class="sidebar-divider"></div>
 
+        <a href="/feedback" class="sidebar-link {% if '/feedback' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128172;</span> Feedback
+        </a>
+
         <a href="/chatbot" class="sidebar-link {% if '/chatbot' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128172;</span> Chat
+            <span class="sidebar-icon">&#128488;</span> Chat
         </a>
 
         {% if current_user.role == 'owner' %}

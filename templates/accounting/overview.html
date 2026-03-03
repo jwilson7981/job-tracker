@@ -3,6 +3,10 @@
 {% block content %}
 <div class="page-header">
     <h1>Accounting</h1>
+    <div class="export-btns" style="display:inline-flex;gap:6px;">
+        <button class="btn btn-secondary btn-small" onclick="exportToExcel('Accounting','accountingBody','Accounting')">Excel</button>
+        <button class="btn btn-secondary btn-small" onclick="exportToPDF('Accounting','accountingBody','Accounting')">PDF</button>
+    </div>
 </div>
 <div id="accountingContent">
     <div class="module-table-wrapper">
@@ -25,5 +29,238 @@
         </table>
     </div>
 </div>
+
+{% if current_user.role in ('owner', 'admin') %}
+<div style="margin-top:32px;">
+    <div class="page-header" style="margin-bottom:16px;">
+        <h2>Supplier Invoices (BillTrust)</h2>
+        <div style="display:flex;gap:8px;">
+            <select id="btSupplierFilter" class="form-select" style="width:180px;" onchange="loadSupplierInvoices()">
+                <option value="">All Suppliers</option>
+            </select>
+            <select id="btStatusFilter" class="form-select" style="width:140px;" onchange="loadSupplierInvoices()">
+                <option value="">All Status</option>
+                <option value="Open">Open</option>
+                <option value="Paid">Paid</option>
+                <option value="Overdue">Overdue</option>
+                <option value="Partial">Partial</option>
+                <option value="Credited">Credited</option>
+            </select>
+            <button class="btn btn-secondary" onclick="syncAllSuppliers()">Sync Invoices</button>
+        </div>
+    </div>
+    <div class="module-table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Supplier</th>
+                    <th>Invoice #</th>
+                    <th>Date</th>
+                    <th>Due Date</th>
+                    <th>Total</th>
+                    <th>Balance Due</th>
+                    <th>Status</th>
+                    <th>Job</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="btInvoiceBody">
+                <tr><td colspan="9" class="empty-state">Click "Sync Invoices" to load supplier data</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div id="btSyncStatus" style="margin-top:8px;"></div>
+</div>
+<div id="btDetailModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:12px;max-width:700px;width:95%;max-height:85vh;overflow-y:auto;padding:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 id="btDetailTitle" style="margin:0;">Invoice Detail</h3>
+            <button onclick="document.getElementById('btDetailModal').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;">&times;</button>
+        </div>
+        <div id="btDetailContent"></div>
+    </div>
+</div>
+<script>
+let btConfigs = [];
+let btInvoices = [];
+let allJobs = [];
+
+async function loadBtConfigs() {
+    try {
+        const res = await fetch('/api/billtrust/config');
+        if (!res.ok) throw new Error('Failed to load config');
+        btConfigs = await res.json();
+        const sel = document.getElementById('btSupplierFilter');
+        // Clear existing supplier options (keep "All Suppliers")
+        while (sel.options.length > 1) sel.remove(1);
+        btConfigs.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.supplier_name + (c.last_sync_at ? ' (synced ' + c.last_sync_at + ')' : ' (not synced)');
+            sel.appendChild(opt);
+        });
+    } catch(e) {
+        console.error('loadBtConfigs error:', e);
+    }
+}
+
+async function loadBtJobs() {
+    try {
+        const res = await fetch('/api/jobs/list');
+        if (!res.ok) throw new Error('Failed to load jobs');
+        allJobs = await res.json();
+    } catch(e) {
+        console.error('loadBtJobs error:', e);
+    }
+}
+
+async function loadSupplierInvoices() {
+    try {
+        const supplier = document.getElementById('btSupplierFilter').value;
+        const status = document.getElementById('btStatusFilter').value;
+        const params = new URLSearchParams();
+        if (supplier) params.set('supplier_id', supplier);
+        if (status) params.set('status', status);
+        const res = await fetch('/api/billtrust/invoices?' + params.toString());
+        if (!res.ok) throw new Error('Failed to load invoices');
+        btInvoices = await res.json();
+        renderBtInvoices();
+    } catch(e) {
+        console.error('loadSupplierInvoices error:', e);
+        document.getElementById('btInvoiceBody').innerHTML = '<tr><td colspan="9" class="empty-state">Error loading invoices</td></tr>';
+    }
+}
+
+function fmtMoney(n) {
+    return '$' + Number(n || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function getInvStatusStyle(status) {
+    const s = (status || '').toLowerCase();
+    if (s === 'paid')    return 'background:#DCFCE7;color:#166534;padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;';
+    if (s === 'overdue') return 'background:#FEE2E2;color:#991B1B;padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;';
+    if (s === 'open')    return 'background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;';
+    if (s === 'partial') return 'background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:4px;font-weight:600;font-size:12px;';
+    return 'padding:2px 8px;font-size:12px;';
+}
+
+function renderBtInvoices() {
+    const tbody = document.getElementById('btInvoiceBody');
+    if (!btInvoices.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No invoices found</td></tr>';
+        return;
+    }
+    tbody.innerHTML = btInvoices.map(inv => {
+        const jobOpts = allJobs.map(j => `<option value="${j.id}" ${inv.job_id === j.id ? 'selected' : ''}>${j.name}</option>`).join('');
+        const dueDateStyle = inv.status && inv.status.toLowerCase() === 'overdue' ? 'color:#EF4444;font-weight:600;' : '';
+        return `<tr>
+            <td>${inv.supplier_name || ''}</td>
+            <td><strong>${inv.invoice_number}</strong></td>
+            <td>${inv.invoice_date || ''}</td>
+            <td style="${dueDateStyle}">${inv.due_date || ''}</td>
+            <td style="text-align:right;">${fmtMoney(inv.total)}</td>
+            <td style="text-align:right;font-weight:600;">${fmtMoney(inv.balance_due)}</td>
+            <td><span style="${getInvStatusStyle(inv.status)}">${inv.status || ''}</span></td>
+            <td><select class="form-select" style="width:140px;font-size:12px;" onchange="linkInvoice(${inv.id}, this.value)">
+                <option value="">-- Link Job --</option>${jobOpts}</select></td>
+            <td><button class="btn btn-small btn-secondary" onclick="showInvDetail(${inv.id})">Detail</button></td>
+        </tr>`;
+    }).join('');
+}
+
+async function syncAllSuppliers() {
+    const statusEl = document.getElementById('btSyncStatus');
+    statusEl.innerHTML = '<em>Syncing...</em>';
+    let results = [];
+    for (const c of btConfigs) {
+        try {
+            const res = await fetch('/api/billtrust/sync/' + c.id, { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (data.error) {
+                results.push(c.supplier_name + ': ' + data.error);
+            } else {
+                results.push(c.supplier_name + ': ' + (data.new || 0) + ' new, ' + (data.updated || 0) + ' updated');
+            }
+        } catch(e) {
+            results.push(c.supplier_name + ': error - ' + e.message);
+        }
+    }
+    statusEl.innerHTML = '<strong>Sync complete:</strong> ' + results.join(' | ');
+    loadSupplierInvoices();
+    loadBtConfigs();
+}
+
+async function linkInvoice(invoiceId, jobId) {
+    try {
+        const res = await fetch('/api/billtrust/invoices/' + invoiceId + '/link', {
+            method: 'PUT', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ job_id: jobId || null })
+        });
+        if (!res.ok) throw new Error('Failed to link');
+        const statusEl = document.getElementById('btSyncStatus');
+        const jobName = jobId ? (allJobs.find(j => j.id == jobId) || {}).name || 'Job #'+jobId : 'none';
+        statusEl.innerHTML = '<span style="color:#22C55E;">Invoice linked to ' + jobName + '</span>';
+        setTimeout(() => { statusEl.innerHTML = ''; }, 3000);
+    } catch(e) {
+        alert('Error linking invoice: ' + e.message);
+    }
+}
+
+function showInvDetail(id) {
+    const inv = btInvoices.find(i => i.id === id);
+    if (!inv) return;
+    let items = [];
+    try { items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items || '[]') : (inv.line_items || []); } catch(e) {}
+
+    let html = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+            <div><span style="color:#6B7280;font-size:13px;">Supplier</span><div style="font-weight:600;">${inv.supplier_name || ''}</div></div>
+            <div><span style="color:#6B7280;font-size:13px;">Status</span><div><span style="${getInvStatusStyle(inv.status)}">${inv.status || ''}</span></div></div>
+            <div><span style="color:#6B7280;font-size:13px;">Invoice Date</span><div>${inv.invoice_date || '-'}</div></div>
+            <div><span style="color:#6B7280;font-size:13px;">Due Date</span><div>${inv.due_date || '-'}</div></div>
+            <div><span style="color:#6B7280;font-size:13px;">PO Number</span><div>${inv.po_number || '-'}</div></div>
+            <div><span style="color:#6B7280;font-size:13px;">Paid Date</span><div>${inv.paid_date || '-'}</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;padding:12px;background:#F9FAFB;border-radius:8px;">
+            <div style="text-align:center;"><span style="color:#6B7280;font-size:12px;">Subtotal</span><div style="font-weight:700;font-size:16px;">${fmtMoney(inv.subtotal)}</div></div>
+            <div style="text-align:center;"><span style="color:#6B7280;font-size:12px;">Tax</span><div style="font-weight:700;font-size:16px;">${fmtMoney(inv.tax_amount)}</div></div>
+            <div style="text-align:center;"><span style="color:#6B7280;font-size:12px;">Total</span><div style="font-weight:700;font-size:18px;color:#1E40AF;">${fmtMoney(inv.total)}</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+            <div style="text-align:center;padding:8px;background:#DCFCE7;border-radius:6px;"><span style="font-size:12px;color:#166534;">Amount Paid</span><div style="font-weight:700;color:#166534;">${fmtMoney(inv.amount_paid)}</div></div>
+            <div style="text-align:center;padding:8px;background:${inv.balance_due > 0 ? '#FEE2E2' : '#F3F4F6'};border-radius:6px;"><span style="font-size:12px;color:${inv.balance_due > 0 ? '#991B1B' : '#6B7280'};">Balance Due</span><div style="font-weight:700;color:${inv.balance_due > 0 ? '#991B1B' : '#6B7280'};">${fmtMoney(inv.balance_due)}</div></div>
+        </div>`;
+
+    if (items.length) {
+        html += `<h4 style="margin:0 0 8px;font-size:14px;">Line Items (${items.length})</h4>
+        <table style="width:100%;font-size:13px;border-collapse:collapse;">
+            <thead><tr style="border-bottom:2px solid #E5E7EB;">
+                <th style="text-align:left;padding:6px 4px;">Description</th>
+                <th style="text-align:center;padding:6px 4px;">Qty</th>
+                <th style="text-align:right;padding:6px 4px;">Unit Price</th>
+                <th style="text-align:right;padding:6px 4px;">Extended</th>
+            </tr></thead><tbody>`;
+        items.forEach(li => {
+            html += `<tr style="border-bottom:1px solid #F3F4F6;">
+                <td style="padding:6px 4px;">${li.description || ''}</td>
+                <td style="text-align:center;padding:6px 4px;">${li.quantity || ''} ${li.unit || ''}</td>
+                <td style="text-align:right;padding:6px 4px;">${fmtMoney(li.unit_price)}</td>
+                <td style="text-align:right;padding:6px 4px;font-weight:600;">${fmtMoney(li.extended_price)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+    }
+
+    document.getElementById('btDetailTitle').textContent = 'Invoice ' + inv.invoice_number;
+    document.getElementById('btDetailContent').innerHTML = html;
+    document.getElementById('btDetailModal').style.display = 'flex';
+}
+
+loadBtConfigs();
+loadBtJobs();
+loadSupplierInvoices();
+</script>
+{% endif %}
 <script src="/static/accounting.js"></script>
 {% endblock %}

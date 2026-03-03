@@ -50,12 +50,27 @@ function renderSummary() {
     const submitted = allSubmittals.filter(s => s.status === 'Submitted').length;
     const approved = allSubmittals.filter(s => s.status === 'Approved' || s.status === 'Approved as Noted').length;
     const rejected = allSubmittals.filter(s => s.status === 'Rejected' || s.status === 'Resubmit').length;
+    const today = new Date().toISOString().split('T')[0];
+    const overdue = allSubmittals.filter(s => s.date_required && !s.date_returned && s.date_required < today).length;
+    const needsAction = rejected + overdue;
 
     document.getElementById('sumTotal').textContent = total;
     document.getElementById('sumPending').textContent = pending;
     document.getElementById('sumSubmitted').textContent = submitted;
     document.getElementById('sumApproved').textContent = approved;
     document.getElementById('sumRejected').textContent = rejected;
+
+    // Needs Action KPI card
+    const actionCard = document.getElementById('sumNeedsAction');
+    if (actionCard) {
+        actionCard.textContent = needsAction;
+        const card = actionCard.closest('.kpi-card');
+        if (needsAction > 0) {
+            card.classList.add('submittal-needs-action');
+        } else {
+            card.classList.remove('submittal-needs-action');
+        }
+    }
 
     // Alert styling on rejected card when count > 0
     const rejCard = document.getElementById('sumRejectedCard');
@@ -84,10 +99,13 @@ function renderTable() {
         const isResubmit = s.status === 'Resubmit';
 
         let rowStyle = '';
+        let rowAttrs = '';
         if (isRejected) {
             rowStyle = 'background:#FEF2F2;';
+            rowAttrs = ' data-submittal-rejected';
         } else if (isResubmit) {
             rowStyle = 'background:#FFFBEB;';
+            rowAttrs = ' data-submittal-resubmit';
         } else if (isOverdue) {
             rowStyle = 'background:#FEF2F2;';
         }
@@ -95,12 +113,13 @@ function renderTable() {
         const dateRequiredStyle = isOverdue ? 'color:#EF4444;font-weight:600;' : '';
 
         const hasFile = s.has_file || s.file_path;
+        const libBadge = s.library_file_id ? '<span class="badge" style="background:#EEF2FF;color:#4338CA;font-size:10px;margin-left:4px;" title="Linked from Library">LIB</span>' : '';
 
-        return `<tr style="${rowStyle}">
+        return `<tr style="${rowStyle}"${rowAttrs}>
             <td>${s.id}</td>
             <td>${s.job_name || '-'}</td>
             <td>${s.spec_section || '-'}</td>
-            <td>${s.description || '-'}</td>
+            <td>${s.description || '-'}${libBadge}</td>
             <td>${s.vendor || '-'}</td>
             <td>${s.revision != null ? s.revision : 0}</td>
             <td>${statusBadge}</td>
@@ -203,4 +222,25 @@ async function deleteSubmittal(id) {
 // ─── View File ──────────────────────────────────────────────
 function viewFile(id) {
     window.open('/api/submittals/' + id + '/file', '_blank');
+}
+
+// ─── Submittal Library ──────────────────────────────────────
+async function showLibraryModal() {
+    document.getElementById('libraryModal').style.display = 'flex';
+    const res = await fetch('/api/submittal-library');
+    const items = await res.json();
+    const tbody = document.getElementById('libraryBody');
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No library files yet. Import submittals to populate the library.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = items.map(f =>
+        `<tr>
+            <td>${f.title || '-'}</td>
+            <td>${f.vendor || '-'}</td>
+            <td>${f.category || '-'}</td>
+            <td>${f.usage_count || 0} job(s)</td>
+            <td>${f.file_path ? `<a href="/api/submittal-library/${f.id}/file" target="_blank" class="link" style="font-size:13px;">View PDF</a>` : '-'}</td>
+        </tr>`
+    ).join('');
 }

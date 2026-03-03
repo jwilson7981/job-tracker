@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Import Jobs - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Import Jobs</h1>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+    <!-- Excel Import -->
+    <div class="card" style="padding:24px;">
+        <h2 style="font-size:18px;font-weight:700;margin-bottom:12px;">Excel Import</h2>
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px;">
+            Upload an .xlsx file with columns: <strong>name</strong>, customer, status, address, city, state, zip.
+            Pipeline steps will be auto-set based on status.
+        </p>
+        <form onsubmit="importExcel(event)">
+            <div class="form-group">
+                <label class="form-label">Excel File (.xlsx)</label>
+                <input type="file" id="excelFile" accept=".xlsx,.xls" required style="padding:8px;">
+            </div>
+            <button type="submit" class="btn btn-primary" id="excelBtn">Import Jobs</button>
+        </form>
+        <div id="excelResult" style="margin-top:12px;display:none;"></div>
+    </div>
+
+    <!-- Quick Add -->
+    <div class="card" style="padding:24px;">
+        <h2 style="font-size:18px;font-weight:700;margin-bottom:12px;">Quick Add Job</h2>
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px;">
+            Add a single job and check off which pipeline steps are already complete.
+        </p>
+        <form onsubmit="quickAddJob(event)">
+            <div class="form-group">
+                <label class="form-label">Job Name</label>
+                <input type="text" id="qaName" class="form-input" required placeholder="e.g. Smith Residence HVAC">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Customer</label>
+                    <select id="qaCustomer" class="form-select">
+                        <option value="">Select Customer...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select id="qaStatus" class="form-select">
+                        <option value="Needs Bid">Needs Bid</option>
+                        <option value="Bid Submitted">Bid Submitted</option>
+                        <option value="Awarded" selected>Awarded</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="Complete">Complete</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">City</label>
+                    <input type="text" id="qaCity" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">State</label>
+                    <input type="text" id="qaState" class="form-input" value="OK">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Zip</label>
+                    <input type="text" id="qaZip" class="form-input">
+                </div>
+            </div>
+            <h3 style="font-size:14px;font-weight:700;margin:16px 0 8px;">Pipeline Steps Already Complete</h3>
+            <div id="pipelineChecklist" style="max-height:300px;overflow-y:auto;border:1px solid #E5E7EB;border-radius:8px;padding:8px;"></div>
+            <button type="submit" class="btn btn-primary" style="margin-top:16px;">Create Job</button>
+        </form>
+        <div id="qaResult" style="margin-top:12px;display:none;"></div>
+    </div>
+</div>
+
+<script src="/static/job_import.js"></script>
+{% endblock %}

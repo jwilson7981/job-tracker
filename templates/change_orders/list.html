@@ -3,7 +3,13 @@
 {% block content %}
 <div class="page-header">
     <h1>Change Orders</h1>
-    <button class="btn btn-primary" onclick="showAddCO()">+ New Change Order</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Change Orders','coBody','Change_Orders')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Change Orders','coBody','Change_Orders')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddCO()">+ New Change Order</button>
+    </div>
 </div>
 
 <!-- Summary Cards -->

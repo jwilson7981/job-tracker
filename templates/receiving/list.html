@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Material Receiving - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Material Receiving</h1>
+</div>
+
+<!-- Job Selector -->
+<div class="filter-bar" style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap;">
+    <div class="form-group" style="margin:0;min-width:250px;">
+        <label class="form-label" style="margin-bottom:4px;">Select Job</label>
+        <select id="jobSelect" class="form-select" onchange="loadReceiving()">
+            <option value="">Choose a job...</option>
+        </select>
+    </div>
+    <button class="btn btn-secondary" onclick="showPending()" style="align-self:flex-end;">Pending Jobs</button>
+</div>
+
+<!-- Delivery Schedule Section -->
+<div id="deliveryScheduleSection" style="display:none;margin-bottom:20px;">
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;">Expected Deliveries</h3>
+    <div id="deliveryScheduleList"></div>
+</div>
+
+<!-- Summary KPI Cards -->
+<div class="kpi-grid" id="receivingSummary" style="display:none;">
+    <div class="kpi-card" style="border-left:4px solid #3B82F6;">
+        <div class="kpi-value" id="kpiTotalItems">0</div>
+        <div class="kpi-label">Total Items</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #10B981;">
+        <div class="kpi-value" id="kpiReceived">0</div>
+        <div class="kpi-label">Fully Received</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #F59E0B;">
+        <div class="kpi-value" id="kpiPartial">0</div>
+        <div class="kpi-label">Partial</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #EF4444;">
+        <div class="kpi-value" id="kpiPending">0</div>
+        <div class="kpi-label">Not Received</div>
+    </div>
+</div>
+
+<!-- Receive Form -->
+<div id="receiveForm" style="display:none;margin-bottom:16px;padding:16px;background:#F0FDF4;border-radius:8px;border:1px solid #BBF7D0;">
+    <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        <div class="form-group" style="margin:0;">
+            <label class="form-label">Supplier</label>
+            <input type="text" id="recvSupplier" class="form-input" placeholder="Supplier name">
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label class="form-label">PO #</label>
+            <input type="text" id="recvPO" class="form-input" placeholder="PO number">
+        </div>
+        <div class="form-group" style="margin:0;flex:1;">
+            <label class="form-label">Notes</label>
+            <input type="text" id="recvNotes" class="form-input" placeholder="Delivery notes">
+        </div>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" onclick="submitReceive()">Submit Receiving</button>
+        <button class="btn btn-secondary" onclick="receiveAll()">Receive All Remaining</button>
+    </div>
+</div>
+
+<!-- Items Grid -->
+<div id="itemsGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:12px;"></div>
+
+<!-- Pending Jobs Modal -->
+<div id="pendingModal" class="modal-overlay" style="display:none;">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Jobs with Pending Materials</h2>
+            <button class="modal-close" onclick="document.getElementById('pendingModal').style.display='none'">&times;</button>
+        </div>
+        <div id="pendingList" style="padding:16px;max-height:400px;overflow-y:auto;"></div>
+    </div>
+</div>
+
+<script src="/static/receiving.js"></script>
+{% endblock %}

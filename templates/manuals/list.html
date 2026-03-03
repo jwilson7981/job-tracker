@@ -8,13 +8,16 @@
     {% endif %}
 </div>
 
-<div class="manual-search-bar">
-    <input type="text" id="manualSearch" class="form-input" placeholder="Search by model number, title, or keyword..." oninput="loadManuals()">
-    <select id="manualMfg" class="form-select" onchange="loadManuals()">
+<div class="manual-search-bar" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+    <input type="text" id="manualSearch" class="form-input" placeholder="Search by model number, title, tags..." oninput="loadManuals()" style="flex:2;min-width:200px;">
+    <select id="manualMfg" class="form-select" onchange="loadManuals()" style="flex:1;min-width:140px;">
         <option value="">All Manufacturers</option>
-        <option value="Lennox">Lennox</option>
-        <option value="Allied">Allied</option>
-        <option value="ADP">ADP</option>
+    </select>
+    <select id="manualBrand" class="form-select" onchange="loadManuals()" style="flex:1;min-width:140px;">
+        <option value="">All Brands</option>
+    </select>
+    <select id="manualType" class="form-select" onchange="loadManuals()" style="flex:1;min-width:140px;">
+        <option value="">All Equipment Types</option>
     </select>
 </div>
 
@@ -26,11 +29,13 @@
                 <th>Model #</th>
                 <th>Title</th>
                 <th>Type</th>
+                <th>Equipment</th>
+                <th>Tonnage</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody id="manualsBody">
-            <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
         </tbody>
     </table>
 </div>
@@ -49,6 +54,19 @@
                     <option value="Lennox">Lennox</option>
                     <option value="Allied">Allied</option>
                     <option value="ADP">ADP</option>
+                    <option value="Trane">Trane</option>
+                    <option value="Carrier">Carrier</option>
+                    <option value="Goodman">Goodman</option>
+                    <option value="Daikin">Daikin</option>
+                    <option value="Rheem">Rheem</option>
+                    <option value="York">York</option>
+                    <option value="Mitsubishi">Mitsubishi</option>
+                    <option value="Fujitsu">Fujitsu</option>
+                    <option value="LG">LG</option>
+                    <option value="Samsung">Samsung</option>
+                    <option value="Bosch">Bosch</option>
+                    <option value="Amana">Amana</option>
+                    <option value="Bryant">Bryant</option>
                     <option value="Other">Other</option>
                 </select>
             </div>
@@ -61,13 +79,48 @@
                 <input type="text" id="mmTitle" class="form-input">
             </div>
             <div class="form-group">
-                <label class="form-label">Type</label>
+                <label class="form-label">Manual Type</label>
                 <select id="mmType" class="form-select">
                     <option value="Installation">Installation</option>
                     <option value="Service">Service</option>
                     <option value="Parts">Parts</option>
                     <option value="Wiring">Wiring</option>
                 </select>
+            </div>
+            <div style="display:flex;gap:12px;">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Equipment Type</label>
+                    <select id="mmEquipType" class="form-select">
+                        <option value="">--</option>
+                        <option value="Air Handler">Air Handler</option>
+                        <option value="Condenser">Condenser</option>
+                        <option value="Furnace">Furnace</option>
+                        <option value="Heat Pump">Heat Pump</option>
+                        <option value="Mini Split">Mini Split</option>
+                        <option value="Package Unit">Package Unit</option>
+                        <option value="Rooftop Unit">Rooftop Unit</option>
+                        <option value="Evaporator Coil">Evaporator Coil</option>
+                        <option value="VRF System">VRF System</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Tonnage</label>
+                    <input type="text" id="mmTonnage" class="form-input" placeholder="e.g. 3 Ton">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Fuel Type</label>
+                    <select id="mmFuelType" class="form-select">
+                        <option value="">--</option>
+                        <option value="Electric">Electric</option>
+                        <option value="Natural Gas">Natural Gas</option>
+                        <option value="Propane">Propane</option>
+                        <option value="Dual Fuel">Dual Fuel</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Tags</label>
+                <input type="text" id="mmTags" class="form-input" placeholder="Comma-separated tags, e.g. residential, high-efficiency">
             </div>
             <div class="form-group">
                 <label class="form-label">Source</label>

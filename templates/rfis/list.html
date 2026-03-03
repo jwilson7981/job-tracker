@@ -3,7 +3,13 @@
 {% block content %}
 <div class="page-header">
     <h1>RFIs</h1>
-    <button class="btn btn-primary" onclick="showAddRFI()">+ New RFI</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('RFIs','rfisBody','RFIs')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('RFIs','rfisBody','RFIs')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddRFI()">+ New RFI</button>
+    </div>
 </div>
 
 <!-- Summary Cards -->

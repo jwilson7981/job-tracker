@@ -21,7 +21,8 @@ async function loadDashboard() {
         { label: 'Total Jobs', value: data.total_jobs, color: '#3B82F6' },
         { label: 'Active Jobs', value: data.active_jobs, color: '#F59E0B' },
         { label: 'Completed', value: data.completed_jobs, color: '#22C55E' },
-        { label: 'Material Cost', value: fmt(data.material_cost), color: '#6366F1' },
+        { label: 'Est. Materials', value: fmt(data.estimated_material_cost), color: '#6366F1' },
+        { label: 'Actual Materials', value: fmt(data.actual_material_cost), color: '#2563EB' },
         { label: 'Total Expenses', value: fmt(data.total_expenses), color: '#EF4444' },
         { label: 'Invoiced (Paid)', value: fmt(data.total_invoiced), color: '#22C55E' },
         { label: 'Open Service Calls', value: data.open_service_calls, color: '#F59E0B' },
@@ -56,10 +57,10 @@ async function loadDashboard() {
     new Chart(fCtx, {
         type: 'bar',
         data: {
-            labels: ['Materials', 'Expenses', 'Invoiced', 'Payments'],
+            labels: ['Est. Materials', 'Actual Materials', 'Expenses', 'Invoiced', 'Payments'],
             datasets: [{
-                data: [data.material_cost, data.total_expenses, data.total_invoiced, data.total_payments],
-                backgroundColor: ['#3B82F6', '#EF4444', '#22C55E', '#6366F1'],
+                data: [data.estimated_material_cost, data.actual_material_cost, data.total_expenses, data.total_invoiced, data.total_payments],
+                backgroundColor: ['#6366F1', '#2563EB', '#EF4444', '#22C55E', '#8B5CF6'],
             }]
         },
         options: {
@@ -70,4 +71,27 @@ async function loadDashboard() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', loadDashboard);
+async function loadUpcomingFollowups() {
+    try {
+        const res = await fetch('/api/followups/upcoming');
+        if (!res.ok) return; // user may not have permission
+        const followups = await res.json();
+        const card = document.getElementById('followupsCard');
+        const tbody = document.getElementById('dashFollowupsBody');
+        if (!followups.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No upcoming follow-ups</td></tr>';
+            return;
+        }
+        card.style.display = '';
+        tbody.innerHTML = followups.map(f => `<tr>
+            <td>${f.followup_date || '-'}</td>
+            <td><a href="/bids/${f.bid_id}" class="link">${f.bid_name || '-'}</a></td>
+            <td>${f.job_name || '-'}</td>
+            <td>${f.followup_type || '-'}</td>
+            <td>${f.assigned_name || '-'}</td>
+            <td><span class="status-badge status-in-progress">${f.status}</span></td>
+        </tr>`).join('');
+    } catch (e) { /* silently ignore for roles without access */ }
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadDashboard(); loadUpcomingFollowups(); });

@@ -9,7 +9,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
 from database import init_db, get_db, build_snapshot, save_snapshot, restore_snapshot, get_job_data
@@ -139,18 +139,23 @@ def api_dashboard():
     total_payments = conn.execute('SELECT COALESCE(SUM(amount), 0) FROM payments').fetchone()[0]
     total_invoiced = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM client_invoices WHERE status = 'Paid'").fetchone()[0]
 
-    # Material costs
-    material_cost = 0
+    # Estimated material costs (from bids/line_items)
+    estimated_material_cost = 0
     for job in jobs:
         items = conn.execute(
             'SELECT total_net_price, qty_ordered, price_per FROM line_items WHERE job_id = ?',
             (job['id'],)
         ).fetchall()
-        material_cost += sum(
+        estimated_material_cost += sum(
             (row['total_net_price'] or 0) if (row['total_net_price'] or 0)
             else (row['qty_ordered'] or 0) * (row['price_per'] or 0)
             for row in items
         )
+
+    # Actual material costs (from supplier invoices)
+    actual_material_cost = conn.execute(
+        "SELECT COALESCE(SUM(total), 0) FROM supplier_invoices WHERE is_duplicate = 0"
+    ).fetchone()[0]
 
     # Open service calls
     open_calls = conn.execute("SELECT COUNT(*) FROM service_calls WHERE status NOT IN ('Resolved','Closed')").fetchone()[0]
@@ -169,7 +174,9 @@ def api_dashboard():
         'total_jobs': total_jobs,
         'active_jobs': active_jobs,
         'completed_jobs': completed_jobs,
-        'material_cost': round(material_cost, 2),
+        'estimated_material_cost': round(estimated_material_cost, 2),
+        'actual_material_cost': round(actual_material_cost, 2),
+        'material_cost': round(estimated_material_cost, 2),
         'total_expenses': round(total_expenses, 2),
         'total_payments': round(total_payments, 2),
         'total_invoiced': round(total_invoiced, 2),
@@ -179,6 +186,181 @@ def api_dashboard():
     })
 
 # ─── Materials (relocated from old / and /job routes) ────────────
+
+@app.route('/api/materials/import', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_materials_import():
+    """Import an Excel workbook into line_items (and tracking entries) for a job."""
+    from openpyxl import load_workbook
+
+    file = request.files.get('file')
+    job_id = request.form.get('job_id')
+    if not file or not file.filename:
+        return jsonify({'error': 'No file provided'}), 400
+    if not job_id:
+        return jsonify({'error': 'No job selected'}), 400
+
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    if ext not in ('xlsx', 'xls'):
+        return jsonify({'error': 'Please upload an Excel file (.xlsx)'}), 400
+
+    try:
+        wb = load_workbook(file, data_only=True)
+    except Exception as e:
+        return jsonify({'error': f'Could not read Excel file: {str(e)[:200]}'}), 400
+
+    conn = get_db()
+
+    # Verify job exists
+    job = conn.execute('SELECT id, name FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if not job:
+        conn.close()
+        return jsonify({'error': 'Job not found'}), 404
+
+    # Find the master list sheet (try common names)
+    master_sheet = None
+    for name in ['Master List', 'master list', 'Sheet1', 'Materials', 'Line Items']:
+        if name in wb.sheetnames:
+            master_sheet = wb[name]
+            break
+    if not master_sheet:
+        master_sheet = wb.active
+
+    # Read headers from row 1 to map columns
+    headers = {}
+    for col in range(1, master_sheet.max_column + 1):
+        val = master_sheet.cell(row=1, column=col).value
+        if val:
+            headers[str(val).strip().lower()] = col
+
+    # Map header names to DB fields
+    col_map = {}
+    header_aliases = {
+        'line_number': ['line #', 'line', 'line number', 'line no', '#'],
+        'stock_ns': ['stock/ns', 'stock', 'stock ns', 'type'],
+        'sku': ['sku', 'part number', 'part #', 'part no', 'product code', 'item'],
+        'description': ['description', 'desc', 'item description', 'product'],
+        'quote_qty': ['quote qty', 'quote quantity', 'qty quoted', 'est qty'],
+        'qty_ordered': ['qty ordered', 'quantity ordered', 'ordered', 'qty', 'quantity'],
+        'price_per': ['price per', 'unit price', 'price', 'cost', 'unit cost', 'rate'],
+        'total_net_price': ['total net price', 'total price', 'total', 'net price', 'extended', 'ext price', 'amount'],
+    }
+    for field, aliases in header_aliases.items():
+        for alias in aliases:
+            if alias in headers:
+                col_map[field] = headers[alias]
+                break
+
+    # Must have at least description or sku to be useful
+    if 'description' not in col_map and 'sku' not in col_map:
+        conn.close()
+        return jsonify({'error': 'Could not find Description or SKU column in the spreadsheet. '
+                        'Expected headers like: Line #, Stock/NS, SKU, Description, Qty Ordered, Price Per, Total Net Price'}), 400
+
+    # Clear existing line_items for this job (full re-import)
+    existing = conn.execute('SELECT id FROM line_items WHERE job_id = ?', (job_id,)).fetchall()
+    if existing:
+        ids = [str(r['id']) for r in existing]
+        id_list = ','.join(ids)
+        conn.execute(f'DELETE FROM received_entries WHERE line_item_id IN ({id_list})')
+        conn.execute(f'DELETE FROM shipped_entries WHERE line_item_id IN ({id_list})')
+        conn.execute(f'DELETE FROM invoiced_entries WHERE line_item_id IN ({id_list})')
+        conn.execute('DELETE FROM line_items WHERE job_id = ?', (job_id,))
+
+    def safe_num(val):
+        if val is None:
+            return 0
+        if isinstance(val, (int, float)):
+            return val
+        try:
+            return float(str(val).replace('$', '').replace(',', ''))
+        except (ValueError, TypeError):
+            return 0
+
+    # Import line items
+    imported = 0
+    line_id_map = {}  # line_number -> new line_item id
+    for row in range(2, master_sheet.max_row + 1):
+        desc = master_sheet.cell(row=row, column=col_map.get('description', 0)).value if 'description' in col_map else ''
+        sku = master_sheet.cell(row=row, column=col_map.get('sku', 0)).value if 'sku' in col_map else ''
+
+        # Skip empty rows
+        if not desc and not sku:
+            continue
+
+        line_num = safe_num(master_sheet.cell(row=row, column=col_map.get('line_number', 0)).value) if 'line_number' in col_map else (imported + 1)
+        if line_num == 0:
+            line_num = imported + 1
+
+        stock_ns = str(master_sheet.cell(row=row, column=col_map.get('stock_ns', 0)).value or '') if 'stock_ns' in col_map else ''
+        quote_qty = safe_num(master_sheet.cell(row=row, column=col_map.get('quote_qty', 0)).value) if 'quote_qty' in col_map else 0
+        qty_ordered = safe_num(master_sheet.cell(row=row, column=col_map.get('qty_ordered', 0)).value) if 'qty_ordered' in col_map else 0
+        price_per = safe_num(master_sheet.cell(row=row, column=col_map.get('price_per', 0)).value) if 'price_per' in col_map else 0
+        total_net = safe_num(master_sheet.cell(row=row, column=col_map.get('total_net_price', 0)).value) if 'total_net_price' in col_map else 0
+
+        # Auto-calc total if missing
+        if total_net == 0 and qty_ordered > 0 and price_per > 0:
+            total_net = qty_ordered * price_per
+
+        cursor = conn.execute(
+            '''INSERT INTO line_items (job_id, line_number, stock_ns, sku, description,
+               quote_qty, qty_ordered, price_per, total_net_price)
+               VALUES (?,?,?,?,?,?,?,?,?)''',
+            (job_id, int(line_num), stock_ns, str(sku or ''), str(desc or ''),
+             quote_qty, qty_ordered, price_per, total_net)
+        )
+        line_id_map[int(line_num)] = cursor.lastrowid
+        imported += 1
+
+    # Import tracking entries from Received/Shipped/Invoiced sheets
+    tracking_sheets = {
+        'Received': 'received_entries',
+        'Shipped to Site': 'shipped_entries',
+        'Invoiced': 'invoiced_entries',
+    }
+    for sheet_name, table_name in tracking_sheets.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        # Read date headers from row 1 (columns E onward = col 5+)
+        date_headers = {}
+        for col in range(5, min(ws.max_column + 1, 20)):
+            val = ws.cell(row=1, column=col).value
+            if val:
+                date_headers[col] = str(val)
+
+        for row in range(2, ws.max_row + 1):
+            line_num_val = safe_num(ws.cell(row=row, column=1).value)
+            if line_num_val == 0:
+                continue
+            line_item_id = line_id_map.get(int(line_num_val))
+            if not line_item_id:
+                continue
+
+            for col in range(5, min(ws.max_column + 1, 20)):
+                qty = safe_num(ws.cell(row=row, column=col).value)
+                if qty == 0:
+                    continue
+                col_number = col - 4  # columns 5-19 map to column_number 1-15
+                if col_number < 1 or col_number > 15:
+                    continue
+                entry_date = date_headers.get(col, '')
+                conn.execute(
+                    f'''INSERT OR REPLACE INTO {table_name}
+                        (line_item_id, column_number, quantity, entry_date)
+                        VALUES (?,?,?,?)''',
+                    (line_item_id, col_number, qty, entry_date)
+                )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        'ok': True,
+        'imported': imported,
+        'message': f'{imported} line items imported for {job["name"]}'
+    }), 201
+
 
 @app.route('/materials')
 @role_required('owner', 'admin', 'project_manager', 'warehouse')
@@ -844,6 +1026,25 @@ def create_payment():
          data.get('payment_date', datetime.now().strftime('%Y-%m-%d')), session.get('user_id'))
     )
     conn.commit()
+    # Lien waiver auto-prompt: check if lien waiver exists for this job
+    job_id_val = data.get('job_id')
+    if job_id_val:
+        conn2 = get_db()
+        lw = conn2.execute("SELECT id FROM lien_waivers WHERE job_id = ? AND status IN ('Draft','Sent','Executed')", (job_id_val,)).fetchone()
+        if not lw:
+            job_row = conn2.execute('SELECT name FROM jobs WHERE id = ?', (job_id_val,)).fetchone()
+            job_label = job_row['name'] if job_row else f'Job #{job_id_val}'
+            users_to_notify = conn2.execute("SELECT id FROM users WHERE role IN ('owner','admin','project_manager') AND is_active = 1").fetchall()
+            conn2.close()
+            for u in users_to_notify:
+                create_notification(
+                    u['id'], 'system',
+                    f'Lien Waiver Needed: {job_label}',
+                    f'Payment received for {job_label}. Please create a lien waiver.',
+                    f'/lien-waivers'
+                )
+        else:
+            conn2.close()
     conn.close()
     return jsonify({'ok': True}), 201
 
@@ -887,6 +1088,17 @@ def update_invoice(iid):
     if fields:
         values.append(iid)
         conn.execute(f"UPDATE client_invoices SET {', '.join(fields)} WHERE id = ?", values)
+        # Calculate days_to_pay if status changed to Paid
+        if data.get('status') == 'Paid':
+            inv = conn.execute('SELECT issue_date, paid_date FROM client_invoices WHERE id = ?', (iid,)).fetchone()
+            if inv and inv['issue_date'] and inv['paid_date']:
+                try:
+                    issue = datetime.strptime(inv['issue_date'], '%Y-%m-%d')
+                    paid = datetime.strptime(inv['paid_date'], '%Y-%m-%d')
+                    days = (paid - issue).days
+                    conn.execute('UPDATE client_invoices SET days_to_pay = ? WHERE id = ?', (days, iid))
+                except ValueError:
+                    pass
         conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -1911,6 +2123,7 @@ def api_users_list():
 
 # Helper: list of jobs for dropdowns
 @app.route('/api/jobs/list')
+@app.route('/api/jobs')
 @api_login_required
 def api_jobs_list():
     conn = get_db()
@@ -2577,7 +2790,12 @@ def api_award_bid(bid_id):
                 'INSERT INTO pm_benchmarks (job_id, phase, task_name, sort_order) VALUES (?,?,?,?)',
                 (job_id, phase, task, sort)
             )
-    # 6. Notify owners + PMs
+    # 6. Seed 32-step pipeline
+    seed_pipeline_steps(conn, job_id)
+    # Mark bidding steps complete on award
+    for s in range(1, 9):
+        conn.execute("UPDATE job_pipeline_steps SET status='complete', completed_date=date('now','localtime') WHERE job_id=? AND step_number=? AND status='pending'", (job_id, s))
+    # 7. Notify owners + PMs
     users = conn.execute("SELECT id FROM users WHERE role IN ('owner','project_manager') AND is_active = 1").fetchall()
     job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
     conn.commit()
@@ -3430,38 +3648,97 @@ def api_schedule_events():
     return jsonify(result)
 
 def _check_schedule_notifications(events):
-    """Create notifications for events with end_date within 24 hours."""
+    """Create notifications for schedule benchmarks: due soon, starting soon, overdue, missed start."""
     from datetime import timedelta
     now = datetime.now()
-    tomorrow = now + timedelta(hours=24)
+    today = now.date()
+    today_str = now.strftime('%Y-%m-%d')
+    two_days = now + timedelta(hours=48)
     conn = get_db()
+    # Get all owner user IDs for escalation
+    owner_ids = [r['id'] for r in conn.execute("SELECT id FROM users WHERE role = 'owner'").fetchall()]
+
+    def _already_notified(user_id, event_id, ntype_suffix):
+        return conn.execute(
+            '''SELECT id FROM notifications WHERE user_id = ? AND type = 'schedule'
+               AND message LIKE ? AND created_at >= ?''',
+            (user_id, f'%event #{event_id}%{ntype_suffix}%', today_str)
+        ).fetchone()
+
+    def _get_job_name(job_id):
+        job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
+        return job['name'] if job else f'Job #{job_id}'
+
     for e in events:
-        if not e.get('end_date') or e['status'] in ('Complete', 'Cancelled'):
+        if e['status'] in ('Complete', 'Cancelled'):
             continue
-        if not e.get('assigned_to'):
-            continue
-        try:
-            end_dt = datetime.strptime(e['end_date'], '%Y-%m-%d')
-        except (ValueError, TypeError):
-            continue
-        if now <= end_dt <= tomorrow:
-            # Check if already notified today
-            today_str = now.strftime('%Y-%m-%d')
-            existing = conn.execute(
-                '''SELECT id FROM notifications WHERE user_id = ? AND type = 'schedule'
-                   AND message LIKE ? AND created_at >= ?''',
-                (e['assigned_to'], f'%event #{e["id"]}%', today_str)
-            ).fetchone()
-            if not existing:
-                # Get job name
-                job = conn.execute('SELECT name FROM jobs WHERE id = ?', (e['job_id'],)).fetchone()
-                job_name = job['name'] if job else f'Job #{e["job_id"]}'
-                conn.execute(
-                    'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
-                    (e['assigned_to'], 'schedule', 'Schedule: Due Soon',
-                     f'{e["phase_name"]} on {job_name} due {e["end_date"]} (event #{e["id"]})',
-                     f'/schedule/job/{e["job_id"]}')
-                )
+        link = f'/schedule/job/{e["job_id"]}'
+        job_name = _get_job_name(e['job_id'])
+        assigned = e.get('assigned_to')
+
+        # 1. End date within 24h (existing behavior)
+        if e.get('end_date') and assigned:
+            try:
+                end_dt = datetime.strptime(e['end_date'], '%Y-%m-%d')
+            except (ValueError, TypeError):
+                end_dt = None
+            if end_dt and now <= end_dt <= now + timedelta(hours=24):
+                if not _already_notified(assigned, e['id'], 'due_soon'):
+                    conn.execute(
+                        'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                        (assigned, 'schedule', 'Schedule: Due Soon',
+                         f'{e["phase_name"]} on {job_name} due {e["end_date"]} (event #{e["id"]}) due_soon', link)
+                    )
+
+        # 2. Start date within 48 hours - notify assigned user
+        if e.get('start_date') and assigned and e['status'] == 'Pending':
+            try:
+                start_dt = datetime.strptime(e['start_date'], '%Y-%m-%d')
+            except (ValueError, TypeError):
+                start_dt = None
+            if start_dt and now <= start_dt <= two_days:
+                if not _already_notified(assigned, e['id'], 'start_soon'):
+                    conn.execute(
+                        'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                        (assigned, 'schedule', 'Schedule: Starting Soon',
+                         f'{e["phase_name"]} on {job_name} starts in 2 days (event #{e["id"]}) start_soon', link)
+                    )
+
+        # 3. Overdue: In Progress phase past end_date
+        if e.get('end_date') and e['status'] == 'In Progress':
+            try:
+                end_dt = datetime.strptime(e['end_date'], '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                end_dt = None
+            if end_dt and today > end_dt:
+                notify_users = set(owner_ids)
+                if assigned:
+                    notify_users.add(assigned)
+                for uid in notify_users:
+                    if not _already_notified(uid, e['id'], 'overdue'):
+                        conn.execute(
+                            'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                            (uid, 'schedule', 'Schedule: Phase Overdue',
+                             f'{e["phase_name"]} on {job_name} is overdue (was due {e["end_date"]}) (event #{e["id"]}) overdue', link)
+                        )
+
+        # 4. Missed start: Pending phase past start_date
+        if e.get('start_date') and e['status'] == 'Pending':
+            try:
+                start_dt = datetime.strptime(e['start_date'], '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                start_dt = None
+            if start_dt and today > start_dt:
+                notify_users = set(owner_ids)
+                if assigned:
+                    notify_users.add(assigned)
+                for uid in notify_users:
+                    if not _already_notified(uid, e['id'], 'missed_start'):
+                        conn.execute(
+                            'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                            (uid, 'schedule', 'Schedule: Missed Start',
+                             f'{e["phase_name"]} on {job_name} was scheduled to start {e["start_date"]} but hasn\'t begun (event #{e["id"]}) missed_start', link)
+                        )
     conn.commit()
     conn.close()
 
@@ -3472,11 +3749,12 @@ def api_schedule_create():
     conn = get_db()
     cursor = conn.execute(
         '''INSERT INTO job_schedule_events (job_id, phase_name, description, start_date, end_date,
-           assigned_to, sort_order, created_by)
-           VALUES (?,?,?,?,?,?,?,?)''',
+           assigned_to, sort_order, created_by, depends_on, estimated_hours, crew_size)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
         (data.get('job_id'), data.get('phase_name', ''), data.get('description', ''),
          data.get('start_date', ''), data.get('end_date', ''),
-         data.get('assigned_to') or None, data.get('sort_order', 0), session['user_id'])
+         data.get('assigned_to') or None, data.get('sort_order', 0), session['user_id'],
+         data.get('depends_on') or None, data.get('estimated_hours', 0), data.get('crew_size', 1))
     )
     event_id = cursor.lastrowid
     conn.commit()
@@ -3512,12 +3790,18 @@ def api_schedule_update(eid):
     assigned_to = data.get('assigned_to', old['assigned_to']) or None
     status = data.get('status', old['status'])
     sort_order = data.get('sort_order', old['sort_order'])
+    depends_on = data.get('depends_on', old['depends_on']) or None
+    estimated_hours = data.get('estimated_hours', old['estimated_hours'] or 0)
+    crew_size = data.get('crew_size', old['crew_size'] or 1)
+    pct_complete = data.get('pct_complete', old['pct_complete'] if old['pct_complete'] is not None else 0)
 
     conn.execute(
         '''UPDATE job_schedule_events SET phase_name=?, description=?, start_date=?, end_date=?,
-           assigned_to=?, status=?, sort_order=?, updated_at=datetime('now','localtime')
+           assigned_to=?, status=?, sort_order=?, depends_on=?, estimated_hours=?, crew_size=?,
+           pct_complete=?, updated_at=datetime('now','localtime')
            WHERE id=?''',
-        (phase_name, description, start_date, end_date, assigned_to, status, sort_order, eid)
+        (phase_name, description, start_date, end_date, assigned_to, status, sort_order,
+         depends_on, estimated_hours, crew_size, pct_complete, eid)
     )
     conn.commit()
 
@@ -3544,6 +3828,1267 @@ def api_schedule_delete(eid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+@app.route('/api/jobs/<int:job_id>/bid-labor')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_bid_labor(job_id):
+    """Get bid labor data for a job — systems, man-hours, per-phase breakdown."""
+    conn = get_db()
+    bid = conn.execute(
+        "SELECT * FROM bids WHERE job_id = ? AND status IN ('Draft','Sent','Accepted') ORDER BY id DESC LIMIT 1",
+        (job_id,)
+    ).fetchone()
+    if not bid:
+        conn.close()
+        return jsonify({'found': False, 'total_systems': 0, 'man_hours_per_system': 20, 'phases': {}})
+
+    bid = dict(bid)
+    PHASE_HOUR_MAP = {
+        'Rough-In': 'rough_in_hours',
+        'AHU Install': 'ahu_install_hours',
+        'Condenser Install': 'condenser_install_hours',
+        'Trim-Out': 'trim_out_hours',
+        'Startup': 'startup_hours',
+    }
+    PHASE_DEFAULTS = {
+        'rough_in_hours': 15, 'ahu_install_hours': 1,
+        'condenser_install_hours': 1, 'trim_out_hours': 1, 'startup_hours': 2,
+    }
+    total_systems = bid.get('total_systems') or 0
+    man_hours_per_system = bid.get('man_hours_per_system') or 20
+    phases = {}
+    for phase_name, col in PHASE_HOUR_MAP.items():
+        hrs_per_sys = bid.get(col) or PHASE_DEFAULTS.get(col, 0)
+        phases[phase_name] = {
+            'hours_per_system': hrs_per_sys,
+            'total_hours': round(total_systems * hrs_per_sys, 1),
+        }
+    conn.close()
+    return jsonify({
+        'found': True,
+        'bid_id': bid['id'],
+        'bid_name': bid.get('bid_name', ''),
+        'total_systems': total_systems,
+        'man_hours_per_system': man_hours_per_system,
+        'total_man_hours': bid.get('total_man_hours') or round(total_systems * man_hours_per_system, 1),
+        'phases': phases,
+    })
+
+
+@app.route('/api/weather/forecast')
+@api_login_required
+def api_weather_forecast():
+    """Proxy to Open-Meteo for weather forecast / historical data with delay risk flags."""
+    import urllib.request, urllib.error
+    lat = request.args.get('lat', type=float)
+    lng = request.args.get('lng', type=float)
+    start = request.args.get('start')
+    end = request.args.get('end')
+    if not lat or not lng or not start or not end:
+        return jsonify({'error': 'lat, lng, start, end required'}), 400
+
+    start_dt = datetime.strptime(start, '%Y-%m-%d').date()
+    end_dt = datetime.strptime(end, '%Y-%m-%d').date()
+    today = datetime.now().date()
+    forecast_limit = today + timedelta(days=16)
+
+    days_result = []
+
+    # Split into forecast range and historical-estimate range
+    if start_dt <= forecast_limit:
+        fc_end = min(end_dt, forecast_limit)
+        fc_url = (
+            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lng}"
+            f"&daily=precipitation_probability_max,precipitation_sum,temperature_2m_min,"
+            f"temperature_2m_max,wind_gusts_10m_max,weather_code"
+            f"&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+            f"&timezone=America/Chicago&start_date={start_dt.strftime('%Y-%m-%d')}&end_date={fc_end.strftime('%Y-%m-%d')}"
+        )
+        try:
+            req = urllib.request.Request(fc_url, headers={'User-Agent': 'JobTracker/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                fc_data = json.loads(resp.read().decode())
+            daily = fc_data.get('daily', {})
+            dates = daily.get('time', [])
+            for i, d in enumerate(dates):
+                precip_prob = (daily.get('precipitation_probability_max') or [])[i] if i < len(daily.get('precipitation_probability_max') or []) else 0
+                precip_sum = (daily.get('precipitation_sum') or [])[i] if i < len(daily.get('precipitation_sum') or []) else 0
+                temp_min = (daily.get('temperature_2m_min') or [])[i] if i < len(daily.get('temperature_2m_min') or []) else 50
+                temp_max = (daily.get('temperature_2m_max') or [])[i] if i < len(daily.get('temperature_2m_max') or []) else 80
+                wind_gust = (daily.get('wind_gusts_10m_max') or [])[i] if i < len(daily.get('wind_gusts_10m_max') or []) else 0
+                wcode = (daily.get('weather_code') or [])[i] if i < len(daily.get('weather_code') or []) else 0
+
+                risk_reasons = []
+                if precip_prob and precip_prob > 60:
+                    risk_reasons.append('rain likely')
+                if precip_sum and precip_sum > 0.25:
+                    risk_reasons.append('rain')
+                if temp_min is not None and temp_min < 25:
+                    risk_reasons.append('freeze')
+                if temp_max is not None and temp_max > 105:
+                    risk_reasons.append('extreme heat')
+                if wind_gust and wind_gust > 35:
+                    risk_reasons.append('high wind')
+
+                days_result.append({
+                    'date': d, 'high': temp_max, 'low': temp_min,
+                    'precip_prob': precip_prob or 0, 'precip': precip_sum or 0,
+                    'wind_gust': wind_gust or 0, 'weather_code': wcode or 0,
+                    'delay_risk': len(risk_reasons) > 0,
+                    'risk_reasons': risk_reasons, 'source': 'forecast',
+                })
+        except Exception:
+            pass  # Forecast failed — we'll still try historical
+
+    # For dates beyond 16-day forecast, pull prior year historical as estimate
+    if end_dt > forecast_limit:
+        hist_start = max(start_dt, forecast_limit + timedelta(days=1))
+        # Map to prior year
+        try:
+            hist_start_ly = hist_start.replace(year=hist_start.year - 1)
+            hist_end_ly = end_dt.replace(year=end_dt.year - 1)
+        except ValueError:
+            hist_start_ly = hist_start.replace(year=hist_start.year - 1, day=28)
+            hist_end_ly = end_dt.replace(year=end_dt.year - 1, day=28)
+
+        hist_url = (
+            f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lng}"
+            f"&daily=precipitation_sum,temperature_2m_min,temperature_2m_max,wind_gusts_10m_max,weather_code"
+            f"&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+            f"&timezone=America/Chicago&start_date={hist_start_ly.strftime('%Y-%m-%d')}&end_date={hist_end_ly.strftime('%Y-%m-%d')}"
+        )
+        try:
+            req = urllib.request.Request(hist_url, headers={'User-Agent': 'JobTracker/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                hist_data = json.loads(resp.read().decode())
+            daily = hist_data.get('daily', {})
+            dates = daily.get('time', [])
+            # Map historical dates back to current year
+            day_offset = 0
+            current_date = hist_start
+            for i, d in enumerate(dates):
+                if current_date > end_dt:
+                    break
+                precip_sum = (daily.get('precipitation_sum') or [])[i] if i < len(daily.get('precipitation_sum') or []) else 0
+                temp_min = (daily.get('temperature_2m_min') or [])[i] if i < len(daily.get('temperature_2m_min') or []) else 50
+                temp_max = (daily.get('temperature_2m_max') or [])[i] if i < len(daily.get('temperature_2m_max') or []) else 80
+                wind_gust = (daily.get('wind_gusts_10m_max') or [])[i] if i < len(daily.get('wind_gusts_10m_max') or []) else 0
+                wcode = (daily.get('weather_code') or [])[i] if i < len(daily.get('weather_code') or []) else 0
+
+                risk_reasons = []
+                if precip_sum and precip_sum > 0.25:
+                    risk_reasons.append('rain (historical)')
+                if temp_min is not None and temp_min < 25:
+                    risk_reasons.append('freeze (historical)')
+                if temp_max is not None and temp_max > 105:
+                    risk_reasons.append('extreme heat (historical)')
+                if wind_gust and wind_gust > 35:
+                    risk_reasons.append('high wind (historical)')
+
+                days_result.append({
+                    'date': current_date.strftime('%Y-%m-%d'), 'high': temp_max, 'low': temp_min,
+                    'precip_prob': None, 'precip': precip_sum or 0,
+                    'wind_gust': wind_gust or 0, 'weather_code': wcode or 0,
+                    'delay_risk': len(risk_reasons) > 0,
+                    'risk_reasons': risk_reasons, 'source': 'historical_estimate',
+                })
+                current_date += timedelta(days=1)
+        except Exception:
+            pass
+
+    return jsonify({'days': days_result})
+
+
+@app.route('/api/geocode')
+@api_login_required
+def api_geocode():
+    """Geocode a location string using Open-Meteo geocoding API."""
+    import urllib.request, urllib.error, urllib.parse
+    q = request.args.get('q', '')
+    if not q:
+        return jsonify({'lat': 35.6528, 'lng': -97.4781})  # Default: Edmond, OK
+    try:
+        encoded_q = urllib.parse.quote(q)
+        url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_q}&count=1&language=en&format=json"
+        req = urllib.request.Request(url, headers={'User-Agent': 'JobTracker/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        results = data.get('results', [])
+        if results:
+            return jsonify({'lat': results[0]['latitude'], 'lng': results[0]['longitude']})
+    except Exception:
+        pass
+    return jsonify({'lat': 35.6528, 'lng': -97.4781})
+
+
+@app.route('/api/schedule/backwards-plan', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_backwards_plan():
+    """Smart backwards planning: bid-driven, weather-aware, crew calculator."""
+    import math, urllib.request, urllib.error, urllib.parse
+    data = request.get_json(force=True)
+    job_id = data.get('job_id')
+    deadline_date = data.get('deadline_date')
+    hours_per_day = data.get('hours_per_day', 10)
+    crew_override = data.get('crew_override')  # None = auto, int = fixed crew
+    project_type = data.get('project_type', 'apartment')  # apartment | commercial
+    commercial = data.get('commercial', {})
+
+    if not job_id or not deadline_date:
+        return jsonify({'error': 'job_id and deadline_date required'}), 400
+
+    conn = get_db()
+
+    # 1. Fetch phases
+    rows = conn.execute(
+        'SELECT * FROM job_schedule_events WHERE job_id = ? ORDER BY sort_order, id',
+        (job_id,)
+    ).fetchall()
+    phases = [dict(r) for r in rows]
+    if not phases:
+        conn.close()
+        return jsonify({'error': 'No phases found'}), 404
+
+    # 2. Fetch bid labor data
+    bid = conn.execute(
+        "SELECT * FROM bids WHERE job_id = ? AND status IN ('Draft','Sent','Accepted') ORDER BY id DESC LIMIT 1",
+        (job_id,)
+    ).fetchone()
+    bid = dict(bid) if bid else None
+
+    # ── Commercial project hour calculations ──
+    # Industry-standard labor rates for commercial HVAC
+    if project_type == 'commercial' and commercial:
+        ptacs = commercial.get('ptac_count', 0)
+        vtacs = commercial.get('vtac_count', 0)
+        splits = commercial.get('split_count', 0)
+        rtus = commercial.get('rtu_count', 0)
+        metal_lf = commercial.get('metal_duct_lf', 0)
+        comm_stories = commercial.get('stories', 4)
+        exhaust_fans = commercial.get('exhaust_fan_count', 0)
+        mau_count = commercial.get('makeup_air_count', 0)
+        sleeve_install = commercial.get('sleeve_install', True)
+
+        # PTAC labor hours:
+        #   Sleeve install (if we do it): ~1.5-2 hrs per unit (cut, frame, sleeve, seal, flash)
+        #   PTAC set & connect: ~0.75 hr per unit (slide in, electrical, condensate, test)
+        #   Pigtail/electrical: ~0.25 hr per unit
+        ptac_sleeve_hrs = ptacs * 1.75 if sleeve_install else 0
+        ptac_set_hrs = ptacs * 1.0  # set, connect, test
+
+        # VTAC labor hours:
+        #   Similar to PTAC but vertical, closet-mounted, slightly more complex
+        #   Install: ~2.5 hrs per unit (frame closet penetrations, set, connect, duct)
+        vtac_hrs = vtacs * 2.5
+
+        # Split system labor hours (common areas - lobby, restaurant, etc.):
+        #   Full duct system per split: rough-in ~12-16 hrs, AHU set ~2 hrs,
+        #   condenser ~3 hrs, trim ~2 hrs, startup ~1.5 hrs
+        split_rough_hrs = splits * 14
+        split_ahu_hrs = splits * 2
+        split_cond_hrs = splits * 3
+        split_trim_hrs = splits * 2
+        split_startup_hrs = splits * 1.5
+
+        # RTU labor hours:
+        #   Crane/set: ~4 hrs per unit
+        #   Curb adapter & duct connect: ~6-8 hrs per unit
+        #   Electrical (disconnect, whip, controls): ~4 hrs per unit
+        #   Startup & commissioning: ~3 hrs per unit
+        rtu_set_hrs = rtus * 4
+        rtu_duct_hrs = rtus * 7
+        rtu_elec_hrs = rtus * 4
+        rtu_startup_hrs = rtus * 3
+
+        # Metal ductwork:
+        #   Fabrication & install rate: ~15-20 LF per man-day (8-10 hrs)
+        #   Includes hangers, sealing, insulation
+        #   ~0.5 man-hours per linear foot installed
+        metal_duct_hrs = metal_lf * 0.5
+
+        # Exhaust fans: ~3 hrs per fan (set, duct, wire, test)
+        exhaust_hrs = exhaust_fans * 3
+
+        # Make-up air units: ~8 hrs per MAU (set, duct, wire, controls, balance)
+        mau_hrs = mau_count * 8
+
+        # Map to phases using commercial logic:
+        # Rough-In: sleeves + metal duct + split rough-in + RTU curb/duct prep
+        # Equipment Set: PTAC set + VTAC set + AHU set + RTU crane/set + exhaust + MAU
+        # Condenser/Outdoor: split condensers + RTU startup prep
+        # Trim-Out: all trim, controls, registers + split trim
+        # Startup: all startup + commissioning + test & balance
+        COMMERCIAL_PHASE_HOURS = {
+            'Rough-In': ptac_sleeve_hrs + metal_duct_hrs + split_rough_hrs + rtu_duct_hrs + vtac_hrs * 0.4,
+            'AHU Install': ptac_set_hrs + vtac_hrs * 0.6 + split_ahu_hrs + rtu_set_hrs + exhaust_hrs + mau_hrs,
+            'Condenser Install': split_cond_hrs + rtu_elec_hrs,
+            'Trim-Out': split_trim_hrs + (ptacs + vtacs) * 0.25,  # minimal trim for PTACs
+            'Startup': split_startup_hrs + rtu_startup_hrs + (ptacs + vtacs) * 0.15,  # quick PTAC test
+        }
+
+        total_systems = ptacs + vtacs + splits + rtus
+
+    PHASE_HOUR_MAP = {
+        'Rough-In': 'rough_in_hours',
+        'AHU Install': 'ahu_install_hours',
+        'Condenser Install': 'condenser_install_hours',
+        'Trim-Out': 'trim_out_hours',
+        'Startup': 'startup_hours',
+    }
+    PHASE_DEFAULTS = {
+        'rough_in_hours': 15, 'ahu_install_hours': 1,
+        'condenser_install_hours': 1, 'trim_out_hours': 1, 'startup_hours': 2,
+    }
+    if project_type != 'commercial':
+        total_systems = bid.get('total_systems', 0) if bid else 0
+
+    # 3. Calculate remaining hours per phase using bid data + pct_complete
+    for p in phases:
+        pct = p.get('pct_complete') or 0
+
+        if project_type == 'commercial' and commercial:
+            # Use commercial calculated hours
+            total_hrs = COMMERCIAL_PHASE_HOURS.get(p['phase_name'], 0)
+            if total_hrs == 0:
+                total_hrs = p.get('estimated_hours') or 0
+        else:
+            bid_col = PHASE_HOUR_MAP.get(p['phase_name'])
+            if bid and total_systems and bid_col:
+                hrs_per_sys = bid.get(bid_col) or PHASE_DEFAULTS.get(bid_col, 0)
+                total_hrs = total_systems * hrs_per_sys
+            else:
+                total_hrs = p.get('estimated_hours') or 0
+        p['_total_hours'] = round(total_hrs, 1)
+        p['_remaining_hours'] = round(total_hrs * (1 - pct / 100), 1)
+
+    # 4. Fetch job location for weather
+    job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    lat, lng = 35.6528, -97.4781  # Default Edmond, OK
+    if job:
+        loc_str = ' '.join(filter(None, [job['city'] if job['city'] else None, job['state'] if job['state'] else None, job['zip_code'] if job['zip_code'] else None]))
+        if loc_str.strip():
+            try:
+                encoded_q = urllib.parse.quote(loc_str.strip())
+                geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_q}&count=1&language=en&format=json"
+                req = urllib.request.Request(geo_url, headers={'User-Agent': 'JobTracker/1.0'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    geo_data = json.loads(resp.read().decode())
+                results = geo_data.get('results', [])
+                if results:
+                    lat, lng = results[0]['latitude'], results[0]['longitude']
+            except Exception:
+                pass
+
+    # 5. Fetch weather data for the planning window
+    deadline = datetime.strptime(deadline_date, '%Y-%m-%d').date()
+    today = datetime.now().date()
+    plan_start = today
+    forecast_limit = today + timedelta(days=16)
+    weather_days = {}  # date_str -> {delay_risk, risk_reasons, ...}
+
+    # Forecast portion
+    if plan_start <= forecast_limit:
+        fc_end = min(deadline, forecast_limit)
+        fc_url = (
+            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lng}"
+            f"&daily=precipitation_probability_max,precipitation_sum,temperature_2m_min,"
+            f"temperature_2m_max,wind_gusts_10m_max,weather_code"
+            f"&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+            f"&timezone=America/Chicago&start_date={plan_start.strftime('%Y-%m-%d')}&end_date={fc_end.strftime('%Y-%m-%d')}"
+        )
+        try:
+            req = urllib.request.Request(fc_url, headers={'User-Agent': 'JobTracker/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                fc_data = json.loads(resp.read().decode())
+            daily = fc_data.get('daily', {})
+            dates = daily.get('time', [])
+            for i, d in enumerate(dates):
+                pp = (daily.get('precipitation_probability_max') or [])[i] if i < len(daily.get('precipitation_probability_max') or []) else 0
+                ps = (daily.get('precipitation_sum') or [])[i] if i < len(daily.get('precipitation_sum') or []) else 0
+                tmin = (daily.get('temperature_2m_min') or [])[i] if i < len(daily.get('temperature_2m_min') or []) else 50
+                tmax = (daily.get('temperature_2m_max') or [])[i] if i < len(daily.get('temperature_2m_max') or []) else 80
+                wg = (daily.get('wind_gusts_10m_max') or [])[i] if i < len(daily.get('wind_gusts_10m_max') or []) else 0
+                wc = (daily.get('weather_code') or [])[i] if i < len(daily.get('weather_code') or []) else 0
+                reasons = []
+                if pp and pp > 60: reasons.append('rain likely')
+                if ps and ps > 0.25: reasons.append('rain')
+                if tmin is not None and tmin < 25: reasons.append('freeze')
+                if tmax is not None and tmax > 105: reasons.append('extreme heat')
+                if wg and wg > 35: reasons.append('high wind')
+                weather_days[d] = {
+                    'high': tmax, 'low': tmin, 'precip_prob': pp or 0, 'precip': ps or 0,
+                    'wind_gust': wg or 0, 'weather_code': wc or 0,
+                    'delay_risk': len(reasons) > 0, 'risk_reasons': reasons, 'source': 'forecast',
+                }
+        except Exception:
+            pass
+
+    # Historical portion for dates beyond forecast
+    if deadline > forecast_limit:
+        hist_start = max(plan_start, forecast_limit + timedelta(days=1))
+        try:
+            hist_start_ly = hist_start.replace(year=hist_start.year - 1)
+            hist_end_ly = deadline.replace(year=deadline.year - 1)
+        except ValueError:
+            hist_start_ly = hist_start.replace(year=hist_start.year - 1, day=28)
+            hist_end_ly = deadline.replace(year=deadline.year - 1, day=28)
+        hist_url = (
+            f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lng}"
+            f"&daily=precipitation_sum,temperature_2m_min,temperature_2m_max,wind_gusts_10m_max,weather_code"
+            f"&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch"
+            f"&timezone=America/Chicago&start_date={hist_start_ly.strftime('%Y-%m-%d')}&end_date={hist_end_ly.strftime('%Y-%m-%d')}"
+        )
+        try:
+            req = urllib.request.Request(hist_url, headers={'User-Agent': 'JobTracker/1.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                hist_data = json.loads(resp.read().decode())
+            daily = hist_data.get('daily', {})
+            dates = daily.get('time', [])
+            current_date = hist_start
+            for i, d in enumerate(dates):
+                if current_date > deadline: break
+                ps = (daily.get('precipitation_sum') or [])[i] if i < len(daily.get('precipitation_sum') or []) else 0
+                tmin = (daily.get('temperature_2m_min') or [])[i] if i < len(daily.get('temperature_2m_min') or []) else 50
+                tmax = (daily.get('temperature_2m_max') or [])[i] if i < len(daily.get('temperature_2m_max') or []) else 80
+                wg = (daily.get('wind_gusts_10m_max') or [])[i] if i < len(daily.get('wind_gusts_10m_max') or []) else 0
+                wc = (daily.get('weather_code') or [])[i] if i < len(daily.get('weather_code') or []) else 0
+                reasons = []
+                if ps and ps > 0.25: reasons.append('rain (historical)')
+                if tmin is not None and tmin < 25: reasons.append('freeze (historical)')
+                if tmax is not None and tmax > 105: reasons.append('extreme heat (historical)')
+                if wg and wg > 35: reasons.append('high wind (historical)')
+                ds = current_date.strftime('%Y-%m-%d')
+                weather_days[ds] = {
+                    'high': tmax, 'low': tmin, 'precip_prob': None, 'precip': ps or 0,
+                    'wind_gust': wg or 0, 'weather_code': wc or 0,
+                    'delay_risk': len(reasons) > 0, 'risk_reasons': reasons, 'source': 'historical_estimate',
+                }
+                current_date += timedelta(days=1)
+        except Exception:
+            pass
+
+    # 6. Build weather risk date set (weekdays only)
+    weather_risk_dates = set()
+    for ds, w in weather_days.items():
+        if w['delay_risk']:
+            d = datetime.strptime(ds, '%Y-%m-%d').date()
+            if d.weekday() < 5:
+                weather_risk_dates.add(d)
+
+    # 7. Build dependency graph + topological sort (leaf-first for backwards planning)
+    by_id = {p['id']: p for p in phases}
+    successors = {p['id']: [] for p in phases}
+    has_any_deps = any(p.get('depends_on') and p['depends_on'] in by_id for p in phases)
+
+    if has_any_deps:
+        # Use explicit dependencies
+        for p in phases:
+            if p.get('depends_on') and p['depends_on'] in by_id:
+                successors[p['depends_on']].append(p['id'])
+    else:
+        # No explicit dependencies — auto-chain phases sequentially (sort order).
+        # Each phase must finish before the next one starts.
+        for i in range(len(phases) - 1):
+            successors[phases[i]['id']].append(phases[i + 1]['id'])
+
+    from collections import deque
+    # For backwards planning: process phases with no successors first (they end at deadline),
+    # then work backwards to phases that must finish before those start.
+    # "Leaves" = phases with empty successor lists = end of the chain.
+    successor_count = {p['id']: len(successors[p['id']]) for p in phases}
+    queue = deque([pid for pid, cnt in successor_count.items() if cnt == 0])
+    topo_order = []
+    visited = set()
+    while queue:
+        pid = queue.popleft()
+        if pid in visited:
+            continue
+        visited.add(pid)
+        topo_order.append(pid)
+        # Find predecessors: phases whose successor list includes this pid
+        for p in phases:
+            if pid in successors.get(p['id'], []):
+                successor_count[p['id']] -= 1
+                if successor_count[p['id']] == 0:
+                    queue.append(p['id'])
+    # If any phases weren't reached (orphans), add them
+    for p in phases:
+        if p['id'] not in visited:
+            topo_order.append(p['id'])
+
+    # 8. Compute dates backwards from deadline
+    def count_work_days(start_d, end_d, skip_weather=True):
+        """Count available work days between two dates (inclusive), skipping weekends and weather risk days."""
+        count = 0
+        d = start_d
+        while d <= end_d:
+            if d.weekday() < 5 and (not skip_weather or d not in weather_risk_dates):
+                count += 1
+            d += timedelta(days=1)
+        return count
+
+    def walk_back(end_d, work_days_needed):
+        """Walk backwards from end_d to find start_d, skipping weekends and weather risk days."""
+        current = end_d
+        remaining = work_days_needed
+        # First ensure end_d itself is a valid work day
+        while current.weekday() >= 5 or current in weather_risk_dates:
+            current -= timedelta(days=1)
+        end_d = current
+        remaining -= 1  # end_d counts as 1 work day
+        while remaining > 0:
+            current -= timedelta(days=1)
+            if current.weekday() < 5 and current not in weather_risk_dates:
+                remaining -= 1
+        return current, end_d
+
+    # ── Auto mode: pre-calculate a consistent crew size that fits all phases sequentially ──
+    if not crew_override:
+        total_active_hrs = sum(p['_remaining_hours'] for p in phases if p['_remaining_hours'] > 0)
+        total_avail = count_work_days(today, deadline)
+        if total_avail > 0 and total_active_hrs > 0:
+            auto_crew = max(1, math.ceil(total_active_hrs / (total_avail * hours_per_day)))
+            # Verify: total days at this crew must fit in available window
+            total_days_at_crew = sum(
+                max(1, math.ceil(p['_remaining_hours'] / (auto_crew * hours_per_day)))
+                for p in phases if p['_remaining_hours'] > 0
+            )
+            while total_days_at_crew > total_avail and auto_crew < 50:
+                auto_crew += 1
+                total_days_at_crew = sum(
+                    max(1, math.ceil(p['_remaining_hours'] / (auto_crew * hours_per_day)))
+                    for p in phases if p['_remaining_hours'] > 0
+                )
+        else:
+            auto_crew = max(1, math.ceil(total_active_hrs / hours_per_day)) if total_active_hrs > 0 else 1
+        effective_crew = auto_crew
+    else:
+        effective_crew = crew_override
+
+    computed_end = {}
+    computed_start = {}
+    phase_results = {}
+
+    for pid in topo_order:
+        p = by_id[pid]
+        remaining_hrs = p['_remaining_hours']
+
+        # Determine end date boundary
+        succ_ids = successors[pid]
+        if not succ_ids:
+            boundary_end = deadline
+        else:
+            valid_succ_starts = [computed_start[s] for s in succ_ids if s in computed_start]
+            if valid_succ_starts:
+                boundary_end = min(valid_succ_starts) - timedelta(days=1)
+                while boundary_end.weekday() >= 5:
+                    boundary_end -= timedelta(days=1)
+            else:
+                boundary_end = deadline
+
+        if remaining_hrs <= 0:
+            # Phase already done — don't consume any calendar time.
+            # Set start=end=boundary so the next phase upstream can use boundary_end directly.
+            computed_start[pid] = boundary_end
+            computed_end[pid] = boundary_end
+            phase_results[pid] = {
+                'work_days': 0, 'crew_needed': 0, 'remaining_hours': 0,
+                'total_hours': p['_total_hours'],
+                'weather_risk_days': 0, 'hours_per_day_needed': 0,
+                'warning': 'Complete',
+            }
+            continue
+
+        # Count available work days from today to boundary
+        avail_work_days = count_work_days(today, boundary_end)
+
+        # Calculate days needed with the effective crew
+        work_days_needed = max(1, math.ceil(remaining_hrs / (effective_crew * hours_per_day)))
+        crew_needed = effective_crew
+        hrs_per_day_needed = hours_per_day
+        warning = None
+        if work_days_needed > avail_work_days:
+            # Can't fit — calculate extended hours per day needed
+            if avail_work_days > 0:
+                hrs_per_day_needed = round(remaining_hrs / (effective_crew * avail_work_days), 1)
+                work_days_needed = avail_work_days
+                if hrs_per_day_needed > 14:
+                    warning = f'Requires {hrs_per_day_needed}hr days — consider more crew or extending deadline'
+                else:
+                    warning = f'Extended to {hrs_per_day_needed}hr days to meet deadline'
+            else:
+                warning = 'No available work days before deadline'
+                work_days_needed = 1
+
+        start_d, end_d = walk_back(boundary_end, work_days_needed)
+        computed_start[pid] = start_d
+        computed_end[pid] = end_d
+
+        # Count weather risk days in this phase's window
+        phase_weather_risks = 0
+        d = start_d
+        while d <= end_d:
+            if d.weekday() < 5 and d in weather_risk_dates:
+                phase_weather_risks += 1
+            d += timedelta(days=1)
+
+        phase_results[pid] = {
+            'work_days': work_days_needed,
+            'crew_needed': crew_needed,
+            'remaining_hours': remaining_hrs,
+            'total_hours': p['_total_hours'],
+            'weather_risk_days': phase_weather_risks,
+            'hours_per_day_needed': hrs_per_day_needed,
+            'warning': warning,
+        }
+
+    # 9. Update DB — only update estimated_hours and crew_size, NOT dates
+    # Dates are calculated for display only. User manually sets/applies dates.
+    apply_dates = data.get('apply_dates', False)  # only overwrite dates if explicitly requested
+    for p in phases:
+        pid = p['id']
+        if pid in computed_start:
+            pr = phase_results.get(pid, {})
+            est_hrs = p['_total_hours'] if p['_total_hours'] > 0 else (p.get('estimated_hours') or 0)
+            crew = pr.get('crew_needed', p.get('crew_size') or 1)
+            if apply_dates:
+                conn.execute(
+                    '''UPDATE job_schedule_events SET start_date=?, end_date=?, estimated_hours=?, crew_size=?,
+                       updated_at=datetime('now','localtime') WHERE id=?''',
+                    (computed_start[pid].strftime('%Y-%m-%d'), computed_end[pid].strftime('%Y-%m-%d'),
+                     est_hrs, crew, pid)
+                )
+            else:
+                conn.execute(
+                    '''UPDATE job_schedule_events SET estimated_hours=?, crew_size=?,
+                       updated_at=datetime('now','localtime') WHERE id=?''',
+                    (est_hrs, crew, pid)
+                )
+    conn.commit()
+
+    # 10. Build response — use computed dates for display, actual DB dates for phases
+    rows = conn.execute(
+        'SELECT * FROM job_schedule_events WHERE job_id = ? ORDER BY sort_order, id',
+        (job_id,)
+    ).fetchall()
+    updated_phases = [dict(r) for r in rows]
+    conn.close()
+
+    # Summary stats
+    total_remaining = sum(pr.get('remaining_hours', 0) for pr in phase_results.values())
+    calendar_days = (deadline - today).days
+    total_weather_risk = len([d for d in weather_risk_dates if today <= d <= deadline])
+    total_biz_days = count_work_days(today, deadline, skip_weather=False)
+    total_avail_days = count_work_days(today, deadline, skip_weather=True)
+
+    # Phase detail for results table — use computed dates for plan display
+    phase_detail = []
+    for p in updated_phases:
+        pr = phase_results.get(p['id'], {})
+        # Show computed dates for the plan, keep actual DB dates separate
+        plan_start = computed_start[p['id']].strftime('%Y-%m-%d') if p['id'] in computed_start else p['start_date']
+        plan_end = computed_end[p['id']].strftime('%Y-%m-%d') if p['id'] in computed_end else p['end_date']
+        phase_detail.append({
+            'id': p['id'],
+            'phase_name': p['phase_name'],
+            'start_date': plan_start,
+            'end_date': plan_end,
+            'actual_start_date': p['start_date'],  # what's in DB
+            'actual_end_date': p['end_date'],       # what's in DB
+            'work_days': pr.get('work_days', 0),
+            'remaining_hours': pr.get('remaining_hours', 0),
+            'total_hours': pr.get('total_hours', p.get('estimated_hours') or 0),
+            'crew_needed': pr.get('crew_needed', p.get('crew_size') or 1),
+            'weather_risk_days': pr.get('weather_risk_days', 0),
+            'hours_per_day_needed': pr.get('hours_per_day_needed', hours_per_day),
+            'pct_complete': p.get('pct_complete') or 0,
+            'warning': pr.get('warning'),
+            'status': p['status'],
+        })
+
+    # Weather days list for frontend
+    weather_list = []
+    for ds in sorted(weather_days.keys()):
+        w = weather_days[ds]
+        weather_list.append({'date': ds, **w})
+
+    # Crew recommendation: max crew needed across active phases
+    active_phases = [pr for pr in phase_results.values() if pr.get('remaining_hours', 0) > 0]
+    max_crew = max((pr.get('crew_needed', 1) for pr in active_phases), default=1)
+
+    # Find earliest start date across all active phases
+    active_start_dates = [computed_start[pid] for pid in phase_results if phase_results[pid].get('remaining_hours', 0) > 0 and pid in computed_start]
+    earliest_start = min(active_start_dates).strftime('%B %d, %Y') if active_start_dates else today.strftime('%B %d, %Y')
+    # Find latest end date
+    active_end_dates = [computed_end[pid] for pid in phase_results if phase_results[pid].get('remaining_hours', 0) > 0 and pid in computed_end]
+    latest_end = max(active_end_dates).strftime('%B %d, %Y') if active_end_dates else deadline_date
+    total_work_days = sum(pr.get('work_days', 0) for pr in active_phases)
+
+    if project_type == 'commercial' and commercial:
+        ptacs = commercial.get('ptac_count', 0)
+        vtacs = commercial.get('vtac_count', 0)
+        splits = commercial.get('split_count', 0)
+        rtus = commercial.get('rtu_count', 0)
+        room_units = ptacs + vtacs
+        common_units = splits + rtus
+        crew_recommendation = f"You need {max_crew} men working {hours_per_day}-hour days"
+        if room_units > 0:
+            crew_recommendation += f" — {room_units} PTAC/VTAC rooms + {common_units} common area systems"
+    else:
+        if crew_override:
+            crew_recommendation = f"With {crew_override} men working {hours_per_day}-hour days — start {earliest_start}, finish by {latest_end} ({total_work_days} work days)"
+        else:
+            crew_recommendation = f"You need {max_crew} men working {hours_per_day}-hour days — start {earliest_start}, finish by {latest_end} ({total_work_days} work days)"
+
+    # Override impact: compare auto vs override
+    override_impact = None
+    if crew_override and total_remaining > 0:
+        # Calculate what auto mode would have given
+        auto_crew = max(1, math.ceil(total_remaining / (total_avail_days * hours_per_day))) if total_avail_days > 0 else max(1, math.ceil(total_remaining / hours_per_day))
+        auto_days = max(1, math.ceil(total_remaining / (auto_crew * hours_per_day)))
+        override_days = sum(pr.get('work_days', 0) for pr in active_phases)
+        # Check if any phase has extended hours
+        max_hrs_per_day = max((pr.get('hours_per_day_needed', hours_per_day) for pr in active_phases), default=hours_per_day)
+        override_impact = {
+            'auto_crew': auto_crew,
+            'auto_days': auto_days,
+            'auto_hours_per_day': hours_per_day,
+            'override_crew': crew_override,
+            'override_days': override_days,
+            'override_hours_per_day': max_hrs_per_day,
+            'days_delta': override_days - auto_days,
+            'hours_delta': max_hrs_per_day - hours_per_day,
+        }
+
+    # ── 11. Generate Detailed Weekly/Daily Benchmarks ──
+    # Phase-specific task breakdowns for HVAC construction
+    PHASE_TASKS = {
+        'Rough-In': [
+            'Layout & mark unit locations, chase openings, penetrations',
+            'Frame & cut chases for supply/return plenums',
+            'Hang main trunk lines and supply drops (flex duct)',
+            'Install return air boots & return ductwork',
+            'Run condensate drain piping (PVC/CPVC) to nearest drain',
+            'Install fire dampers at fire-rated assemblies',
+            'Install duct hangers, strapping, threaded rod supports',
+            'Pull thermostat wire & low-voltage wire to each unit location',
+            'Install exhaust fan rough-in (vent ducting to exterior)',
+            'Seal all duct connections with mastic & tape per code',
+            'Install CRDs / bath exhaust boots per unit',
+            'Pass rough-in inspection before cover',
+        ],
+        'AHU Install': [
+            'Stage air handlers at unit locations (attic/closet)',
+            'Set AHU on mounting platform (hanger/shelf/stand)',
+            'Connect supply & return plenums to AHU',
+            'Connect condensate drain to AHU trap',
+            'Install drain pan under unit (if above living space)',
+            'Install Safe-T-Switch / float switch on condensate',
+            'Wire thermostat wire to AHU terminal block',
+            'Verify airflow direction and filter rack orientation',
+        ],
+        'Condenser Install': [
+            'Set condensers/heat pumps on pads (ground) or curbs (roof)',
+            'Braze line sets — suction & liquid lines per tonnage',
+            'Insulate suction lines with Armaflex/fiberglass',
+            'Install electrical disconnects at each condenser',
+            'Pull whips from disconnect to condenser',
+            'Pressure test with nitrogen (600psi min, hold 24hrs)',
+            'Break vacuum and charge refrigerant per spec',
+        ],
+        'Trim-Out': [
+            'Install supply registers (sized per drop diameter)',
+            'Install return air grilles / filter grilles',
+            'Mount and wire thermostats',
+            'Install condensate pump-ups where required',
+            'Install filter in each return air grille',
+            'Install cork pads / vibration isolation',
+            'Complete final condensate connections',
+            'Touch-up duct sealing, register alignment',
+            'Label all equipment, circuits, and thermostats',
+            'Clean up work areas, remove debris',
+        ],
+        'Startup': [
+            'Verify all electrical connections, tighten terminals',
+            'Verify refrigerant charge (superheat/subcooling method)',
+            'Measure airflow at each supply register (CFM)',
+            'Test thermostat operation — heat & cool modes',
+            'Verify condensate drain flow & safety switch operation',
+            'Check duct leakage (blower door test if required)',
+            'Document startup readings per unit (pressures, temps, CFM)',
+            'Complete startup checklist for builder/owner',
+            'Schedule & pass final mechanical inspection',
+        ],
+    }
+    COMMERCIAL_PHASE_TASKS = {
+        'Rough-In': [
+            'Layout & mark PTAC/VTAC sleeve locations per plans (verify dimensions with architect)',
+            'Cut, frame, and install PTAC sleeves — verify level, slope for condensate',
+            'Flash and seal PTAC sleeves (interior & exterior weather barrier)',
+            'Install metal ductwork trunk lines for common area systems',
+            'Fabricate & install metal duct branches, transitions, and takeoffs',
+            'Hang duct with trapeze hangers, threaded rod per SMACNA standards',
+            'Install fire/smoke dampers at all fire-rated penetrations',
+            'Run condensate drain piping for all systems to approved drains',
+            'Pull thermostat/control wire for split systems and RTU controls',
+            'Install exhaust duct risers for kitchen hoods and bath exhaust',
+            'Seal all metal duct joints — mastic, tape, or gasket per spec',
+            'Install VTAC closet rough-in — supply/return openings, condensate, electrical',
+            'Pass rough-in inspection before walls close',
+        ],
+        'AHU Install': [
+            'Set PTACs in sleeves — verify electrical, drain slope, secure to sleeve',
+            'Connect PTAC pigtails and verify dedicated circuit',
+            'Set VTACs in closets — connect supply/return, condensate, electrical',
+            'Set split system air handlers in common areas (lobby, restaurant, office)',
+            'Crane & set RTUs on rooftop curbs — verify curb alignment and gasket',
+            'Connect RTU supply/return duct transitions to curb openings',
+            'Install make-up air units (MAUs) — duct, electrical, controls',
+            'Set and connect kitchen hood exhaust fans',
+            'Install bath exhaust fans and connect to risers',
+            'Wire all equipment disconnects and verify circuits',
+        ],
+        'Condenser Install': [
+            'Set split system condensers on pads or brackets',
+            'Braze line sets for split systems — nitrogen purge during brazing',
+            'Insulate all suction lines and exposed line sets',
+            'Install electrical disconnects and whips for condensers',
+            'Wire RTU high-voltage connections and verify breaker sizing',
+            'Pressure test all refrigerant systems (600psi nitrogen, 24hr hold)',
+            'Pull vacuum on all refrigerant systems (500 microns min)',
+            'Charge refrigerant per manufacturer specs — document charge amount',
+        ],
+        'Trim-Out': [
+            'Install supply diffusers, registers, and grilles in common areas',
+            'Install return air grilles with filters',
+            'Mount and wire all thermostats and DDC controls',
+            'Install condensate pump-ups where required',
+            'Complete PTAC/VTAC final connections — thermostat, filter, cover',
+            'Install access panels for all concealed valves and dampers',
+            'Label all equipment, breakers, and control points',
+            'Clean all supply and return openings — remove construction debris',
+            'Touch-up sealant and insulation at all penetrations',
+            'Install room temperature sensors for BMS (if applicable)',
+        ],
+        'Startup': [
+            'Verify all electrical connections — torque check terminals',
+            'Startup each PTAC/VTAC — verify heat, cool, fan modes',
+            'Verify PTAC condensate drain flow (tilt test)',
+            'Startup split systems — verify superheat/subcooling, airflow',
+            'Startup RTUs — verify all stages, economizer operation',
+            'Test and balance (TAB) all common area systems per spec',
+            'Verify exhaust fan CFM at each kitchen hood and bath',
+            'Document all startup readings — pressures, temps, CFM, amps',
+            'Commission BMS/DDC controls (if applicable)',
+            'Walk each room with GC — verify operation, labels, cleanliness',
+            'Schedule & pass final mechanical inspection',
+            'Provide O&M manuals, warranty cards, and as-built drawings',
+        ],
+    }
+
+    DEFAULT_TASKS = [
+        'Review scope and materials for this phase',
+        'Execute daily work plan with crew',
+        'Quality check completed work',
+        'Document progress and update completion %',
+        'Coordinate with GC on next-phase readiness',
+    ]
+
+    # Select task set based on project type
+    active_phase_tasks = COMMERCIAL_PHASE_TASKS if project_type == 'commercial' else PHASE_TASKS
+
+    benchmarks = []
+    for pd in phase_detail:
+        if pd['remaining_hours'] <= 0:
+            continue  # phase complete, skip
+
+        phase_name = pd['phase_name']
+        start_str = pd['start_date']
+        end_str = pd['end_date']
+        if not start_str or not end_str:
+            continue
+        p_start = datetime.strptime(start_str, '%Y-%m-%d').date()
+        p_end = datetime.strptime(end_str, '%Y-%m-%d').date()
+        work_days = pd['work_days']
+        crew = pd['crew_needed']
+        remaining_hrs = pd['remaining_hours']
+        total_hrs = pd['total_hours']
+        hpd = pd['hours_per_day_needed']
+        existing_pct = pd.get('pct_complete', 0) or 0  # current overall completion
+
+        # Daily production rate
+        hrs_per_day_total = crew * hpd  # total man-hours per day
+        if total_systems > 0 and work_days > 0:
+            units_per_day = round(total_systems / work_days, 1)
+            units_per_day = max(0.5, units_per_day)
+        else:
+            units_per_day = 0
+
+        # Phase-specific tasks
+        tasks = active_phase_tasks.get(phase_name, DEFAULT_TASKS)
+
+        # Build weekly breakdown
+        weeks = []
+        current_date = p_start
+        week_num = 1
+        while current_date <= p_end:
+            # Find the week's Monday (or start date if mid-week)
+            week_start = current_date
+            # Week goes until Friday or end of phase
+            week_end = week_start
+            work_days_this_week = 0
+            daily_plan = []
+            while week_end <= p_end and (week_end.weekday() < 5 or week_end == week_start):
+                if week_end.weekday() < 5:
+                    is_weather_risk = week_end in weather_risk_dates
+                    is_work_day = not is_weather_risk
+                    if is_work_day:
+                        work_days_this_week += 1
+                    daily_plan.append({
+                        'date': week_end.strftime('%Y-%m-%d'),
+                        'day_name': week_end.strftime('%A'),
+                        'is_work_day': is_work_day,
+                        'weather_risk': is_weather_risk,
+                        'weather_info': weather_days.get(week_end.strftime('%Y-%m-%d'), {}),
+                    })
+                # Move to next day but stop at Saturday
+                if week_end.weekday() == 4:  # Friday
+                    break
+                week_end += timedelta(days=1)
+
+            if not daily_plan:
+                current_date = week_end + timedelta(days=1)
+                # Skip weekends
+                while current_date.weekday() >= 5 and current_date <= p_end:
+                    current_date += timedelta(days=1)
+                continue
+
+            # Calculate cumulative progress at end of this week
+            elapsed_work_days = 0
+            d = p_start
+            while d <= week_end:
+                if d.weekday() < 5 and d not in weather_risk_dates:
+                    elapsed_work_days += 1
+                d += timedelta(days=1)
+            pct_elapsed = round((elapsed_work_days / max(work_days, 1)) * 100, 0) if work_days > 0 else 100
+            # Overall completion = existing progress + proportion of remaining work done
+            cumulative_pct = min(100, round(existing_pct + pct_elapsed * (100 - existing_pct) / 100, 0))
+            cumulative_units = round(total_systems * cumulative_pct / 100, 0) if total_systems > 0 else 0
+
+            # Assign tasks to this week based on phase progression
+            # Distribute phase tasks across weeks proportionally
+            total_weeks_est = max(1, math.ceil(work_days / 5))
+            task_start_idx = int((week_num - 1) / total_weeks_est * len(tasks))
+            task_end_idx = min(len(tasks), int(week_num / total_weeks_est * len(tasks)) + 1)
+            week_tasks = tasks[task_start_idx:task_end_idx] if task_start_idx < len(tasks) else [tasks[-1]]
+            if not week_tasks:
+                week_tasks = ['Continue phase work per daily targets']
+
+            # Benchmark checkpoint
+            if cumulative_pct <= 25:
+                checkpoint_status = 'early'
+            elif cumulative_pct <= 50:
+                checkpoint_status = 'mid_early'
+            elif cumulative_pct <= 75:
+                checkpoint_status = 'mid_late'
+            else:
+                checkpoint_status = 'final'
+
+            # Warning thresholds — never below existing progress
+            behind_trigger_pct = max(existing_pct, cumulative_pct - 10)
+
+            weeks.append({
+                'week_num': week_num,
+                'start_date': daily_plan[0]['date'],
+                'end_date': daily_plan[-1]['date'],
+                'work_days': work_days_this_week,
+                'daily_plan': daily_plan,
+                'target_pct_complete': cumulative_pct,
+                'target_units_complete': cumulative_units,
+                'target_hours_burned': round(remaining_hrs * pct_elapsed / 100, 1),
+                'daily_target_units': units_per_day,
+                'daily_target_hours': round(hrs_per_day_total, 1),
+                'tasks': week_tasks,
+                'checkpoint_status': checkpoint_status,
+                'behind_trigger_pct': behind_trigger_pct,
+                'behind_warning': f"If below {behind_trigger_pct:.0f}% by {daily_plan[-1]['date']}, you are falling behind. Add crew or extend hours immediately.",
+            })
+
+            week_num += 1
+            current_date = week_end + timedelta(days=1)
+            # Skip weekends
+            while current_date.weekday() >= 5 and current_date <= p_end:
+                current_date += timedelta(days=1)
+
+        # Phase-level early warning signs (accounting for existing progress)
+        early_warnings = []
+        if existing_pct > 0:
+            early_warnings.append(f"Phase is currently {existing_pct:.0f}% complete. Benchmarks below show targets for the remaining {100 - existing_pct:.0f}% of work.")
+        if total_systems > 0:
+            # Day 1 benchmark: by end of first day
+            day1_target = units_per_day
+            early_warnings.append(f"Day 1: Should complete {day1_target} units. If <{max(1, round(day1_target * 0.7))}, crew size or pace insufficient.")
+        if work_days > 2:
+            # End of day 2 benchmark — show overall %
+            day2_remaining_pct = round(2 / max(work_days, 1) * 100, 0)
+            day2_overall = round(existing_pct + day2_remaining_pct * (100 - existing_pct) / 100, 0)
+            early_warnings.append(f"Day 2: Should be at ~{day2_overall}% overall. If crew hasn't found rhythm, address bottlenecks now.")
+        if work_days >= 5:
+            w1_remaining_pct = round(min(5, work_days) / max(work_days, 1) * 100, 0)
+            w1_overall = round(existing_pct + w1_remaining_pct * (100 - existing_pct) / 100, 0)
+            early_warnings.append(f"End of Week 1: Must be at {w1_overall}% overall to stay on track. This is your first major checkpoint.")
+        early_warnings.append("Material shortage = immediate stop. Verify all materials on-site before phase start.")
+        early_warnings.append("Inspection failures reset the clock. Pre-inspect your own work before calling inspector.")
+
+        benchmarks.append({
+            'phase_name': phase_name,
+            'phase_id': pd['id'],
+            'existing_pct_complete': existing_pct,
+            'start_date': start_str,
+            'end_date': end_str,
+            'work_days': work_days,
+            'crew_needed': crew,
+            'remaining_hours': remaining_hrs,
+            'total_hours': total_hrs,
+            'hours_per_day': hpd,
+            'units_per_day': units_per_day,
+            'total_systems': total_systems,
+            'weeks': weeks,
+            'early_warnings': early_warnings,
+            'tasks_overview': tasks,
+            'key_milestone': f"Phase complete by {end_str}. All {phase_name.lower()} work finished, inspected, and ready for next phase.",
+        })
+
+    return jsonify({
+        'phases': updated_phases,
+        'plan': phase_detail,
+        'summary': {
+            'total_remaining_hours': round(total_remaining, 1),
+            'calendar_days': calendar_days,
+            'weather_risk_days': total_weather_risk,
+            'business_days': total_biz_days,
+            'available_work_days': total_avail_days,
+            'deadline': deadline_date,
+            'hours_per_day': hours_per_day,
+            'crew_override': crew_override,
+            'bid_found': bid is not None,
+            'total_systems': total_systems,
+            'project_type': project_type,
+            'commercial': commercial if project_type == 'commercial' else None,
+        },
+        'crew_recommendation': crew_recommendation,
+        'override_impact': override_impact,
+        'weather': weather_list,
+        'benchmarks': benchmarks,
+    })
+
+
+@app.route('/api/schedule/backwards-plan/save', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_save_plan():
+    """Save a backwards plan snapshot."""
+    data = request.get_json(force=True)
+    job_id = data.get('job_id')
+    plan_name = data.get('plan_name', '').strip()
+    if not job_id:
+        return jsonify({'error': 'job_id required'}), 400
+    if not plan_name:
+        plan_name = f"Plan {datetime.now().strftime('%m/%d/%Y %I:%M %p')}"
+
+    conn = get_db()
+    cursor = conn.execute(
+        '''INSERT INTO schedule_plans (job_id, plan_name, deadline_date, hours_per_day, crew_override,
+           plan_data, summary_data, weather_data, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?)''',
+        (job_id, plan_name, data.get('deadline_date', ''), data.get('hours_per_day', 10),
+         data.get('crew_override'), json.dumps(data.get('plan', [])),
+         json.dumps(data.get('summary', {})), json.dumps(data.get('weather', [])),
+         session.get('user_id'))
+    )
+    conn.commit()
+    plan_id = cursor.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': plan_id, 'plan_name': plan_name}), 201
+
+
+@app.route('/api/schedule/plans')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_list_plans():
+    """List saved backwards plans for a job."""
+    job_id = request.args.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'job_id required'}), 400
+    conn = get_db()
+    rows = conn.execute(
+        '''SELECT sp.*, u.display_name as created_by_name FROM schedule_plans sp
+           LEFT JOIN users u ON sp.created_by = u.id
+           WHERE sp.job_id = ? ORDER BY sp.created_at DESC''',
+        (job_id,)
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d['plan_data'] = json.loads(d['plan_data']) if d['plan_data'] else []
+        d['summary_data'] = json.loads(d['summary_data']) if d['summary_data'] else {}
+        d['weather_data'] = json.loads(d['weather_data']) if d['weather_data'] else []
+        result.append(d)
+    return jsonify(result)
+
+
+@app.route('/api/schedule/plans/<int:plan_id>', methods=['DELETE'])
+@api_role_required('owner', 'admin')
+def api_schedule_delete_plan(plan_id):
+    """Delete a saved backwards plan (owner only)."""
+    conn = get_db()
+    row = conn.execute('SELECT id FROM schedule_plans WHERE id = ?', (plan_id,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Plan not found'}), 404
+    conn.execute('DELETE FROM schedule_plans WHERE id = ?', (plan_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/schedule/backwards-plan/generate-pdf', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_plan_pdf():
+    """Generate a PDF of a backwards plan."""
+    import subprocess, tempfile
+    data = request.get_json(force=True)
+    job_id = data.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'job_id required'}), 400
+
+    conn = get_db()
+    job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    conn.close()
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+
+    job = dict(job)
+    logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
+
+    html = render_template('schedule/plan_pdf.html',
+        job=job,
+        plan=data.get('plan', []),
+        summary=data.get('summary', {}),
+        crew_recommendation=data.get('crew_recommendation', ''),
+        override_impact=data.get('override_impact'),
+        weather=data.get('weather', []),
+        benchmarks=data.get('benchmarks', []),
+        today=datetime.now().strftime('%B %d, %Y'),
+        logo_path='file://' + logo_path
+    )
+
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    os.makedirs(proposals_dir, exist_ok=True)
+
+    safe_name = ''.join(c if c.isalnum() or c in ' -_' else '' for c in (job.get('name') or 'Job')).strip()
+    filename = f"Schedule_Plan_{safe_name}_{job_id}.pdf"
+    filepath = os.path.join(proposals_dir, filename)
+
+    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+
+    try:
+        chrome_paths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ]
+        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
+        if not chrome:
+            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
+
+        result = subprocess.run([
+            chrome, '--headless', '--disable-gpu', '--no-sandbox',
+            '--disable-software-rasterizer',
+            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
+            f'file://{tmp_path}',
+        ], capture_output=True, text=True, timeout=30)
+
+        if not os.path.exists(filepath):
+            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
+    finally:
+        os.unlink(tmp_path)
+
+    return jsonify({'ok': True, 'filename': filename, 'path': f'/api/schedule/plan-pdf/{filename}'})
+
+
+@app.route('/api/schedule/plan-pdf/<filename>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_download_schedule_plan_pdf(filename):
+    """Download a generated schedule plan PDF."""
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    filepath = os.path.join(proposals_dir, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    if request.args.get('download'):
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    return send_file(filepath, mimetype='application/pdf')
+
+
+@app.route('/api/schedule/backwards-plan/email', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_plan_email():
+    """Email a schedule plan PDF to recipients."""
+    data = request.get_json(force=True)
+    recipients = [e.strip() for e in data.get('recipients', []) if e.strip()]
+    subject = data.get('subject', 'Schedule Plan')
+    body_text = data.get('body', '')
+
+    if not recipients:
+        return jsonify({'error': 'No recipients specified'}), 400
+
+    # Load saved SMTP settings
+    saved_settings = {}
+    settings_path = os.path.join(os.path.dirname(__file__), 'data', 'email_settings.json')
+    if os.path.exists(settings_path):
+        with open(settings_path) as f:
+            saved_settings = json.load(f)
+
+    smtp_host = saved_settings.get('smtp_host', '')
+    smtp_port = int(saved_settings.get('smtp_port', 587) or 587)
+    smtp_user = saved_settings.get('smtp_user', '')
+    smtp_pass = saved_settings.get('smtp_pass', '')
+    from_email = saved_settings.get('from_email', '') or smtp_user
+
+    if not smtp_host or not smtp_user:
+        return jsonify({'error': 'SMTP settings required. Configure in Settings.'}), 400
+
+    # Find the PDF
+    pdf_filename = data.get('pdf_filename', '')
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    pdf_path = os.path.join(proposals_dir, pdf_filename)
+    if not pdf_filename or not os.path.exists(pdf_path):
+        return jsonify({'error': 'No PDF found. Generate the PDF first.'}), 404
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body_text, 'plain'))
+
+        with open(pdf_path, 'rb') as f:
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{pdf_filename}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        return jsonify({'ok': True, 'sent_to': recipients})
+
+    except Exception as e:
+        return jsonify({'error': f'Email failed: {str(e)}'}), 500
 
 
 # ─── Recurring Expenses ──────────────────────────────────────────
@@ -5649,62 +7194,181 @@ TAKEOFF_TEMPLATE = {
         {
             "name": "Rough - In",
             "items": [
+                # ── CRDs / Bath Exhaust ──
                 {"part": "12x14 CRD", "sku": "I-CRD50", "category": "CRD", "price": 43.00, "default_use": True},
+                {"part": "12x14 Fire/Smoke Radiation Damper", "sku": "FSD-111-1", "category": "CRD", "price": 608.00, "default_use": False},
                 {"part": "6x12x8 CRD Boot", "sku": "50CRD", "category": "CRD", "price": 35.00, "default_use": True},
+                {"part": "4\" Round CRD", "sku": "55CRD 4\"", "category": "CRD", "price": 32.00, "default_use": True},
+                {"part": "6\" Round CRD", "sku": "55CRD 6\"", "category": "CRD", "price": 38.00, "default_use": False},
                 {"part": "80CFM CRD Fan", "sku": "QTXE080-22016845", "category": "CRD", "price": 100.50, "default_use": True},
+                {"part": "Broan 688 Exhaust Fan", "sku": "688-22019236", "category": "Exhaust Fan", "price": 18.45, "default_use": False},
+                # ── Round Pipe (workbook) ──
+                {"part": "4\" Adjustable 90", "sku": "L0121", "category": "Round Pipe", "price": 4.50, "default_use": False},
+                {"part": "3\" Adjustable 90", "sku": "L0120", "category": "Round Pipe", "price": 3.75, "default_use": False},
+                {"part": "4x3 Reducer", "sku": "L0285", "category": "Round Pipe", "price": 3.50, "default_use": False},
+                {"part": "3\" Conductor Pipe", "sku": "L0463", "category": "Round Pipe", "price": 8.00, "default_use": False},
+                {"part": "4\" Conductor Pipe", "sku": "L0464", "category": "Round Pipe", "price": 10.00, "default_use": False},
+                # ── Boots ──
+                {"part": "8\" Foam Boot", "sku": "L7001", "category": "Boots", "price": 16.06, "default_use": True},
+                {"part": "6\" Foam Boot", "sku": "608 R8 6x6x4", "category": "Boots", "price": 12.00, "default_use": True},
+                {"part": "8x6 Reducer", "sku": "L0292", "category": "Duct Adapter", "price": 5.80, "default_use": False},
+                # ── Finger Taps (1 per drop, sized to match) ──
                 {"part": "6\" Finger Taps", "sku": "L0090", "category": "Duct Adapter", "price": 1.30, "default_use": True},
                 {"part": "8\" Finger Taps", "sku": "L0092", "category": "Duct Adapter", "price": 1.65, "default_use": True},
                 {"part": "10\" Finger Taps", "sku": "L0094", "category": "Duct Adapter", "price": 2.10, "default_use": False},
+                # ── Supply Boots (1 per drop, sized to match) ──
+                {"part": "6\" Supply Boot", "sku": "L0095", "category": "Duct Adapter", "price": 4.50, "default_use": True},
+                {"part": "8\" Supply Boot", "sku": "L0096", "category": "Duct Adapter", "price": 5.75, "default_use": True},
+                {"part": "10\" Supply Boot", "sku": "L0097", "category": "Duct Adapter", "price": 7.25, "default_use": False},
+                # ── Vent Boxes (workbook XVENT items) ──
+                {"part": "4\" Triple Brick Vent Box", "sku": "XVENT-4TB", "category": "Vent Box", "price": 18.00, "default_use": False},
+                {"part": "4\" Single Brick Vent Box", "sku": "XVENT-4SB", "category": "Vent Box", "price": 12.00, "default_use": False},
+                {"part": "4\" Single Siding Vent Box", "sku": "XVENT-4SS", "category": "Vent Box", "price": 10.00, "default_use": False},
+                {"part": "4\" Single Soffit Vent Box", "sku": "XVENT-4SF", "category": "Vent Box", "price": 10.00, "default_use": False},
+                {"part": "6\" Single Brick Vent Box", "sku": "XVENT-6SB", "category": "Vent Box", "price": 14.00, "default_use": False},
+                {"part": "6\" Single Siding Vent Box", "sku": "XVENT-6SS", "category": "Vent Box", "price": 12.00, "default_use": False},
+                {"part": "6\" Single Soffit Vent Box", "sku": "XVENT-6SF", "category": "Vent Box", "price": 12.00, "default_use": False},
+                {"part": "4\" Triple Siding Vent Box", "sku": "XVENT-4TS", "category": "Vent Box", "price": 16.00, "default_use": False},
+                {"part": "4\" Triple Soffit Vent Box", "sku": "XVENT-4TF", "category": "Vent Box", "price": 16.00, "default_use": False},
+                # ── Flex Duct R6 (lower floors) ──
                 {"part": "6\" R6 Flex (bags)", "sku": "L1972", "category": "Flex", "price": 31.46, "default_use": True},
                 {"part": "8\" R6 Flex (bags)", "sku": "L1974", "category": "Flex", "price": 37.56, "default_use": True},
                 {"part": "10\" R6 Flex (bags)", "sku": "L1976", "category": "Flex", "price": 48.50, "default_use": False},
                 {"part": "12\" R6 Flex (bags)", "sku": "L1978", "category": "Flex", "price": 55.20, "default_use": False},
+                # ── Flex Duct R8 (top floor - IRC code) ──
+                {"part": "6\" R8 Flex (bags)", "sku": "L1939", "category": "Flex", "price": 38.50, "default_use": False},
+                {"part": "8\" R8 Flex (bags)", "sku": "L1941", "category": "Flex", "price": 45.00, "default_use": False},
+                {"part": "10\" R8 Flex (bags)", "sku": "L1986", "category": "Flex", "price": 56.00, "default_use": False},
+                {"part": "12\" R8 Flex (bags)", "sku": "L1988", "category": "Flex", "price": 63.50, "default_use": False},
+                # ── Line Sets ──
                 {"part": "3/8 Line Set (in feet)", "sku": "H0716", "category": "Line Set", "price": 57.00, "default_use": True},
                 {"part": "3/4 Line Set (in feet)", "sku": "H0719", "category": "Line Set", "price": 130.00, "default_use": True},
                 {"part": "7/8 Line Set (in feet)", "sku": "H0720", "category": "Line Set", "price": 165.00, "default_use": False},
                 {"part": "1-1/8 Line Set (in feet)", "sku": "H0722", "category": "Line Set", "price": 210.00, "default_use": False},
-                {"part": "3/4\" Armaflex (6ft stick)", "sku": "H0750", "category": "Insulation", "price": 8.50, "default_use": True},
+                {"part": "Mini Split Line Set", "sku": "", "category": "Line Set", "price": 85.00, "default_use": False},
+                # ── Line Set Insulation ──
+                {"part": "3/4\" Armaflex (6ft stick)", "sku": "L0484", "category": "Insulation", "price": 8.50, "default_use": True},
                 {"part": "7/8\" Armaflex (6ft stick)", "sku": "H0752", "category": "Insulation", "price": 10.25, "default_use": False},
                 {"part": "1-1/8\" Armaflex (6ft stick)", "sku": "H0754", "category": "Insulation", "price": 13.50, "default_use": False},
                 {"part": "Armaflex Glue (qt)", "sku": "H0760", "category": "Insulation", "price": 22.00, "default_use": True},
-                {"part": "3/4\" PVC (10ft stick)", "sku": "P0340", "category": "Condensate", "price": 4.50, "default_use": True},
+                {"part": "3/4\" Fiberglass Pipe Wrap (roll)", "sku": "H0770", "category": "Insulation", "price": 14.00, "default_use": False},
+                {"part": "7/8\" Fiberglass Pipe Wrap (roll)", "sku": "H0772", "category": "Insulation", "price": 16.50, "default_use": False},
+                {"part": "1-1/8\" Fiberglass Pipe Wrap (roll)", "sku": "H0774", "category": "Insulation", "price": 19.00, "default_use": False},
+                {"part": "Duct Wrap", "sku": "", "category": "Insulation", "price": 45.00, "default_use": False},
+                # ── Condensate ──
+                {"part": "3/4\" PVC (10ft stick)", "sku": "R0033", "category": "Condensate", "price": 4.50, "default_use": True},
+                {"part": "3/4\" CPVC (10ft stick)", "sku": "P0342", "category": "Condensate", "price": 6.25, "default_use": False},
                 {"part": "3/4\" PVC Fittings (bag)", "sku": "P0345", "category": "Condensate", "price": 12.00, "default_use": True},
+                {"part": "3/4\" CPVC Fittings (bag)", "sku": "P0347", "category": "Condensate", "price": 15.00, "default_use": False},
                 {"part": "PVC Cement & Primer Kit", "sku": "P0350", "category": "Condensate", "price": 8.75, "default_use": True},
+                {"part": "CPVC Cement & Primer Kit", "sku": "P0352", "category": "Condensate", "price": 11.50, "default_use": False},
                 {"part": "Condensate Trap", "sku": "P0360", "category": "Condensate", "price": 6.50, "default_use": True},
+                # ── Hangers & Hardware ──
                 {"part": "Metal Hanger Strap (100ft roll)", "sku": "L0200", "category": "Hangers", "price": 18.50, "default_use": True},
                 {"part": "1\" Metal Screws (box)", "sku": "L0210", "category": "Hangers", "price": 12.00, "default_use": True},
                 {"part": "Threaded Rod 3/8x36\"", "sku": "L0220", "category": "Hangers", "price": 3.25, "default_use": True},
-                {"part": "Duct Mastic (gal)", "sku": "L0300", "category": "Sealant", "price": 15.00, "default_use": True},
+                {"part": "Beam Clamps (box of 25)", "sku": "L0225", "category": "Hangers", "price": 28.00, "default_use": False},
+                {"part": "3/4 Screws", "sku": "M0044", "category": "Hardware", "price": 8.00, "default_use": False},
+                {"part": "Rails", "sku": "L0158", "category": "Hardware", "price": 12.00, "default_use": False},
+                {"part": "Plumber Strap", "sku": "M0091", "category": "Hardware", "price": 6.50, "default_use": False},
+                {"part": "4.25\" Dryer Box", "sku": "L3526", "category": "Hardware", "price": 14.00, "default_use": False},
+                {"part": "16\" Boca Plate", "sku": "M5075", "category": "Hardware", "price": 3.50, "default_use": False},
+                # ── Sealant / Tape ──
+                {"part": "Duct Mastic (gal)", "sku": "M6003", "category": "Sealant", "price": 15.00, "default_use": True},
                 {"part": "Mastic Tape (roll)", "sku": "L0305", "category": "Sealant", "price": 8.50, "default_use": True},
-                {"part": "Foil Tape (roll)", "sku": "L0310", "category": "Sealant", "price": 7.25, "default_use": True},
-                {"part": "14x8 Return Air Boot", "sku": "L0400", "category": "Return Air", "price": 18.00, "default_use": True},
-                {"part": "20x20 Return Air Box", "sku": "L0410", "category": "Return Air", "price": 35.00, "default_use": True},
-                {"part": "20x25 Filter Grille", "sku": "L0420", "category": "Return Air", "price": 22.00, "default_use": True},
-                {"part": "Plenum Board (4x8 sheet)", "sku": "L0500", "category": "Plenum", "price": 32.00, "default_use": True},
-                {"part": "Plenum Clips (box)", "sku": "L0505", "category": "Plenum", "price": 6.50, "default_use": True},
-                {"part": "R8 Duct Board (4x10 sheet)", "sku": "L0510", "category": "Plenum", "price": 52.00, "default_use": False},
-                {"part": "Low Voltage Wire (250ft)", "sku": "E0100", "category": "Electrical", "price": 35.00, "default_use": True},
+                {"part": "Foil Tape (roll)", "sku": "L0494", "category": "Sealant", "price": 7.25, "default_use": True},
+                {"part": "Black Duct Tape", "sku": "L0444", "category": "Sealant", "price": 6.00, "default_use": False},
+                {"part": "Flex Fix Tape", "sku": "", "category": "Sealant", "price": 8.00, "default_use": False},
+                {"part": "Silicone", "sku": "M1842", "category": "Sealant", "price": 7.50, "default_use": False},
+                {"part": "Fire Caulk 5 Gal", "sku": "M1346", "category": "Sealant", "price": 85.00, "default_use": False},
+                {"part": "Paint Brush", "sku": "M0725", "category": "Sealant", "price": 3.00, "default_use": False},
+                # ── Electrical (workbook items first) ──
+                {"part": "14/4 S.O.Cable", "sku": "P3833", "category": "Electrical", "price": 2.50, "default_use": False},
+                {"part": "18/8 T-stat Wire per foot", "sku": "P2240", "category": "Electrical", "price": 0.35, "default_use": False},
+                {"part": "18/5 Thermostat Wire (250ft)", "sku": "E0050", "category": "Electrical", "price": 42.00, "default_use": True},
+                {"part": "18/8 Thermostat Wire (250ft)", "sku": "E0055", "category": "Electrical", "price": 58.00, "default_use": False},
+                {"part": "Low Voltage Wire 18/2 (250ft)", "sku": "E0100", "category": "Electrical", "price": 35.00, "default_use": True},
                 {"part": "Disconnect 60A Non-Fused", "sku": "E0200", "category": "Electrical", "price": 18.50, "default_use": True},
                 {"part": "Disconnect 60A Fused", "sku": "E0205", "category": "Electrical", "price": 28.00, "default_use": False},
                 {"part": "Whip 3/4\" x 6ft", "sku": "E0210", "category": "Electrical", "price": 22.00, "default_use": True},
                 {"part": "Whip 1\" x 6ft", "sku": "E0215", "category": "Electrical", "price": 32.00, "default_use": False},
-                {"part": "Wire Nuts / Connectors (box)", "sku": "E0220", "category": "Electrical", "price": 8.00, "default_use": True},
+                {"part": "Wire Nuts / Connectors (box)", "sku": "P1491", "category": "Electrical", "price": 8.00, "default_use": True},
                 {"part": "10-2 Romex (250ft)", "sku": "E0300", "category": "Electrical", "price": 145.00, "default_use": False},
                 {"part": "6-2 Romex (125ft)", "sku": "E0310", "category": "Electrical", "price": 185.00, "default_use": False},
+                {"part": "8-3 Romex (125ft)", "sku": "E0320", "category": "Electrical", "price": 165.00, "default_use": False},
+                # ── Return Air ──
+                {"part": "14x8 Return Air Boot", "sku": "L0400", "category": "Return Air", "price": 18.00, "default_use": True},
+                {"part": "16x8 Return Air Boot", "sku": "L0402", "category": "Return Air", "price": 20.00, "default_use": False},
+                {"part": "20x8 Return Air Boot", "sku": "L0404", "category": "Return Air", "price": 24.00, "default_use": False},
+                {"part": "20x20 Return Air Box", "sku": "L0410", "category": "Return Air", "price": 35.00, "default_use": True},
+                {"part": "20x25 Return Air Box", "sku": "L0412", "category": "Return Air", "price": 40.00, "default_use": False},
+                {"part": "24x24 Return Air Box", "sku": "L0414", "category": "Return Air", "price": 45.00, "default_use": False},
+                {"part": "14x20 Return Grille", "sku": "L0418", "category": "Return Air", "price": 16.00, "default_use": False},
+                {"part": "20x20 Return Grille", "sku": "L0419", "category": "Return Air", "price": 18.00, "default_use": False},
+                {"part": "20x25 Filter Grille", "sku": "L0420", "category": "Return Air", "price": 22.00, "default_use": True},
+                {"part": "16x25 Filter Grille", "sku": "L0422", "category": "Return Air", "price": 20.00, "default_use": False},
+                {"part": "20x20 Filter Grille", "sku": "L0424", "category": "Return Air", "price": 20.00, "default_use": False},
+                {"part": "24x24 Filter Grille", "sku": "L0426", "category": "Return Air", "price": 26.00, "default_use": False},
+                # ── Plenum / Ductboard ──
+                {"part": "Plenum Board (4x8 sheet)", "sku": "L0500", "category": "Plenum", "price": 32.00, "default_use": True},
+                {"part": "Plenum Clips (box)", "sku": "L0505", "category": "Plenum", "price": 6.50, "default_use": True},
+                {"part": "R8 Duct Board (4x10 sheet)", "sku": "L0470", "category": "Plenum", "price": 52.00, "default_use": False},
+                {"part": "R6 Duct Board (4x10 sheet)", "sku": "L0512", "category": "Plenum", "price": 45.00, "default_use": False},
+                {"part": "Ductboard Staples (box)", "sku": "L0515", "category": "Plenum", "price": 8.00, "default_use": False},
+                # ── Gas ──
                 {"part": "Gas Flex 1/2\" (per ft)", "sku": "G0100", "category": "Gas", "price": 3.50, "default_use": False},
                 {"part": "Gas Flex 3/4\" (per ft)", "sku": "G0105", "category": "Gas", "price": 5.25, "default_use": False},
                 {"part": "Gas Valve 1/2\"", "sku": "G0110", "category": "Gas", "price": 12.00, "default_use": False},
+                {"part": "Gas Valve 3/4\"", "sku": "G0112", "category": "Gas", "price": 16.00, "default_use": False},
                 {"part": "Gas Drip Leg Kit", "sku": "G0120", "category": "Gas", "price": 8.50, "default_use": False},
+                {"part": "Gas Connector 1/2\" (36\")", "sku": "G0130", "category": "Gas", "price": 18.00, "default_use": False},
+                {"part": "Gas Connector 3/4\" (36\")", "sku": "G0135", "category": "Gas", "price": 24.00, "default_use": False},
+                {"part": "Gas Sediment Trap", "sku": "G0140", "category": "Gas", "price": 6.00, "default_use": False},
+                # ── Fire Protection ──
+                {"part": "Fire Wrap (1.5\" x 24\" x 25ft roll)", "sku": "FW0100", "category": "Fire Protection", "price": 85.00, "default_use": False},
+                {"part": "SA Dryer Fire Wrap 16\"", "sku": "", "category": "Fire Protection", "price": 25.00, "default_use": False},
+                {"part": "Fire Damper 6\"", "sku": "FW0110", "category": "Fire Protection", "price": 32.00, "default_use": False},
+                {"part": "Fire Damper 8\"", "sku": "FW0112", "category": "Fire Protection", "price": 38.00, "default_use": False},
+                {"part": "Fire Damper 10\"", "sku": "FW0114", "category": "Fire Protection", "price": 45.00, "default_use": False},
+                {"part": "Passthrough Sleeve 6\"", "sku": "FW0120", "category": "Fire Protection", "price": 12.00, "default_use": False},
+                {"part": "Passthrough Sleeve 8\"", "sku": "FW0122", "category": "Fire Protection", "price": 14.00, "default_use": False},
+                {"part": "Passthrough Sleeve 10\"", "sku": "FW0124", "category": "Fire Protection", "price": 18.00, "default_use": False},
+                {"part": "Firestop Caulk (tube)", "sku": "FW0130", "category": "Fire Protection", "price": 12.00, "default_use": False},
+                {"part": "Firestop Putty Pad (box)", "sku": "FW0135", "category": "Fire Protection", "price": 35.00, "default_use": False},
+                {"part": "Smoke Damper (round)", "sku": "FW0140", "category": "Fire Protection", "price": 65.00, "default_use": False},
+                # ── Misc Rough-In (workbook) ──
+                {"part": "3\" Gray Duct Strap", "sku": "", "category": "Misc Supplies", "price": 5.00, "default_use": False},
             ]
         },
         {
             "name": "Trim Out",
             "items": [
+                # ── Shorts & Smalls ──
                 {"part": "3\" Pump Ups", "sku": "L0681", "category": "Shorts & Smalls", "price": 3.80, "default_use": True},
+                {"part": "6\" Pump Ups", "sku": "L3311", "category": "Shorts & Smalls", "price": 5.50, "default_use": False},
                 {"part": "Safe T Switch", "sku": "L2507", "category": "Shorts & Smalls", "price": 17.70, "default_use": True},
                 {"part": "Float Switch", "sku": "L2510", "category": "Shorts & Smalls", "price": 14.50, "default_use": True},
                 {"part": "Drain Pan (plastic)", "sku": "L0700", "category": "Shorts & Smalls", "price": 18.00, "default_use": True},
                 {"part": "Drain Pan (metal)", "sku": "L0705", "category": "Shorts & Smalls", "price": 25.00, "default_use": False},
+                {"part": "30x30 Drain Pan", "sku": "", "category": "Shorts & Smalls", "price": 32.00, "default_use": False},
+                {"part": "30x60 Drain Pan", "sku": "", "category": "Shorts & Smalls", "price": 55.00, "default_use": False},
+                {"part": "P-Trap 3/4\" PVC", "sku": "L0680", "category": "Shorts & Smalls", "price": 3.50, "default_use": True},
+                # ── PVC Fittings (workbook individual items) ──
+                {"part": "3/4 PVC 90", "sku": "R0311", "category": "PVC Fittings", "price": 0.75, "default_use": False},
+                {"part": "3/4 PVC Coupling", "sku": "R0341", "category": "PVC Fittings", "price": 0.50, "default_use": False},
+                {"part": "3/4 PVC Male Adapter", "sku": "R0351", "category": "PVC Fittings", "price": 0.65, "default_use": False},
+                {"part": "3/4 PVC Tee", "sku": "R0331", "category": "PVC Fittings", "price": 0.85, "default_use": False},
+                {"part": "1QT PVC Cement", "sku": "R0042", "category": "PVC Fittings", "price": 8.00, "default_use": False},
+                # ── Registers & Grilles (workbook items first) ──
+                {"part": "8\" Supply Register", "sku": "L1731", "category": "Registers & Grilles", "price": 8.00, "default_use": False},
+                {"part": "6\" Supply Register", "sku": "L1730", "category": "Registers & Grilles", "price": 6.50, "default_use": False},
+                {"part": "12x6 Stamped Supply", "sku": "L1736", "category": "Registers & Grilles", "price": 7.25, "default_use": False},
+                {"part": "16x8 Hart Cooley Pass Through", "sku": "L2280", "category": "Registers & Grilles", "price": 22.00, "default_use": False},
+                {"part": "24x12 Stamped Return", "sku": "L1778", "category": "Registers & Grilles", "price": 14.00, "default_use": False},
+                {"part": "30x14 Stamped Return", "sku": "L1791", "category": "Registers & Grilles", "price": 18.00, "default_use": False},
+                {"part": "30x20 Stamped Return", "sku": "L9989", "category": "Registers & Grilles", "price": 22.00, "default_use": False},
+                {"part": "24x24x8 Drop-ins", "sku": "L1928", "category": "Registers & Grilles", "price": 28.00, "default_use": False},
+                {"part": "4\" Venthood Covers", "sku": "L3516", "category": "Registers & Grilles", "price": 8.00, "default_use": False},
                 {"part": "6x6 Register (white)", "sku": "R0100", "category": "Registers & Grilles", "price": 5.50, "default_use": True},
                 {"part": "8x4 Register (white)", "sku": "R0105", "category": "Registers & Grilles", "price": 5.50, "default_use": True},
                 {"part": "10x4 Register (white)", "sku": "R0110", "category": "Registers & Grilles", "price": 6.25, "default_use": True},
@@ -5712,27 +7376,58 @@ TAKEOFF_TEMPLATE = {
                 {"part": "12x4 Register (white)", "sku": "R0120", "category": "Registers & Grilles", "price": 6.50, "default_use": True},
                 {"part": "12x6 Register (white)", "sku": "R0125", "category": "Registers & Grilles", "price": 7.25, "default_use": True},
                 {"part": "14x6 Register (white)", "sku": "R0130", "category": "Registers & Grilles", "price": 8.00, "default_use": False},
+                {"part": "14x8 Register (white)", "sku": "R0135", "category": "Registers & Grilles", "price": 9.00, "default_use": False},
                 {"part": "6\" Round Ceiling Diffuser", "sku": "R0200", "category": "Registers & Grilles", "price": 9.50, "default_use": False},
                 {"part": "8\" Round Ceiling Diffuser", "sku": "R0205", "category": "Registers & Grilles", "price": 11.00, "default_use": False},
+                {"part": "10\" Round Ceiling Diffuser", "sku": "R0210", "category": "Registers & Grilles", "price": 13.00, "default_use": False},
+                # ── Filters ──
                 {"part": "20x25x1 Filter (12-pack)", "sku": "F0100", "category": "Filters", "price": 42.00, "default_use": True},
                 {"part": "16x25x1 Filter (12-pack)", "sku": "F0105", "category": "Filters", "price": 38.00, "default_use": False},
                 {"part": "20x20x1 Filter (12-pack)", "sku": "F0110", "category": "Filters", "price": 38.00, "default_use": False},
+                {"part": "16x20x1 Filter (12-pack)", "sku": "F0115", "category": "Filters", "price": 36.00, "default_use": False},
+                {"part": "24x24x1 Filter (12-pack)", "sku": "F0120", "category": "Filters", "price": 45.00, "default_use": False},
+                # ── Mounting / Pads ──
                 {"part": "Cork Pads (set of 4)", "sku": "L0800", "category": "Mounting", "price": 12.00, "default_use": True},
                 {"part": "Condenser Pad (plastic)", "sku": "L0810", "category": "Mounting", "price": 28.00, "default_use": True},
+                {"part": "Condenser Pad (concrete)", "sku": "L0812", "category": "Mounting", "price": 35.00, "default_use": False},
                 {"part": "Wall Brackets (pair)", "sku": "L0820", "category": "Mounting", "price": 45.00, "default_use": False},
+                {"part": "Rooftop Curb Adapter", "sku": "L0830", "category": "Mounting", "price": 125.00, "default_use": False},
+                {"part": "Equipment Stand (28\" H)", "sku": "L0835", "category": "Mounting", "price": 85.00, "default_use": False},
+                {"part": "1\" Anchor Kit", "sku": "M0051", "category": "Mounting", "price": 15.00, "default_use": False},
+                # ── Refrigerant ──
                 {"part": "Refrigerant R-410A (25lb)", "sku": "H1000", "category": "Refrigerant", "price": 185.00, "default_use": True},
                 {"part": "Refrigerant R-410A (50lb)", "sku": "H1005", "category": "Refrigerant", "price": 310.00, "default_use": False},
+                {"part": "R454B Refrigerant", "sku": "", "category": "Refrigerant", "price": 225.00, "default_use": False},
                 {"part": "Nitrogen (tank rental + gas)", "sku": "H1020", "category": "Refrigerant", "price": 75.00, "default_use": True},
+                # ── Brazing / Soldering ──
                 {"part": "Silver Brazing Rods (pkg)", "sku": "H1030", "category": "Brazing", "price": 55.00, "default_use": True},
                 {"part": "Stay-Brite #8 Solder (1lb)", "sku": "H1035", "category": "Brazing", "price": 42.00, "default_use": True},
+                {"part": "Solder", "sku": "M0434", "category": "Brazing", "price": 12.00, "default_use": False},
                 {"part": "Flux Paste", "sku": "H1040", "category": "Brazing", "price": 12.00, "default_use": True},
+                {"part": "MAP Gas Cylinder", "sku": "H1045", "category": "Brazing", "price": 14.00, "default_use": True},
+                {"part": "Silver Locking Caps", "sku": "L3011", "category": "Brazing", "price": 4.50, "default_use": False},
+                # ── Consumables (workbook) ──
+                {"part": "Acetylene Refill", "sku": "M3511", "category": "Consumables", "price": 65.00, "default_use": False},
+                {"part": "Oxygen Refill", "sku": "M3513", "category": "Consumables", "price": 45.00, "default_use": False},
+                # ── Tools (consumable) ──
+                {"part": "12\" SawZaw Blade", "sku": "T0951", "category": "Tools (consumable)", "price": 8.00, "default_use": False},
+                {"part": "4-3/8\" Hole Saw", "sku": "T0996", "category": "Tools (consumable)", "price": 18.00, "default_use": False},
                 {"part": "Pipe Cutter 1/4-1-5/8\"", "sku": "T0100", "category": "Tools (consumable)", "price": 28.00, "default_use": False},
                 {"part": "Flare Tool Kit", "sku": "T0105", "category": "Tools (consumable)", "price": 65.00, "default_use": False},
                 {"part": "Torque Wrench (refrigerant)", "sku": "T0110", "category": "Tools (consumable)", "price": 45.00, "default_use": False},
                 {"part": "Duct Knife / Blade (pkg)", "sku": "T0115", "category": "Tools (consumable)", "price": 15.00, "default_use": True},
+                {"part": "Hacksaw Blades (pkg)", "sku": "T0120", "category": "Tools (consumable)", "price": 8.50, "default_use": True},
+                {"part": "Hole Saw Kit (HVAC sizes)", "sku": "T0125", "category": "Tools (consumable)", "price": 55.00, "default_use": False},
+                # ── Misc Supplies ──
                 {"part": "Zip Ties 11\" (bag of 100)", "sku": "L0900", "category": "Misc Supplies", "price": 6.50, "default_use": True},
+                {"part": "Zip Ties 14\" (bag of 100)", "sku": "L0902", "category": "Misc Supplies", "price": 8.00, "default_use": False},
                 {"part": "Caulk / Firestop (tube)", "sku": "L0910", "category": "Misc Supplies", "price": 8.00, "default_use": True},
                 {"part": "Metal Tape Measure 25ft", "sku": "T0200", "category": "Misc Supplies", "price": 14.00, "default_use": False},
+                {"part": "Spray Paint (marking)", "sku": "L0920", "category": "Misc Supplies", "price": 5.50, "default_use": True},
+                {"part": "Duct Seal Putty (1lb)", "sku": "L0925", "category": "Misc Supplies", "price": 4.50, "default_use": True},
+                {"part": "Electrical Tape (10-pk)", "sku": "L0930", "category": "Misc Supplies", "price": 12.00, "default_use": True},
+                {"part": "Tie Wire (roll)", "sku": "L0935", "category": "Misc Supplies", "price": 6.00, "default_use": True},
+                # ── Condensate Pumps & IAQ ──
                 {"part": "Condensate Pump (mini)", "sku": "P0400", "category": "Condensate", "price": 85.00, "default_use": False},
                 {"part": "Condensate Pump (full size)", "sku": "P0405", "category": "Condensate", "price": 125.00, "default_use": False},
                 {"part": "UV Light Kit", "sku": "L0950", "category": "IAQ", "price": 145.00, "default_use": False},
@@ -5742,6 +7437,13 @@ TAKEOFF_TEMPLATE = {
         {
             "name": "Equipment",
             "items": [
+                # ── Thermostats (workbook items first) ──
+                {"part": "Heat Pump Thermostat", "sku": "L0741", "category": "Thermostat", "price": 65.00, "default_use": False},
+                {"part": "TH8 Vision Pro Honeywell", "sku": "", "category": "Thermostat", "price": 145.00, "default_use": False},
+                {"part": "Programmable Thermostat", "sku": "L7170", "category": "Thermostat", "price": 52.50, "default_use": True},
+                {"part": "WiFi Thermostat", "sku": "L7175", "category": "Thermostat", "price": 125.00, "default_use": False},
+                {"part": "Smart Thermostat (Ecobee/Nest)", "sku": "", "category": "Thermostat", "price": 185.00, "default_use": False},
+                # ── Air Handlers ──
                 {"part": "1.5 Ton Air Handler", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 500, "default_use": False},
                 {"part": "2 Ton Air Handler", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 506, "default_use": False},
                 {"part": "2.5 Ton Air Handler", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 575, "default_use": False},
@@ -5749,13 +7451,35 @@ TAKEOFF_TEMPLATE = {
                 {"part": "3.5 Ton Air Handler", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 720, "default_use": False},
                 {"part": "4 Ton Air Handler", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 800, "default_use": False},
                 {"part": "5 Ton Air Handler", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 950, "default_use": False},
+                # ── Corridor Air Handlers (workbook) ──
+                {"part": "1.5 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 550, "default_use": False},
+                {"part": "2 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 560, "default_use": False},
+                {"part": "2.5 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 625, "default_use": False},
+                {"part": "3 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 700, "default_use": False},
+                {"part": "3.5 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 780, "default_use": False},
+                {"part": "4 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 860, "default_use": False},
+                {"part": "5 Ton Corridor Air Handler", "sku": "", "category": "Corridor AH", "price": 1020, "default_use": False},
+                # ── Corridor Heat Kits (workbook) ──
+                {"part": "1.5 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 85, "default_use": False},
+                {"part": "2 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 95, "default_use": False},
+                {"part": "2.5 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 105, "default_use": False},
+                {"part": "3 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 115, "default_use": False},
+                {"part": "3.5 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 130, "default_use": False},
+                {"part": "4 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 145, "default_use": False},
+                {"part": "5 Ton Corridor Heat Kit", "sku": "", "category": "Corridor AH", "price": 170, "default_use": False},
+                # ── Heat Strips ──
                 {"part": "5kW Heat Strip", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 85, "default_use": False},
                 {"part": "8kW Heat Strip", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 105, "default_use": False},
                 {"part": "10kW Heat Strip", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 125, "default_use": False},
                 {"part": "15kW Heat Strip", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 155, "default_use": False},
+                {"part": "20kW Heat Strip", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 185, "default_use": False},
+                # ── Gas Furnaces ──
+                {"part": "40K BTU Gas Furnace 96%", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 950, "default_use": False},
                 {"part": "60K BTU Gas Furnace 96%", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 1100, "default_use": False},
                 {"part": "80K BTU Gas Furnace 96%", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 1250, "default_use": False},
                 {"part": "100K BTU Gas Furnace 96%", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 1400, "default_use": False},
+                {"part": "120K BTU Gas Furnace 96%", "sku": "", "category": "Furnace/Air Handler/Heat Strip", "price": 1600, "default_use": False},
+                # ── Condensers ──
                 {"part": "1.5 Ton Condenser", "sku": "", "category": "Heat Pump/Condenser", "price": 820, "default_use": False},
                 {"part": "2 Ton Condenser", "sku": "", "category": "Heat Pump/Condenser", "price": 950, "default_use": False},
                 {"part": "2.5 Ton Condenser", "sku": "", "category": "Heat Pump/Condenser", "price": 1100, "default_use": False},
@@ -5763,6 +7487,7 @@ TAKEOFF_TEMPLATE = {
                 {"part": "3.5 Ton Condenser", "sku": "", "category": "Heat Pump/Condenser", "price": 1450, "default_use": False},
                 {"part": "4 Ton Condenser", "sku": "", "category": "Heat Pump/Condenser", "price": 1650, "default_use": False},
                 {"part": "5 Ton Condenser", "sku": "", "category": "Heat Pump/Condenser", "price": 1950, "default_use": False},
+                # ── Heat Pumps ──
                 {"part": "1.5 Ton Heat Pump", "sku": "", "category": "Heat Pump/Condenser", "price": 1050, "default_use": False},
                 {"part": "2 Ton Heat Pump", "sku": "", "category": "Heat Pump/Condenser", "price": 1200, "default_use": False},
                 {"part": "2.5 Ton Heat Pump", "sku": "", "category": "Heat Pump/Condenser", "price": 1380, "default_use": False},
@@ -5770,28 +7495,44 @@ TAKEOFF_TEMPLATE = {
                 {"part": "3.5 Ton Heat Pump", "sku": "", "category": "Heat Pump/Condenser", "price": 1750, "default_use": False},
                 {"part": "4 Ton Heat Pump", "sku": "", "category": "Heat Pump/Condenser", "price": 1980, "default_use": False},
                 {"part": "5 Ton Heat Pump", "sku": "", "category": "Heat Pump/Condenser", "price": 2350, "default_use": False},
+                # ── Mini Splits (workbook: broken into Indoor/Outdoor) ──
+                {"part": "Mini Split 9K Indoor", "sku": "L9078", "category": "Mini Split", "price": 350, "default_use": False},
+                {"part": "Mini Split 9K Outdoor", "sku": "L9071", "category": "Mini Split", "price": 500, "default_use": False},
+                {"part": "Mini Split 12K Indoor", "sku": "L9080", "category": "Mini Split", "price": 400, "default_use": False},
+                {"part": "Mini Split 12K Outdoor", "sku": "L9073", "category": "Mini Split", "price": 550, "default_use": False},
+                {"part": "Mini Split 18K Cassette", "sku": "L6455", "category": "Mini Split", "price": 650, "default_use": False},
+                {"part": "Mini Split 18K Indoor", "sku": "L6448", "category": "Mini Split", "price": 475, "default_use": False},
+                {"part": "Mini Split 18K Outdoor HP", "sku": "L6432", "category": "Mini Split", "price": 675, "default_use": False},
+                {"part": "Mini Split 24K Indoor", "sku": "L9082", "category": "Mini Split", "price": 525, "default_use": False},
+                {"part": "Mini Split 24K Outdoor", "sku": "L9075", "category": "Mini Split", "price": 825, "default_use": False},
+                # ── Mini Splits (legacy combined for calc compatibility) ──
                 {"part": "Mini Split 9K BTU", "sku": "", "category": "Mini Split", "price": 850, "default_use": False},
                 {"part": "Mini Split 12K BTU", "sku": "", "category": "Mini Split", "price": 950, "default_use": False},
                 {"part": "Mini Split 18K BTU", "sku": "", "category": "Mini Split", "price": 1150, "default_use": False},
                 {"part": "Mini Split 24K BTU", "sku": "", "category": "Mini Split", "price": 1350, "default_use": False},
+                {"part": "Mini Split 36K BTU", "sku": "", "category": "Mini Split", "price": 1650, "default_use": False},
                 {"part": "Mini Split Multi-Zone Outdoor 2-zone", "sku": "", "category": "Mini Split", "price": 1800, "default_use": False},
                 {"part": "Mini Split Multi-Zone Outdoor 3-zone", "sku": "", "category": "Mini Split", "price": 2400, "default_use": False},
                 {"part": "Mini Split Multi-Zone Outdoor 4-zone", "sku": "", "category": "Mini Split", "price": 3000, "default_use": False},
-                {"part": "Programmable Thermostat", "sku": "L7170", "category": "Thermostat", "price": 52.50, "default_use": True},
-                {"part": "WiFi Thermostat", "sku": "L7175", "category": "Thermostat", "price": 125.00, "default_use": False},
-                {"part": "Smart Thermostat (Ecobee/Nest)", "sku": "", "category": "Thermostat", "price": 185.00, "default_use": False},
+                # ── Ventilation / Exhaust ──
                 {"part": "ERV Unit", "sku": "", "category": "Ventilation", "price": 650, "default_use": False},
                 {"part": "HRV Unit", "sku": "", "category": "Ventilation", "price": 580, "default_use": False},
                 {"part": "Inline Exhaust Fan 6\"", "sku": "", "category": "Ventilation", "price": 125, "default_use": False},
                 {"part": "Inline Exhaust Fan 8\"", "sku": "", "category": "Ventilation", "price": 165, "default_use": False},
+                {"part": "Bath Exhaust Fan 50CFM", "sku": "", "category": "Ventilation", "price": 75, "default_use": False},
                 {"part": "Bath Exhaust Fan 80CFM", "sku": "", "category": "Ventilation", "price": 95, "default_use": False},
                 {"part": "Bath Exhaust Fan 110CFM", "sku": "", "category": "Ventilation", "price": 125, "default_use": False},
                 {"part": "Range Hood Vent Kit", "sku": "", "category": "Ventilation", "price": 85, "default_use": False},
                 {"part": "Dryer Vent Kit", "sku": "", "category": "Ventilation", "price": 45, "default_use": False},
+                {"part": "Dryer Vent Elbow (4\")", "sku": "", "category": "Ventilation", "price": 6, "default_use": False},
+                {"part": "Dryer Vent Hose (4\" x 8ft)", "sku": "", "category": "Ventilation", "price": 12, "default_use": False},
+                {"part": "Dryer Vent Wall Cap", "sku": "", "category": "Ventilation", "price": 10, "default_use": False},
+                # ── Zoning ──
                 {"part": "Zoning Panel (2 zone)", "sku": "", "category": "Zoning", "price": 350, "default_use": False},
                 {"part": "Zoning Panel (3 zone)", "sku": "", "category": "Zoning", "price": 450, "default_use": False},
                 {"part": "Zone Damper (round)", "sku": "", "category": "Zoning", "price": 85, "default_use": False},
                 {"part": "Zone Damper (rect)", "sku": "", "category": "Zoning", "price": 110, "default_use": False},
+                {"part": "Zone Thermostat Sensor", "sku": "", "category": "Zoning", "price": 35, "default_use": False},
             ]
         },
         {
@@ -5800,6 +7541,9 @@ TAKEOFF_TEMPLATE = {
                 {"part": "Freight to jobsite", "sku": "", "category": "Shipping", "price": 3000, "default_use": False},
                 {"part": "Crane / Lift Rental", "sku": "", "category": "Shipping", "price": 1500, "default_use": False},
                 {"part": "Dumpster Rental", "sku": "", "category": "Shipping", "price": 500, "default_use": False},
+                {"part": "Scissor Lift Rental", "sku": "", "category": "Shipping", "price": 800, "default_use": False},
+                {"part": "License", "sku": "", "category": "Permits & Fees", "price": 0, "default_use": False},
+                {"part": "Permits", "sku": "", "category": "Permits & Fees", "price": 0, "default_use": False},
             ]
         }
     ],
@@ -6008,402 +7752,1287 @@ def api_plans_file(pid):
     return send_file(fpath, mimetype='application/pdf')
 
 
+_review_progress = {}  # pid -> {step, message, pct, done, error, result}
+
+
+@app.route('/api/plans/<int:pid>/review-estimate', methods=['GET'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_plans_review_estimate(pid):
+    """Quick pre-scan: count mechanical sheets and estimate API cost."""
+    conn = get_db()
+    plan = conn.execute('SELECT * FROM plans WHERE id = ?', (pid,)).fetchone()
+    if not plan:
+        conn.close()
+        return jsonify({'error': 'Plan not found'}), 404
+    if not plan['file_path']:
+        conn.close()
+        return jsonify({'error': 'No file attached'}), 400
+
+    fpath = os.path.join(PLANS_DIR, plan['file_path'])
+    if not os.path.exists(fpath):
+        conn.close()
+        return jsonify({'error': 'File not found'}), 404
+    conn.close()
+
+    try:
+        import fitz
+    except ImportError:
+        return jsonify({'error': 'PyMuPDF not installed'}), 500
+
+    import re as _re
+    from collections import Counter
+
+    doc = fitz.open(fpath)
+    page_count = len(doc)
+
+    # Quick two-pass sheet identification (same logic as review)
+    id_freq = Counter()
+    raw = []
+    for page in doc:
+        text = (page.get_text() or '').strip()
+        ids = set()
+        for line in text.split('\n'):
+            t = line.strip()
+            if 2 <= len(t) <= 5:
+                if _re.match(r'^ME\d{1,2}$', t): ids.add(t)
+                elif _re.match(r'^M\d{1,2}$', t): ids.add(t)
+                elif _re.match(r'^[PSEGAC]\d{1,3}$', t): ids.add(t)
+        for s in ids:
+            id_freq[s] += 1
+        raw.append({'text': text, 'ids': ids, 'chars': len(text)})
+    doc.close()
+
+    noise = {s for s, c in id_freq.items() if c > 4}
+
+    HVAC_KW = ['hvac plan','hvac equipment','mechanical plan','unit hvac',
+        'condensing unit','fan coil','mini split','duct siz','equipment schedule',
+        'grille','register schedule','fire damper schedule','exhaust fan','hvac',
+        'refrigerant','tonnage','btu','seer','cfm','mep plan','mep','roof hvac',
+        'roof mep','mechanical schedule','condensing','unit plan']
+
+    mech_sheets = []
+    hvac_pages = []
+    spec_chars = 0
+
+    for i, r in enumerate(raw):
+        clean_ids = r['ids'] - noise
+        text_lower = r['text'].lower()
+        m_ids = [s for s in clean_ids if s.startswith('M')]
+        non_m_ids = [s for s in clean_ids if not s.startswith('M')]
+        is_mech = len(m_ids) > 0 and len(non_m_ids) == 0
+        is_drawing = r['chars'] < 2000
+        hvac_strong = any(kw in text_lower for kw in HVAC_KW)
+
+        if is_mech:
+            mech_sheets.append({'page': i+1, 'ids': sorted(clean_ids)})
+        elif hvac_strong and is_drawing:
+            hvac_pages.append(i+1)
+        elif r['chars'] > 500 and not is_drawing:
+            spec_chars += r['chars']
+
+    image_count = min(len(mech_sheets) + len(hvac_pages), 25)
+    # Cost estimate: ~1600 tokens per image, ~1 token per 4 chars of spec text
+    # Sonnet pricing: $3/M input, $15/M output
+    input_tokens = (image_count * 1600) + (min(spec_chars, 60000) // 4) + 2000  # prompt overhead
+    output_tokens = 4000  # typical response
+    est_cost = (input_tokens * 3.0 / 1_000_000) + (output_tokens * 15.0 / 1_000_000)
+
+    return jsonify({
+        'page_count': page_count,
+        'mech_sheets': len(mech_sheets),
+        'mech_sheet_list': [f"Page {s['page']} ({', '.join(s['ids'])})" for s in mech_sheets],
+        'hvac_keyword_pages': len(hvac_pages),
+        'total_images': image_count,
+        'spec_pages': sum(1 for r in raw if r['chars'] > 500 and r['chars'] >= 2000),
+        'spec_chars': spec_chars,
+        'estimated_input_tokens': input_tokens,
+        'estimated_cost': round(est_cost, 2)
+    })
+
+
+@app.route('/api/plans/<int:pid>/review-status', methods=['GET'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_plans_review_status(pid):
+    """Poll endpoint for review progress."""
+    prog = _review_progress.get(pid)
+    if not prog:
+        return jsonify({'step': 0, 'message': 'Not started', 'pct': 0, 'done': False})
+    return jsonify(prog)
+
 @app.route('/api/plans/<int:pid>/review', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
 def api_plans_review(pid):
-    """AI HVAC review of construction plans PDF."""
+    """Kick off AI HVAC review in background thread. Returns immediately."""
+    import anthropic
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return jsonify({'error': 'ANTHROPIC_API_KEY not configured. Add it to your .env file.'}), 500
+
     conn = get_db()
     plan = conn.execute('SELECT * FROM plans WHERE id = ?', (pid,)).fetchone()
     if not plan:
         conn.close()
         return jsonify({'error': 'Plan not found'}), 404
 
-    # Mark as reviewing
+    if not plan['file_path']:
+        conn.close()
+        return jsonify({'error': 'No file attached to this plan.'}), 400
+
+    fpath = os.path.join(PLANS_DIR, plan['file_path'])
+    if not os.path.exists(fpath):
+        conn.close()
+        return jsonify({'error': 'Plan file not found on disk.'}), 404
+
+    # Check if already running
+    prog = _review_progress.get(pid)
+    if prog and not prog.get('done') and not prog.get('error'):
+        conn.close()
+        return jsonify({'status': 'already_running', 'message': 'Review already in progress.'})
+
+    # Get job context before closing conn
+    job = conn.execute('SELECT name, address, city, state FROM jobs WHERE id = ?', (plan['job_id'],)).fetchone()
+    job_context = f"Job: {job['name']}" if job else ""
+    if job and job['city']:
+        job_context += f" ({job['city']}, {job['state'] or ''})"
+
+    plan_data = dict(plan)
     conn.execute("UPDATE plans SET status='Reviewing', updated_at=datetime('now','localtime') WHERE id=?", (pid,))
     conn.commit()
+    conn.close()
 
-    # Extract PDF text
-    pdf_text = ''
-    page_count = 0
-    if plan['file_path']:
-        fpath = os.path.join(PLANS_DIR, plan['file_path'])
-        if os.path.exists(fpath):
-            try:
-                import pdfplumber
-                with pdfplumber.open(fpath) as pdf:
-                    page_count = len(pdf.pages)
-                    for page in pdf.pages[:30]:
-                        pdf_text += (page.extract_text() or '') + '\n'
-            except ImportError:
-                pdf_text = '[PDF text extraction unavailable - install pdfplumber]'
-            except Exception as e:
-                pdf_text = f'[Error extracting PDF text: {str(e)}]'
+    # Initialize progress
+    _review_progress[pid] = {'step': 1, 'message': 'Opening PDF...', 'pct': 5, 'done': False}
 
-    if not pdf_text or pdf_text.startswith('['):
-        conn.execute("UPDATE plans SET status='Uploaded', updated_at=datetime('now','localtime') WHERE id=?", (pid,))
-        conn.commit()
-        conn.close()
-        error_msg = pdf_text if pdf_text.startswith('[') else 'No text could be extracted from this PDF. The file may be image-based (scanned plans).'
-        return jsonify({'error': error_msg}), 400
+    import threading
+    def run_review():
+        _do_plan_review(pid, fpath, plan_data, job_context, api_key)
+    t = threading.Thread(target=run_review, daemon=True)
+    t.start()
 
-    text_lower = pdf_text.lower()
+    return jsonify({'status': 'started', 'message': 'Review started. Poll /review-status for progress.'})
 
-    findings = []
-    concerns = []
-    recommendations = []
-    equipment_found = []
-    duct_sizes = []
-    ventilation = {"cfm_total": 0, "exhaust_fans": 0, "notes": ""}
 
-    # ── 1. Equipment Schedule Detection ──
-    import re
+def _do_plan_review(pid, fpath, plan_data, job_context, api_key):
+    """Background worker for plan review."""
+    import anthropic, base64
+    prog = _review_progress[pid]
 
-    # Tonnage patterns
-    tonnage_pattern = re.compile(r'(\d\.?\d?)\s*(?:ton|tn)\b', re.IGNORECASE)
-    tonnage_matches = tonnage_pattern.findall(pdf_text)
-    if tonnage_matches:
-        for t in set(tonnage_matches):
-            equipment_found.append({"description": f"{t} Ton unit", "location": "Plan text", "notes": ""})
-        findings.append({"type": "ok", "category": "Equipment", "message": f"Found tonnage references: {', '.join(set(t + 'T' for t in tonnage_matches))}"})
-    else:
-        findings.append({"type": "warning", "category": "Equipment", "message": "No tonnage values detected in plan text"})
-        concerns.append("No equipment tonnage found — verify equipment schedule exists")
+    def update(step, msg, pct):
+        prog['step'] = step
+        prog['message'] = msg
+        prog['pct'] = pct
 
-    # Model numbers (common HVAC patterns)
-    model_patterns = [
-        re.compile(r'\b([A-Z]{2,4}[\-]?\d{2,5}[A-Z]?\d{0,4}[A-Z]{0,3})\b'),  # Generic: AB-12345
-        re.compile(r'\b((?:GSX|GSZ|AVPTC|GMVC|GMEC|ASPT|AMST|CBA|4TTR|TWA|TEM|TUD|TUH|FEM|WCA)\d[\w\-]*)\b', re.IGNORECASE),  # Trane/Goodman/etc
-    ]
-    models_found = set()
-    for mp in model_patterns:
-        for m in mp.findall(pdf_text):
-            if len(m) >= 6:
-                models_found.add(m)
-    if models_found:
-        for m in list(models_found)[:10]:
-            equipment_found.append({"description": f"Model: {m}", "location": "Plan text", "notes": ""})
-        findings.append({"type": "info", "category": "Equipment", "message": f"Found {len(models_found)} potential model number(s)"})
+    try:
+        import fitz
+    except ImportError:
+        prog.update({'error': 'PyMuPDF not installed', 'done': True})
+        return
 
-    # BTU ratings
-    btu_pattern = re.compile(r'(\d{2,3}[,.]?\d{0,3})\s*(?:btu|btuh)', re.IGNORECASE)
-    btu_matches = btu_pattern.findall(pdf_text)
-    if btu_matches:
-        findings.append({"type": "ok", "category": "Equipment", "message": f"Found BTU ratings: {', '.join(set(btu_matches[:5]))}"})
+    try:
+        doc = fitz.open(fpath)
+    except Exception as e:
+        prog.update({'error': f'Could not open PDF: {e}', 'done': True})
+        return
 
-    # SEER/EER
-    seer_pattern = re.compile(r'(\d{1,2}\.?\d?)\s*(?:seer|eer)\b', re.IGNORECASE)
-    seer_matches = seer_pattern.findall(pdf_text)
-    if seer_matches:
-        for s in set(seer_matches):
-            val = float(s)
-            if val < 14:
-                findings.append({"type": "warning", "category": "Equipment", "message": f"SEER {s} — below current minimum efficiency standard (14 SEER)"})
-                concerns.append(f"SEER {s} may not meet current code minimum")
-            else:
-                findings.append({"type": "ok", "category": "Equipment", "message": f"SEER {s} meets minimum efficiency requirements"})
+    page_count = len(doc)
+    update(1, f'Scanning {page_count} pages...', 10)
 
-    # Air handler specs
-    ah_pattern = re.compile(r'air\s*handler|AHU|fan\s*coil|evaporator\s*coil', re.IGNORECASE)
-    ah_matches = ah_pattern.findall(pdf_text)
-    if ah_matches:
-        findings.append({"type": "info", "category": "Equipment", "message": f"Air handler/fan coil references found ({len(ah_matches)} mentions)"})
+    # ── Phase 1: Two-pass page classification ─────────────────────
+    # Pass 1: Extract all potential sheet IDs and count frequency
+    # Pass 2: Filter out building names and section totals (appear on many pages)
+    import re as _re
+    from collections import Counter
 
-    # ── 2. Duct Sizing ──
-    # Rectangular ducts
-    rect_duct = re.compile(r'(\d{1,2})\s*[xX]\s*(\d{1,2})(?:\s*(?:duct|supply|return))?')
-    rect_matches = rect_duct.findall(pdf_text)
-    rect_sizes = {}
-    for w, h in rect_matches:
-        size = f"{w}x{h}"
-        rect_sizes[size] = rect_sizes.get(size, 0) + 1
-    for size, count in rect_sizes.items():
-        duct_sizes.append({"size": size, "location": "Rectangular duct", "count": count})
+    raw_page_data = []
+    id_frequency = Counter()
 
-    # Round ducts
-    round_duct = re.compile(r'(\d{1,2})[\"\u2033]?\s*(?:round|rd|dia|diameter|flex)', re.IGNORECASE)
-    round_matches = round_duct.findall(pdf_text)
-    round_sizes = {}
-    for d in round_matches:
-        size = f'{d}" round'
-        round_sizes[size] = round_sizes.get(size, 0) + 1
-    for size, count in round_sizes.items():
-        duct_sizes.append({"size": size, "location": "Round/flex duct", "count": count})
+    for i, page in enumerate(doc):
+        if i % 20 == 0:
+            update(1, f'Scanning page {i+1} of {page_count}...', 10 + int(20 * i / max(page_count, 1)))
+        text = page.get_text() or ''
+        clean = text.strip()
 
-    if duct_sizes:
-        findings.append({"type": "ok", "category": "Duct Sizing", "message": f"Found {len(duct_sizes)} distinct duct size(s)"})
-        # Flag potentially undersized ducts for larger tonnage
-        if tonnage_matches:
-            max_ton = max(float(t) for t in tonnage_matches)
-            for ds in duct_sizes:
-                if 'round' in ds['size'].lower():
-                    dia = int(ds['size'].split('"')[0])
-                    if max_ton >= 2 and dia <= 6:
-                        findings.append({"type": "warning", "category": "Duct Sizing", "message": f'{ds["size"]} on {max_ton}T unit may restrict airflow'})
-                        concerns.append(f'{ds["size"]} flex on {max_ton}-ton unit may be undersized')
-    else:
-        findings.append({"type": "info", "category": "Duct Sizing", "message": "No duct dimensions detected — plan may be image-based or duct layout on separate sheet"})
+        # Extract all potential sheet IDs
+        potential_ids = set()
+        for line in clean.split('\n'):
+            token = line.strip()
+            if 2 <= len(token) <= 5:
+                if _re.match(r'^ME\d{1,2}$', token):
+                    potential_ids.add(token)
+                elif _re.match(r'^M\d{1,2}$', token):
+                    potential_ids.add(token)
+                elif _re.match(r'^[PSEGAC]\d{1,3}$', token):
+                    potential_ids.add(token)
 
-    # ── 3. Ventilation / Exhaust ──
-    cfm_pattern = re.compile(r'(\d{2,5})\s*(?:cfm|CFM)')
-    cfm_matches = cfm_pattern.findall(pdf_text)
-    if cfm_matches:
-        cfm_values = [int(c) for c in cfm_matches]
-        ventilation["cfm_total"] = sum(cfm_values)
-        findings.append({"type": "ok", "category": "Ventilation", "message": f"CFM values found: {', '.join(cfm_matches[:8])} (total: {sum(cfm_values)} CFM)"})
-    else:
-        findings.append({"type": "info", "category": "Ventilation", "message": "No CFM values detected in plan text"})
+        for sid in potential_ids:
+            id_frequency[sid] += 1
 
-    exhaust_pattern = re.compile(r'exhaust\s*fan|EF[\-\s]?\d', re.IGNORECASE)
-    exhaust_matches = exhaust_pattern.findall(pdf_text)
-    if exhaust_matches:
-        ventilation["exhaust_fans"] = len(exhaust_matches)
-        findings.append({"type": "ok", "category": "Ventilation", "message": f"Found {len(exhaust_matches)} exhaust fan reference(s)"})
+        raw_page_data.append({'text': clean, 'potential_ids': potential_ids})
 
-    fresh_air = re.compile(r'fresh\s*air|outside\s*air|OA\s*duct|ventilation\s*air|make[\-\s]?up\s*air', re.IGNORECASE)
-    if fresh_air.search(pdf_text):
-        findings.append({"type": "ok", "category": "Ventilation", "message": "Fresh air / outside air requirements referenced"})
-    else:
-        findings.append({"type": "warning", "category": "Ventilation", "message": "No fresh air / outside air requirements found"})
-        recommendations.append("Verify fresh air / ventilation requirements per IMC Section 401")
+    # Pass 2: IDs appearing on >4 pages are building names or section totals, not sheet IDs
+    # e.g. "M8" = building name (all pages), "M7" = "sheet X of 7" (many pages)
+    noise_ids = {sid for sid, count in id_frequency.items() if count > 4}
 
-    # ── 4. Refrigerant Lines ──
-    lineset_pattern = re.compile(r'(\d\/\d{1,2})[\"\u2033]?\s*(?:line|suction|liquid|lineset|line\s*set)', re.IGNORECASE)
-    lineset_matches = lineset_pattern.findall(pdf_text)
-    if lineset_matches:
-        findings.append({"type": "ok", "category": "Refrigerant Lines", "message": f"Line set sizes found: {', '.join(set(lineset_matches))}"})
-    else:
-        findings.append({"type": "info", "category": "Refrigerant Lines", "message": "No line set sizes specified in plan text"})
-        recommendations.append("Verify refrigerant line set sizes match equipment specifications")
+    page_info = []
+    for i, rpd in enumerate(raw_page_data):
+        clean = rpd['text']
+        char_count = len(clean)
+        text_lower = clean.lower()
+        is_drawing = char_count < 2000
 
-    insulation_ref = re.compile(r'insulat|armaflex|rubatex', re.IGNORECASE)
-    if insulation_ref.search(pdf_text):
-        findings.append({"type": "ok", "category": "Refrigerant Lines", "message": "Line insulation requirements referenced"})
-    else:
-        findings.append({"type": "info", "category": "Refrigerant Lines", "message": "No insulation requirements found for refrigerant lines"})
+        # Filter to real sheet IDs (low frequency = actual sheet identifier)
+        sheet_ids = rpd['potential_ids'] - noise_ids
 
-    # ── 5. Electrical ──
-    disconnect_pattern = re.compile(r'(\d{2,3})\s*(?:amp|A)\s*(?:disconnect|disc|DS)', re.IGNORECASE)
-    disc_matches = disconnect_pattern.findall(pdf_text)
-    if disc_matches:
-        findings.append({"type": "ok", "category": "Electrical", "message": f"Disconnect sizes found: {', '.join(set(d + 'A' for d in disc_matches))}"})
-    else:
-        findings.append({"type": "warning", "category": "Electrical", "message": "No disconnect sizes specified"})
-        concerns.append("No disconnect size specified — verify electrical requirements")
+        # Determine if this page IS a mechanical sheet
+        # Must have M/ME IDs and NOT have non-mechanical IDs (A, S, P, E, G)
+        # to avoid false positives from cross-reference pages
+        m_ids = [s for s in sheet_ids if (s.startswith('M') and not s.startswith('ME')) or s.startswith('ME')]
+        non_m_ids = [s for s in sheet_ids if not s.startswith('M')]
+        is_mech_sheet = len(m_ids) > 0 and len(non_m_ids) == 0
 
-    circuit_pattern = re.compile(r'(\d{1,3})\s*(?:amp|A)\s*(?:circuit|breaker|CB)', re.IGNORECASE)
-    circuit_matches = circuit_pattern.findall(pdf_text)
-    if circuit_matches:
-        findings.append({"type": "ok", "category": "Electrical", "message": f"Circuit/breaker sizes: {', '.join(set(c + 'A' for c in circuit_matches))}"})
+        # Check text content for strong HVAC signals
+        hvac_strong = any(kw in text_lower for kw in [
+            'hvac plan', 'hvac equipment', 'mechanical plan', 'unit hvac',
+            'condensing unit', 'fan coil', 'mini split', 'duct siz',
+            'equipment schedule', 'grille', 'register schedule', 'fire damper schedule',
+            'exhaust fan', 'hvac', 'refrigerant', 'tonnage', 'btu', 'seer', 'cfm',
+            'mep plan', 'mep', 'roof hvac', 'roof mep', 'mechanical schedule',
+            'condensing', 'unit plan'])
 
-    wire_pattern = re.compile(r'(?:#?\d{1,2})\s*(?:AWG|gauge|ga)\b|\b(?:10|8|6|4|2)[\-\s](?:\d)\s*(?:romex|NM|wire)', re.IGNORECASE)
-    wire_matches = wire_pattern.findall(pdf_text)
-    if wire_matches:
-        findings.append({"type": "info", "category": "Electrical", "message": f"Wire gauge references found ({len(wire_matches)} mentions)"})
+        page_info.append({
+            'num': i + 1, 'text': clean, 'char_count': char_count,
+            'is_drawing': is_drawing, 'sheet_ids': sheet_ids,
+            'is_mech_sheet': is_mech_sheet, 'hvac_strong': hvac_strong
+        })
 
-    # ── 6. Code Compliance ──
-    code_refs = [
-        ('IMC', 'International Mechanical Code'),
-        ('IRC', 'International Residential Code'),
-        ('IECC', 'International Energy Conservation Code'),
-        ('ASHRAE', 'ASHRAE Standard'),
-        ('UMC', 'Uniform Mechanical Code'),
-        ('NFPA', 'NFPA Standard'),
-    ]
-    for code, name in code_refs:
-        if code.lower() in text_lower:
-            findings.append({"type": "info", "category": "Code Compliance", "message": f"{name} ({code}) referenced in plans"})
+    update(2, 'Identifying mechanical sheets...', 30)
 
-    clearance_pattern = re.compile(r'clearance|setback|minimum\s*distance', re.IGNORECASE)
-    if clearance_pattern.search(pdf_text):
-        findings.append({"type": "ok", "category": "Code Compliance", "message": "Equipment clearance / setback requirements noted"})
-    else:
-        recommendations.append("Verify equipment clearances meet manufacturer and code requirements")
+    # ── Phase 2: Select pages — prioritize actual mechanical sheets ──
+    # Tier 1: Pages with M or ME sheet IDs (the actual mechanical drawings)
+    # Tier 2: Drawing pages with strong HVAC keywords but no M/ME ID
+    # Tier 3: Cover/index page
+    tier1 = []   # M/ME sheets — MUST include all
+    tier2 = []   # HVAC-relevant drawings without sheet ID
+    tier3 = []   # cover page
+    text_pages = []
 
-    combustion_pattern = re.compile(r'combustion\s*air|combustible\s*clearance', re.IGNORECASE)
-    if combustion_pattern.search(pdf_text):
-        findings.append({"type": "ok", "category": "Code Compliance", "message": "Combustion air requirements referenced"})
+    for pi in page_info:
+        # Mechanical sheets (M/ME) are ALWAYS sent as images, even with >2000 chars
+        # (they're CAD drawings with many detail labels, not spec text)
+        if pi['is_mech_sheet']:
+            tier1.append(pi)
+        elif not pi['is_drawing'] and pi['char_count'] > 500:
+            text_pages.append(pi)
+        elif pi['hvac_strong'] and pi['is_drawing']:
+            tier2.append(pi)
+        elif pi['num'] == 1 and pi['is_drawing']:
+            tier3.append(pi)
 
-    # ── 7. Special Callouts ──
-    if re.search(r'zon(?:e|ing)', text_lower):
-        findings.append({"type": "info", "category": "Special", "message": "Zoning system referenced — verify zone damper and thermostat quantities"})
-    if re.search(r'two[\-\s]?story|2[\-\s]?story|multi[\-\s]?level', text_lower):
-        findings.append({"type": "info", "category": "Special", "message": "Multi-story building — verify duct routing and equipment placement per floor"})
-    if re.search(r'corridor|common\s*area|hallway\s*system', text_lower):
-        findings.append({"type": "info", "category": "Special", "message": "Corridor/common area system referenced"})
-    if re.search(r'mini[\-\s]?split|ductless|VRF|VRV', text_lower):
-        findings.append({"type": "info", "category": "Special", "message": "Mini split / ductless / VRF system referenced"})
-    if re.search(r'multi[\-\s]?family|apartment|condo|unit\s*type', text_lower):
-        findings.append({"type": "info", "category": "Special", "message": "Multi-family / apartment project — verify unit counts and types"})
+    # Build image list: all tier 1 + fill with tier 2 and 3
+    MAX_IMAGE_PAGES = 25
+    image_pages = list(tier1)  # always include ALL mechanical sheets
+    remaining = MAX_IMAGE_PAGES - len(image_pages)
+    if remaining > 0:
+        image_pages.extend(tier2[:remaining])
+        remaining = MAX_IMAGE_PAGES - len(image_pages)
+    if remaining > 0:
+        image_pages.extend(tier3[:remaining])
+    image_pages.sort(key=lambda p: p['num'])
 
-    # Unit count detection
-    unit_pattern = re.compile(r'(\d{1,4})\s*(?:units?|apartments?|condos?|suites?)', re.IGNORECASE)
-    unit_matches = unit_pattern.findall(pdf_text)
-    if unit_matches:
-        max_units = max(int(u) for u in unit_matches)
-        findings.append({"type": "info", "category": "Special", "message": f"Detected ~{max_units} units referenced in plans"})
+    mech_count = len(tier1)
+    update(2, f'Found {mech_count} mechanical sheets (M/ME series), sending {len(image_pages)} pages total...', 35)
 
-    # ── 8. Missing Items ──
-    if not tonnage_matches and not models_found and not btu_matches:
-        concerns.append("No equipment schedule detected — plans may be missing HVAC equipment specifications")
-        findings.append({"type": "warning", "category": "Missing Items", "message": "No equipment schedule found"})
-    if not duct_sizes:
-        findings.append({"type": "warning", "category": "Missing Items", "message": "No duct layout / sizing found in text"})
-    if not re.search(r'thermostat|t[\-\s]?stat', text_lower):
-        concerns.append("No thermostat locations specified")
-        findings.append({"type": "warning", "category": "Missing Items", "message": "No thermostat locations specified"})
-    if not re.search(r'condensate|drain\s*line|p[\-\s]?trap', text_lower):
-        recommendations.append("Verify condensate drain routing and trap locations")
+    update(3, f'Rendering {len(image_pages)} drawing pages as images...', 35)
 
-    # ── Risk Assessment ──
-    risk_score = len(concerns)
-    if risk_score == 0:
-        risk_level = 'Low'
-    elif risk_score <= 3:
-        risk_level = 'Medium'
-    else:
-        risk_level = 'High'
+    # ── Phase 3: Render pages as JPEG images ──────────────────────
+    MAX_PX = 1999
+    images_b64 = []
+    for idx, pi in enumerate(image_pages):
+        update(3, f'Rendering page {pi["num"]} ({idx+1}/{len(image_pages)})...', 35 + int(30 * idx / max(len(image_pages), 1)))
+        try:
+            page = doc[pi['num'] - 1]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            if pix.width > MAX_PX or pix.height > MAX_PX:
+                scale = min(MAX_PX / pix.width, MAX_PX / pix.height)
+                zoom = 2.0 * scale
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            img_bytes = pix.tobytes("jpeg")
+            b64 = base64.standard_b64encode(img_bytes).decode('ascii')
+            sheet_label = ', '.join(sorted(pi.get('sheet_ids', set()))) or ''
+            label = f"Page {pi['num']}"
+            if sheet_label:
+                label += f" — Sheet {sheet_label}"
+            images_b64.append({
+                'page_num': pi['num'], 'b64': b64, 'label': label
+            })
+        except Exception:
+            continue
 
-    # ── Summary ──
-    summary_parts = []
-    summary_parts.append(f"{plan['plan_type']} plan \"{plan['title']}\"")
-    summary_parts.append(f"{page_count} page(s)")
-    if equipment_found:
-        summary_parts.append(f"{len(equipment_found)} equipment item(s) detected")
-    if duct_sizes:
-        summary_parts.append(f"{len(duct_sizes)} duct size(s) found")
-    if concerns:
-        summary_parts.append(f"{len(concerns)} concern(s)")
-    else:
-        summary_parts.append("no major concerns")
+    doc.close()
 
-    review = {
-        "reviewed_at": datetime.now().strftime('%Y-%m-%d %H:%M'),
-        "page_count": page_count,
-        "summary": ' — '.join(summary_parts) + '.',
-        "risk_level": risk_level,
-        "equipment_found": equipment_found,
-        "duct_sizes": duct_sizes,
-        "ventilation": ventilation,
-        "concerns": concerns,
-        "recommendations": recommendations,
-        "findings": findings,
-    }
+    # ── Phase 4: Build spec text ──────────────────────────────────
+    update(4, 'Preparing specification text...', 65)
+    spec_text = ''
+    MAX_TEXT_CHARS = 60000
+    mech_text_pages = [p for p in text_pages if p.get('hvac_strong') or p.get('is_mech_sheet')]
+    other_text_pages = [p for p in text_pages if p not in mech_text_pages]
+    for pi in mech_text_pages + other_text_pages:
+        entry = f'--- Page {pi["num"]} (specs) ---\n{pi["text"]}\n\n'
+        if len(spec_text) + len(entry) > MAX_TEXT_CHARS:
+            break
+        spec_text += entry
 
-    # Save review
-    conn.execute(
+    if not images_b64 and not spec_text.strip():
+        prog['error'] = 'Could not extract any content from this PDF.'
+        prog['done'] = True
+        conn2 = get_db()
+        conn2.execute("UPDATE plans SET status='Uploaded', updated_at=datetime('now','localtime') WHERE id=?", (pid,))
+        conn2.commit()
+        conn2.close()
+        return
+
+    # ── Phase 5: Send to Claude Vision ────────────────────────────
+    update(5, f'Sending {len(images_b64)} images to AI for analysis...', 70)
+
+    plan_type = plan_data.get('plan_type') or 'construction'
+    plan_title = plan_data.get('title') or ''
+
+    system_prompt = f"""You are an expert HVAC mechanical contractor extracting data from construction plans for LGHVAC Mechanical, LLC. {job_context}
+
+This is a {plan_type} plan titled "{plan_title}" with {page_count} total pages. You are being shown {len(images_b64)} page images from the mechanical drawings plus extracted text from specification pages.
+
+YOUR JOB: Extract EVERY piece of HVAC data visible in these drawings. Read every table cell, every callout, every label, every annotation. These are CAD-generated construction documents — the data (model numbers, tonnage, CFM, duct dimensions, equipment schedules) is drawn in the images.
+
+EXTRACT ALL OF THE FOLLOWING — report ONLY what you can actually see. Do NOT guess or infer missing data:
+
+1. EQUIPMENT SCHEDULE — Read every row: Mark/Tag, Type, Manufacturer, Model #, Tonnage/BTU, Heating capacity, Cooling capacity, CFM, Voltage/Phase, FLA/MCA/MOCP, Location/Serving
+2. DUCT SIZES — Every size annotation visible on floor plans: supply mains (rectangular), branch ducts (round), flex runs, return ducts. Include the sheet reference.
+3. DIFFUSER/REGISTER/GRILLE SCHEDULE — If visible: Type, Size, CFM, Neck size, Location
+4. EXHAUST FAN SCHEDULE — Model, CFM, HP, RPM, Voltage, Location
+5. REFRIGERANT LINES — Suction line size, liquid line size for each unit/mark
+6. UNIT COUNTS — How many of each unit type (apartment types, number of each equipment mark)
+7. BUILDING INFO — Total floors, building type, unit type names (A, B, C, etc.), total apartment count
+8. ELECTRICAL — Disconnect sizes, circuit requirements, wire gauges for HVAC equipment
+9. NOTES & DETAILS — Any general notes, installation details, or special requirements visible on the sheets
+
+Respond with valid JSON only (no markdown, no code fences):
+{{
+    "summary": "2-3 sentence factual overview: building type, total units, number of equipment types, key system info",
+    "building_info": {{
+        "type": "e.g. 4-story multifamily apartment",
+        "total_floors": 0,
+        "unit_types": [{{"name": "Type A", "beds": 0, "baths": 0, "count": 0, "hvac_mark": "C1"}}],
+        "total_apartments": 0,
+        "location": "city/state if shown",
+        "notes": "any building-level notes"
+    }},
+    "equipment_schedule": [
+        {{"mark": "C1", "type": "Fan Coil/Heat Pump/etc", "manufacturer": "", "model": "", "tonnage": 0, "heating_btu": 0, "cooling_btu": 0, "cfm": 0, "voltage": "208/1/60", "fla": 0, "mca": 0, "mocp": 0, "location": "where it serves", "count": 1, "notes": ""}}
+    ],
+    "duct_sizes": [
+        {{"size": "12x8", "type": "supply_main|supply_branch|return_main|return_branch|flex|exhaust", "location": "sheet and area", "count": 1}}
+    ],
+    "diffusers": [
+        {{"type": "supply register|return grille|ceiling diffuser", "size": "10x6", "cfm": 0, "count": 1, "location": "sheet ref"}}
+    ],
+    "exhaust_fans": [
+        {{"mark": "EF1", "model": "", "cfm": 0, "hp": 0, "voltage": "", "type": "bath|kitchen|general", "count": 1}}
+    ],
+    "refrigerant_lines": [
+        {{"mark": "C1", "suction_size": "7/8", "liquid_size": "3/8", "notes": ""}}
+    ],
+    "electrical": [
+        {{"mark": "C1", "voltage": "208/1/60", "mca": 0, "mocp": 0, "wire_size": "", "disconnect": ""}}
+    ],
+    "notes_and_details": ["any general notes, special requirements, installation details, code references visible on sheets"],
+    "sheets_analyzed": ["list of sheet IDs you can identify: M1, ME2, etc."]
+}}
+
+CRITICAL RULES:
+- Report ONLY what you see. If a field is not visible, use 0 or empty string.
+- Read every row of every schedule table — do not skip rows or summarize.
+- Include the sheet reference for every item so the contractor can find it.
+- If you see partial/unclear text, report what you can read and note it's unclear.
+- Do NOT make judgments about what's missing or what should be different."""
+
+    content_parts = []
+    for img in images_b64:
+        content_parts.append({"type": "text", "text": f"[{img['label']}]"})
+        content_parts.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": img['b64']}
+        })
+    if spec_text.strip():
+        content_parts.append({
+            "type": "text",
+            "text": f"\n\nEXTRACTED SPECIFICATION TEXT ({len(text_pages)} pages):\n{spec_text}"
+        })
+    content_parts.append({
+        "type": "text",
+        "text": "\nNow analyze all the images and text above. Return your findings as JSON."
+    })
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        update(5, 'Extracting data from plans (this takes 30-90 seconds)...', 75)
+
+        response = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=8192,
+            system=system_prompt,
+            messages=[{'role': 'user', 'content': content_parts}]
+        )
+
+        update(6, 'Processing AI response...', 90)
+        response_text = response.content[0].text.strip()
+
+        if response_text.startswith('```'):
+            response_text = response_text.split('\n', 1)[1] if '\n' in response_text else response_text[3:]
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+
+        review = json.loads(response_text)
+
+        # Track actual token usage and cost
+        usage = response.usage
+        input_tokens = getattr(usage, 'input_tokens', 0)
+        output_tokens = getattr(usage, 'output_tokens', 0)
+        # Sonnet pricing: $3/M input, $15/M output
+        actual_cost = (input_tokens * 3.0 / 1_000_000) + (output_tokens * 15.0 / 1_000_000)
+
+        review['reviewed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+        review['page_count'] = page_count
+        review['pages_analyzed'] = len(images_b64)
+        review['spec_pages_read'] = len(text_pages)
+        review['tokens_used'] = {'input': input_tokens, 'output': output_tokens}
+        review['actual_cost'] = round(actual_cost, 4)
+
+        review.setdefault('summary', '')
+        review.setdefault('building_info', {})
+        review.setdefault('equipment_schedule', [])
+        review.setdefault('duct_sizes', [])
+        review.setdefault('diffusers', [])
+        review.setdefault('exhaust_fans', [])
+        review.setdefault('refrigerant_lines', [])
+        review.setdefault('electrical', [])
+        review.setdefault('notes_and_details', [])
+        review.setdefault('sheets_analyzed', [])
+        # Backwards compat: build findings from extracted data for the frontend
+        review.setdefault('findings', [])
+        review.setdefault('equipment_found', review.get('equipment_schedule', []))
+
+    except json.JSONDecodeError:
+        review = {
+            "reviewed_at": datetime.now().strftime('%Y-%m-%d %H:%M'),
+            "page_count": page_count,
+            "summary": response_text[:500] if response_text else "Review completed but response could not be parsed.",
+            "building_info": {}, "equipment_schedule": [], "duct_sizes": [],
+            "diffusers": [], "exhaust_fans": [], "refrigerant_lines": [],
+            "electrical": [], "notes_and_details": [], "sheets_analyzed": [],
+            "findings": [{"type": "info", "category": "Review", "message": "AI review completed — see summary for details."}],
+        }
+    except Exception as e:
+        prog['error'] = str(e)
+        prog['done'] = True
+        conn2 = get_db()
+        conn2.execute("UPDATE plans SET status='Uploaded', updated_at=datetime('now','localtime') WHERE id=?", (pid,))
+        conn2.commit()
+        conn2.close()
+        return
+
+    # Save to DB
+    update(6, 'Saving review...', 95)
+    conn2 = get_db()
+    conn2.execute(
         "UPDATE plans SET ai_review=?, status='Reviewed', page_count=?, updated_at=datetime('now','localtime') WHERE id=?",
         (json.dumps(review), page_count, pid)
     )
-    conn.commit()
-    conn.close()
-    return jsonify(review)
+    conn2.commit()
+    conn2.close()
+
+    prog['pct'] = 100
+    prog['message'] = 'Review complete!'
+    prog['done'] = True
+    prog['result'] = review
+
+
+def _resolve_takeoff_prices(conn, job_id):
+    """Resolve prices for takeoff items from supplier quotes and invoices.
+
+    Returns {SKU: {price, source, source_type}} where source_type is:
+      - 'quote'      — from a supplier quote for this job (Tier 1)
+      - 'historical'  — from quotes/invoices on other jobs (Tier 2)
+      - 'default'     — template price used as fallback (Tier 3)
+    """
+    prices = {}
+
+    # ── Tier 1: Job quotes (prefer is_baseline) ──
+    rows = conn.execute('''
+        SELECT sqi.takeoff_sku, sqi.unit_price, sqi.notes,
+               sq.supplier_name, sq.quote_number, sq.is_baseline
+        FROM supplier_quote_items sqi
+        JOIN supplier_quotes sq ON sqi.quote_id = sq.id
+        WHERE sq.job_id = ? AND sqi.takeoff_sku != ''
+        ORDER BY sq.is_baseline DESC, sq.quote_date DESC
+    ''', (job_id,)).fetchall()
+    for r in rows:
+        sku = r['takeoff_sku']
+        if sku in prices:
+            continue  # first match wins (baseline first due to ORDER BY)
+        unit_price = r['unit_price'] or 0
+        # Normalize per-C / per-M pricing from notes
+        notes_lower = (r['notes'] or '').lower()
+        if 'per-c' in notes_lower or 'per c' in notes_lower:
+            unit_price = unit_price / 100.0
+        elif 'per-m' in notes_lower or 'per m' in notes_lower:
+            unit_price = unit_price / 1000.0
+        prices[sku] = {
+            'price': round(unit_price, 4),
+            'source': f"{r['supplier_name']} Q#{r['quote_number']}",
+            'source_type': 'quote',
+        }
+
+    # ── Tier 2: Historical quotes from other jobs ──
+    unmatched_skus_query = '''
+        SELECT DISTINCT sqi.takeoff_sku
+        FROM supplier_quote_items sqi
+        JOIN supplier_quotes sq ON sqi.quote_id = sq.id
+        WHERE sq.job_id != ? AND sqi.takeoff_sku != ''
+        ORDER BY sqi.takeoff_sku
+    '''
+    hist_rows = conn.execute('''
+        SELECT sqi.takeoff_sku, sqi.unit_price, sqi.notes,
+               sq.supplier_name, sq.quote_number, sq.quote_date
+        FROM supplier_quote_items sqi
+        JOIN supplier_quotes sq ON sqi.quote_id = sq.id
+        WHERE sq.job_id != ? AND sqi.takeoff_sku != ''
+        ORDER BY sq.quote_date DESC
+    ''', (job_id,)).fetchall()
+    for r in hist_rows:
+        sku = r['takeoff_sku']
+        if sku in prices:
+            continue
+        unit_price = r['unit_price'] or 0
+        notes_lower = (r['notes'] or '').lower()
+        if 'per-c' in notes_lower or 'per c' in notes_lower:
+            unit_price = unit_price / 100.0
+        elif 'per-m' in notes_lower or 'per m' in notes_lower:
+            unit_price = unit_price / 1000.0
+        prices[sku] = {
+            'price': round(unit_price, 4),
+            'source': f"{r['supplier_name']} Q#{r['quote_number']} ({r['quote_date']})",
+            'source_type': 'historical',
+        }
+
+    # ── Tier 2b: Historical from invoices ──
+    try:
+        inv_rows = conn.execute('''
+            SELECT si.line_items, si.invoice_date,
+                   bc.supplier_name
+            FROM supplier_invoices si
+            JOIN billtrust_config bc ON si.supplier_config_id = bc.id
+            ORDER BY si.invoice_date DESC
+        ''').fetchall()
+        import json as _json
+        for inv in inv_rows:
+            try:
+                items = _json.loads(inv['line_items'] or '[]')
+            except (ValueError, TypeError):
+                continue
+            for li in items:
+                pc = (li.get('product_code') or li.get('sku') or '').strip()
+                if not pc or pc in prices:
+                    continue
+                unit_price = float(li.get('unit_price', 0) or 0)
+                uom = (li.get('uom') or li.get('unit_of_measure') or '').upper()
+                if uom in ('C', 'PER C', 'PERC'):
+                    unit_price = unit_price / 100.0
+                elif uom in ('M', 'PER M', 'PERM'):
+                    unit_price = unit_price / 1000.0
+                prices[pc] = {
+                    'price': round(unit_price, 4),
+                    'source': f"{inv['supplier_name']} Inv ({inv['invoice_date']})",
+                    'source_type': 'historical',
+                }
+    except Exception:
+        pass  # invoices table may not have data
+
+    return prices
 
 
 @app.route('/api/plans/<int:pid>/takeoff', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
 def api_plans_takeoff(pid):
-    """Generate material takeoff from plan review data."""
+    """Generate material takeoff from calculator questions (multi-unit-type).
+
+    Comprehensive HVAC material calculation engine.
+    Calculates every line item from unit-type inputs + building-level questions.
+    Supports: heat pump, condenser, gas furnace, mini split systems.
+    Handles: R6/R8 flex split by floor, per-tonnage line sets, per-tonnage
+    filter/return sizing, fire wrap, CRDs, zoning, outside air, and more.
+    """
+    import copy, math
+
     conn = get_db()
     plan = conn.execute('SELECT * FROM plans WHERE id = ?', (pid,)).fetchone()
     if not plan:
         conn.close()
         return jsonify({'error': 'Plan not found'}), 404
 
-    # Parse existing review to pre-fill quantities
-    review_data = {}
-    if plan['ai_review']:
-        try:
-            review_data = json.loads(plan['ai_review'])
-        except (json.JSONDecodeError, TypeError):
-            pass
+    data = request.get_json() or {}
 
-    # Parse any existing takeoff data (user may have saved quantities)
-    existing_takeoff = {}
-    if plan['takeoff_data']:
-        try:
-            existing_takeoff = json.loads(plan['takeoff_data'])
-        except (json.JSONDecodeError, TypeError):
-            pass
+    # ── Read unit types array ──
+    unit_types = data.get('unit_types', [])
+    if not unit_types:
+        conn.close()
+        return jsonify({'error': 'No unit types provided'}), 400
 
-    # Build takeoff from template
-    import copy
+    # ── Read building-level inputs ──
+    system_type      = data.get('system_type', 'heat_pump')
+    thermostat       = data.get('thermostat', 'programmable')
+    stories          = int(data.get('stories', 3))
+    line_set_ft      = float(data.get('line_set_length', 25))
+    flex_per_drop    = float(data.get('flex_per_drop', 1))
+    outdoor_loc      = data.get('outdoor_loc', 'ground')        # ground | roof
+    orientation      = data.get('orientation', 'horizontal')     # horizontal | vertical
+    install_loc      = data.get('install_loc', 'attic')          # attic | closet
+    mounting         = data.get('mounting', 'hanger')             # hanger | shelf
+    exhaust_type     = data.get('exhaust_type', 'ceiling')        # ceiling | sidewall
+    ductboard        = data.get('ductboard', False)
+    ductboard_per_u  = float(data.get('ductboard_per_unit', 2))
+    zoning           = data.get('zoning', False)
+    fire_wrap        = data.get('fire_wrap', False)
+    crds             = data.get('crds', True)
+    crd_kitchen      = data.get('crd_kitchen', False)
+    fresh_air_per_u  = float(data.get('fresh_air_per_unit', 1))
+    drain_pans       = data.get('drain_pans', True)
+    outside_air      = data.get('outside_air', False)
+    wrap_dry_boots   = data.get('wrap_dryers_boots', False)
+    passthroughs     = data.get('passthroughs', False)
+    include_freight  = data.get('include_freight', True)
+    # New building-level inputs
+    r8_floors        = int(data.get('r8_floors', 1))              # how many top floors get R8 (IRC code)
+    tstat_wire_gauge = data.get('tstat_wire_gauge', '18/5')       # 18/5 | 18/8
+    condensate_mat   = data.get('condensate_material', 'pvc')     # pvc | cpvc
+    line_insul_type  = data.get('line_insul_type', 'armaflex')    # armaflex | fiberglass
+    gas_line_size    = data.get('gas_line_size', '1/2')           # 1/2 | 3/4
+    corridor_units   = int(data.get('corridor_units', 0))         # separate HVAC for corridors/common areas
+
+    # Job tax rate
+    job = conn.execute('SELECT tax_rate FROM jobs WHERE id = ?', (plan['job_id'],)).fetchone()
+    job_tax_rate = (job['tax_rate'] / 100.0) if job and job['tax_rate'] else 0.0885
+
+    # ── Build takeoff ──
     takeoff = copy.deepcopy(TAKEOFF_TEMPLATE)
+    takeoff['tax_rate'] = job_tax_rate
+    takeoff['inputs'] = {
+        'unit_types': unit_types, 'system_type': system_type, 'thermostat': thermostat,
+        'stories': stories, 'line_set_length': line_set_ft, 'flex_per_drop': flex_per_drop,
+        'outdoor_loc': outdoor_loc, 'orientation': orientation, 'install_loc': install_loc,
+        'mounting': mounting, 'exhaust_type': exhaust_type, 'ductboard': ductboard,
+        'ductboard_per_unit': ductboard_per_u, 'zoning': zoning, 'fire_wrap': fire_wrap,
+        'crds': crds, 'crd_kitchen': crd_kitchen, 'fresh_air_per_unit': fresh_air_per_u,
+        'drain_pans': drain_pans, 'outside_air': outside_air,
+        'wrap_dryers_boots': wrap_dry_boots, 'passthroughs': passthroughs,
+        'include_freight': include_freight, 'r8_floors': r8_floors,
+        'tstat_wire_gauge': tstat_wire_gauge, 'condensate_material': condensate_mat,
+        'line_insul_type': line_insul_type, 'gas_line_size': gas_line_size,
+        'corridor_units': corridor_units,
+    }
 
-    # If existing takeoff has saved quantities, restore them
-    existing_items = {}
-    if existing_takeoff.get('sections'):
-        for sec in existing_takeoff['sections']:
-            for item in sec.get('items', []):
-                key = f"{sec['name']}|{item['part']}"
-                existing_items[key] = item
+    # ── Aggregate across unit types ──
+    U = sum(ut['qty'] for ut in unit_types)   # total units
+    total_beds      = sum(ut['beds'] * ut['qty'] for ut in unit_types)
+    total_baths     = sum(ut['baths'] * ut['qty'] for ut in unit_types)
+    total_drops_6   = sum(ut.get('drops_6', 0) * ut['qty'] for ut in unit_types)
+    total_drops_8   = sum(ut.get('drops_8', 0) * ut['qty'] for ut in unit_types)
+    total_drops_10  = sum(ut.get('drops_10', 0) * ut['qty'] for ut in unit_types)
+    total_returns   = sum(ut.get('returns', 1) * ut['qty'] for ut in unit_types)
+    total_drops     = total_drops_6 + total_drops_8 + total_drops_10
 
-    # Pre-fill from AI review if available
-    detected_tonnages = set()
-    detected_unit_count = 0
-    if review_data:
-        for eq in review_data.get('equipment_found', []):
-            desc = eq.get('description', '').lower()
-            # Extract tonnage
-            import re
-            ton_match = re.search(r'(\d\.?\d?)\s*ton', desc)
-            if ton_match:
-                detected_tonnages.add(float(ton_match.group(1)))
-        # Detect unit count
-        for f in review_data.get('findings', []):
-            msg = f.get('message', '').lower()
-            unit_match = re.search(r'~?(\d+)\s*units?', msg)
-            if unit_match:
-                detected_unit_count = max(detected_unit_count, int(unit_match.group(1)))
+    # ── Floor-based R6/R8 split (IRC code: top floor(s) = R8, lower = R6) ──
+    # r8_floors = number of top floors requiring R8 flex
+    # If building has 3 stories and r8_floors=1, top 1/3 of units get R8
+    r8_fraction = min(r8_floors / max(stories, 1), 1.0)
+    r6_fraction = 1.0 - r8_fraction
+    # Apply to each drop size
+    r8_drops_6  = math.ceil(total_drops_6 * r8_fraction)
+    r6_drops_6  = total_drops_6 - r8_drops_6
+    r8_drops_8  = math.ceil(total_drops_8 * r8_fraction)
+    r6_drops_8  = total_drops_8 - r8_drops_8
+    r8_drops_10 = math.ceil(total_drops_10 * r8_fraction)
+    r6_drops_10 = total_drops_10 - r8_drops_10
 
+    # Equipment counts per tonnage
+    tonnage_counts = {}   # {tonnage_str: qty}
+    hs_counts = {}        # {kw_str: qty}
+    for ut in unit_types:
+        t = ut['tonnage']
+        ts = str(t) if t != int(t) else str(int(t))
+        tonnage_counts[ts] = tonnage_counts.get(ts, 0) + ut['qty']
+        hs = ut.get('heat_strip', 0)
+        if hs > 0:
+            hs_counts[str(hs)] = hs_counts.get(str(hs), 0) + ut['qty']
+
+    # ── Per-tonnage line set sizing ──
+    # Different tonnages may need different suction line sizes
+    # liquid line is always 3/8; suction: <=3T=3/4", 3.5-4T=7/8", 5T=1-1/8"
+    ls_ft_by_size = {'3/8': 0, '3/4': 0, '7/8': 0, '1-1/8': 0}
+    for ut in unit_types:
+        t = ut['tonnage']
+        ut_ls = ut.get('line_set_override', line_set_ft)  # per-unit-type override
+        ft = ut_ls * ut['qty']
+        ls_ft_by_size['3/8'] += ft                        # liquid line always 3/8
+        if t <= 3:
+            ls_ft_by_size['3/4'] += ft
+        elif t <= 4:
+            ls_ft_by_size['7/8'] += ft
+        else:
+            ls_ft_by_size['1-1/8'] += ft
+    total_ls_ft = ls_ft_by_size['3/8']   # same as sum of all unit line set lengths
+
+    is_gas  = system_type == 'gas_furnace'
+    is_hp   = system_type == 'heat_pump'
+    is_ac   = system_type == 'condenser'
+    is_mini = system_type == 'mini_split'
+    above_living = install_loc == 'attic'  # unit above living space
+
+    # Max tonnage (for whip sizing)
+    max_tonnage = max(ut['tonnage'] for ut in unit_types)
+
+    # ── Flex bags (R6 for lower floors, R8 for top floors) ──
+    bags_6_r6  = math.ceil(r6_drops_6  * flex_per_drop) if r6_drops_6 > 0 else 0
+    bags_6_r8  = math.ceil(r8_drops_6  * flex_per_drop) if r8_drops_6 > 0 else 0
+    bags_8_r6  = math.ceil(r6_drops_8  * flex_per_drop) if r6_drops_8 > 0 else 0
+    bags_8_r8  = math.ceil(r8_drops_8  * flex_per_drop) if r8_drops_8 > 0 else 0
+    bags_10_r6 = math.ceil(r6_drops_10 * flex_per_drop) if r6_drops_10 > 0 else 0
+    bags_10_r8 = math.ceil(r8_drops_10 * flex_per_drop) if r8_drops_10 > 0 else 0
+
+    bath_ceil = math.ceil(total_baths)
+
+    # ── Quantity map: (qty, use_flag) ──
+    calc = {}
+
+    # =====================================================================
+    # ROUGH-IN SECTION
+    # =====================================================================
+
+    # ── CRDs / Bath Exhaust ──
+    # 12x14 CRD = 1 per system/unit
+    # 6x12x8 CRD Boot = 1 per supply drop (connects CRD to duct)
+    # 4" or 6" Round CRD = per fresh air intake per unit
+    # 80CFM CRD Fan = per bathroom (+ per kitchen if crd_kitchen checked)
+    crd_fan_count = bath_ceil + (U if crd_kitchen else 0) if crds else 0
+    fresh_air_total = math.ceil(U * fresh_air_per_u) if crds else 0
+    calc['12x14 CRD']        = (U if crds else 0, crds)
+    calc['12x14 Fire/Smoke Radiation Damper'] = (0, False)  # manual add for fire-rated buildings
+    calc['6x12x8 CRD Boot']  = (total_drops if crds else 0, crds)
+    calc['4\" Round CRD']     = (fresh_air_total if crds else 0, crds and fresh_air_total > 0)
+    calc['6\" Round CRD']     = (0, False)  # alternative size, manual switch
+    calc['80CFM CRD Fan']    = (crd_fan_count, crds)
+    calc['Broan 688 Exhaust Fan'] = (0, False)  # alternative to CRD fan, manual add
+
+    # ── Boots (per drop, sized to match) ──
+    calc['8\" Foam Boot']    = (total_drops_8, total_drops_8 > 0)
+    calc['6\" Foam Boot']    = (total_drops_6, total_drops_6 > 0)
+    calc['8x6 Reducer']      = (0, False)  # manual add
+
+    # ── Finger Taps: 1 per drop, sized to match drop diameter ──
+    calc['6\" Finger Taps']  = (total_drops_6,  total_drops_6 > 0)
+    calc['8\" Finger Taps']  = (total_drops_8,  total_drops_8 > 0)
+    calc['10\" Finger Taps'] = (total_drops_10, total_drops_10 > 0)
+
+    # ── Supply Boots: 1 per drop, sized to match ──
+    calc['6\" Supply Boot']  = (total_drops_6,  total_drops_6 > 0)
+    calc['8\" Supply Boot']  = (total_drops_8,  total_drops_8 > 0)
+    calc['10\" Supply Boot'] = (total_drops_10, total_drops_10 > 0)
+
+    # ── Flex Duct R6 (lower floors) ──
+    calc['6\" R6 Flex (bags)']  = (bags_6_r6,  bags_6_r6 > 0)
+    calc['8\" R6 Flex (bags)']  = (bags_8_r6,  bags_8_r6 > 0)
+    calc['10\" R6 Flex (bags)'] = (bags_10_r6, bags_10_r6 > 0)
+    calc['12\" R6 Flex (bags)'] = (0, False)
+
+    # ── Flex Duct R8 (top floor - IRC code requirement) ──
+    calc['6\" R8 Flex (bags)']  = (bags_6_r8,  bags_6_r8 > 0)
+    calc['8\" R8 Flex (bags)']  = (bags_8_r8,  bags_8_r8 > 0)
+    calc['10\" R8 Flex (bags)'] = (bags_10_r8, bags_10_r8 > 0)
+    calc['12\" R8 Flex (bags)'] = (0, False)
+
+    # ── Line Sets (per-tonnage sizing, aggregated by line size) ──
+    # Sold in 50ft rolls; calculate rolls needed
+    ls_rolls_38   = math.ceil(ls_ft_by_size['3/8']   / 50) if ls_ft_by_size['3/8'] > 0 else 0
+    ls_rolls_34   = math.ceil(ls_ft_by_size['3/4']   / 50) if ls_ft_by_size['3/4'] > 0 else 0
+    ls_rolls_78   = math.ceil(ls_ft_by_size['7/8']   / 50) if ls_ft_by_size['7/8'] > 0 else 0
+    ls_rolls_118  = math.ceil(ls_ft_by_size['1-1/8'] / 50) if ls_ft_by_size['1-1/8'] > 0 else 0
+    calc['3/8 Line Set (in feet)']   = (ls_rolls_38,  ls_rolls_38 > 0 and not is_mini)
+    calc['3/4 Line Set (in feet)']   = (ls_rolls_34,  ls_rolls_34 > 0 and not is_mini)
+    calc['7/8 Line Set (in feet)']   = (ls_rolls_78,  ls_rolls_78 > 0 and not is_mini)
+    calc['1-1/8 Line Set (in feet)'] = (ls_rolls_118, ls_rolls_118 > 0 and not is_mini)
+
+    # ── Line Set Insulation (Armaflex or Fiberglass, sized to match suction line) ──
+    use_armaflex = line_insul_type == 'armaflex'
+    use_fiberglass = line_insul_type == 'fiberglass'
+    af_sticks_34  = math.ceil(ls_ft_by_size['3/4'] / 6)   if ls_ft_by_size['3/4'] > 0 else 0
+    af_sticks_78  = math.ceil(ls_ft_by_size['7/8'] / 6)   if ls_ft_by_size['7/8'] > 0 else 0
+    af_sticks_118 = math.ceil(ls_ft_by_size['1-1/8'] / 6) if ls_ft_by_size['1-1/8'] > 0 else 0
+    calc['3/4\" Armaflex (6ft stick)']   = (af_sticks_34  if use_armaflex else 0, use_armaflex and af_sticks_34 > 0 and not is_mini)
+    calc['7/8\" Armaflex (6ft stick)']   = (af_sticks_78  if use_armaflex else 0, use_armaflex and af_sticks_78 > 0 and not is_mini)
+    calc['1-1/8\" Armaflex (6ft stick)'] = (af_sticks_118 if use_armaflex else 0, use_armaflex and af_sticks_118 > 0 and not is_mini)
+    calc['Armaflex Glue (qt)']           = (max(1, math.ceil(U / 4)) if use_armaflex else 0, use_armaflex and not is_mini)
+    # Fiberglass pipe wrap alternative (rolls cover ~50ft)
+    fg_rolls_34  = math.ceil(ls_ft_by_size['3/4'] / 50)   if ls_ft_by_size['3/4'] > 0 else 0
+    fg_rolls_78  = math.ceil(ls_ft_by_size['7/8'] / 50)   if ls_ft_by_size['7/8'] > 0 else 0
+    fg_rolls_118 = math.ceil(ls_ft_by_size['1-1/8'] / 50) if ls_ft_by_size['1-1/8'] > 0 else 0
+    calc['3/4\" Fiberglass Pipe Wrap (roll)']   = (fg_rolls_34  if use_fiberglass else 0, use_fiberglass and fg_rolls_34 > 0 and not is_mini)
+    calc['7/8\" Fiberglass Pipe Wrap (roll)']   = (fg_rolls_78  if use_fiberglass else 0, use_fiberglass and fg_rolls_78 > 0 and not is_mini)
+    calc['1-1/8\" Fiberglass Pipe Wrap (roll)'] = (fg_rolls_118 if use_fiberglass else 0, use_fiberglass and fg_rolls_118 > 0 and not is_mini)
+
+    # ── Condensate (PVC vs CPVC based on condensate_material selection) ──
+    use_pvc  = condensate_mat == 'pvc'
+    use_cpvc = condensate_mat == 'cpvc'
+    calc['3/4\" PVC (10ft stick)']      = (U if use_pvc else 0,  use_pvc)
+    calc['3/4\" CPVC (10ft stick)']     = (U if use_cpvc else 0, use_cpvc)
+    calc['3/4\" PVC Fittings (bag)']    = (max(1, math.ceil(U / 3)) if use_pvc else 0,  use_pvc)
+    calc['3/4\" CPVC Fittings (bag)']   = (max(1, math.ceil(U / 3)) if use_cpvc else 0, use_cpvc)
+    calc['PVC Cement & Primer Kit']     = (max(1, math.ceil(U / 6)) if use_pvc else 0,  use_pvc)
+    calc['CPVC Cement & Primer Kit']    = (max(1, math.ceil(U / 6)) if use_cpvc else 0, use_cpvc)
+    calc['Condensate Trap']             = (U, True)
+
+    # ── Hangers & Hardware ──
+    # Metal strap: 2ft per drop for hanger / 100ft per roll
+    calc['Metal Hanger Strap (100ft roll)'] = (max(1, math.ceil(total_drops * 2 / 100)), True)
+    calc['1\" Metal Screws (box)']          = (max(1, math.ceil(U / 5)), True)
+    calc['Threaded Rod 3/8x36\"']           = (total_drops, total_drops > 0)
+    calc['Beam Clamps (box of 25)']         = (0, False)  # manual add for steel framing
+
+    # ── Sealant / Tape ──
+    calc['Duct Mastic (gal)']  = (max(1, math.ceil(U / 3)), True)
+    calc['Mastic Tape (roll)'] = (max(1, math.ceil(U / 4)), True)
+    calc['Foil Tape (roll)']   = (max(1, math.ceil(U / 4)), True)
+
+    # ── Return Air ──
+    # Return boot/box sizing based on tonnage: <=2T=14x8, 2.5-3T=16x8, 3.5T+=20x8
+    ret_14x8 = 0; ret_16x8 = 0; ret_20x8 = 0
+    ret_box_20x20 = 0; ret_box_20x25 = 0; ret_box_24x24 = 0
+    filt_20x25 = 0; filt_16x25 = 0; filt_20x20 = 0; filt_16x20 = 0; filt_24x24 = 0
+    for ut in unit_types:
+        t = ut['tonnage']
+        r = ut.get('returns', 1) * ut['qty']
+        if t <= 2:
+            ret_14x8 += r;  ret_box_20x20 += r; filt_20x20 += r
+        elif t <= 3:
+            ret_16x8 += r;  ret_box_20x25 += r; filt_20x25 += r
+        else:
+            ret_20x8 += r;  ret_box_24x24 += r; filt_20x25 += r  # larger tonnage = 20x25 filter
+    calc['14x8 Return Air Boot']  = (ret_14x8, ret_14x8 > 0)
+    calc['16x8 Return Air Boot']  = (ret_16x8, ret_16x8 > 0)
+    calc['20x8 Return Air Boot']  = (ret_20x8, ret_20x8 > 0)
+    calc['20x20 Return Air Box']  = (ret_box_20x20, ret_box_20x20 > 0)
+    calc['20x25 Return Air Box']  = (ret_box_20x25, ret_box_20x25 > 0)
+    calc['24x24 Return Air Box']  = (ret_box_24x24, ret_box_24x24 > 0)
+    calc['14x20 Return Grille']   = (0, False)
+    calc['20x20 Return Grille']   = (0, False)
+    # Filter grilles (sized by tonnage)
+    calc['20x25 Filter Grille']   = (filt_20x25, filt_20x25 > 0)
+    calc['16x25 Filter Grille']   = (0, False)
+    calc['20x20 Filter Grille']   = (filt_20x20, filt_20x20 > 0)
+    calc['24x24 Filter Grille']   = (filt_24x24, filt_24x24 > 0)
+
+    # ── Plenum / Ductboard ──
+    if ductboard:
+        calc['Plenum Board (4x8 sheet)']    = (0, False)
+        calc['Plenum Clips (box)']          = (0, False)
+        calc['R8 Duct Board (4x10 sheet)']  = (ductboard_per_u * U, True)
+        calc['R6 Duct Board (4x10 sheet)']  = (0, False)
+        calc['Ductboard Staples (box)']     = (max(1, math.ceil(U / 4)), True)
+    else:
+        calc['Plenum Board (4x8 sheet)']    = (U, True)
+        calc['Plenum Clips (box)']          = (max(1, math.ceil(U / 4)), True)
+        calc['R8 Duct Board (4x10 sheet)']  = (0, False)
+        calc['R6 Duct Board (4x10 sheet)']  = (0, False)
+        calc['Ductboard Staples (box)']     = (0, False)
+
+    # ── Electrical: Thermostat Wire ──
+    # 250ft rolls, ~25ft per unit run => 1 roll per ~10 units
+    tstat_rolls = max(1, math.ceil(U / 10))
+    calc['18/5 Thermostat Wire (250ft)']  = (tstat_rolls if tstat_wire_gauge == '18/5' else 0, tstat_wire_gauge == '18/5')
+    calc['18/8 Thermostat Wire (250ft)']  = (tstat_rolls if tstat_wire_gauge == '18/8' else 0, tstat_wire_gauge == '18/8')
+    calc['Low Voltage Wire 18/2 (250ft)'] = (max(1, math.ceil(U / 10)), True)
+
+    # ── Electrical: Disconnects & Whips ──
+    calc['Disconnect 60A Non-Fused'] = (U, not is_mini)
+    calc['Disconnect 60A Fused']     = (0, False)
+    # Whip sizing: <=3T=3/4", larger=1"
+    whip_small = sum(ut['qty'] for ut in unit_types if ut['tonnage'] <= 3)
+    whip_large = sum(ut['qty'] for ut in unit_types if ut['tonnage'] > 3)
+    calc['Whip 3/4\" x 6ft']            = (whip_small if not is_mini else 0, whip_small > 0 and not is_mini)
+    calc['Whip 1\" x 6ft']              = (whip_large if not is_mini else 0, whip_large > 0 and not is_mini)
+    calc['Wire Nuts / Connectors (box)'] = (max(1, math.ceil(U / 8)), True)
+    calc['10-2 Romex (250ft)']           = (0, False)  # user adds manually if needed
+    calc['6-2 Romex (125ft)']            = (0, False)
+    calc['8-3 Romex (125ft)']            = (0, False)
+
+    # ── Gas (only if gas furnace system) ──
+    gas_sm = gas_line_size == '1/2'
+    gas_lg = gas_line_size == '3/4'
+    calc['Gas Flex 1/2\" (per ft)']   = (15 * U if is_gas and gas_sm else 0, is_gas and gas_sm)
+    calc['Gas Flex 3/4\" (per ft)']   = (15 * U if is_gas and gas_lg else 0, is_gas and gas_lg)
+    calc['Gas Valve 1/2\"']           = (U if is_gas and gas_sm else 0, is_gas and gas_sm)
+    calc['Gas Valve 3/4\"']           = (U if is_gas and gas_lg else 0, is_gas and gas_lg)
+    calc['Gas Drip Leg Kit']          = (U if is_gas else 0, is_gas)
+    calc['Gas Connector 1/2\" (36\")'] = (U if is_gas and gas_sm else 0, is_gas and gas_sm)
+    calc['Gas Connector 3/4\" (36\")'] = (U if is_gas and gas_lg else 0, is_gas and gas_lg)
+    calc['Gas Sediment Trap']          = (U if is_gas else 0, is_gas)
+
+    # ── Fire Protection ──
+    # Fire wrap: rolls per rated penetration; estimate drops * stories for fire-rated assemblies
+    fire_penetrations = total_drops * (stories - 1) if fire_wrap else 0
+    fire_rolls = math.ceil(fire_penetrations / 8) if fire_penetrations > 0 else 0   # ~8 penetrations per roll
+    calc['Fire Wrap (1.5\" x 24\" x 25ft roll)'] = (fire_rolls, fire_wrap)
+    # Fire dampers at rated wall/floor penetrations
+    fd_6  = math.ceil(total_drops_6  * (stories - 1) * 0.5) if fire_wrap else 0  # ~50% of penetrations need damper
+    fd_8  = math.ceil(total_drops_8  * (stories - 1) * 0.5) if fire_wrap else 0
+    fd_10 = math.ceil(total_drops_10 * (stories - 1) * 0.5) if fire_wrap else 0
+    calc['Fire Damper 6\"']  = (fd_6,  fire_wrap and fd_6 > 0)
+    calc['Fire Damper 8\"']  = (fd_8,  fire_wrap and fd_8 > 0)
+    calc['Fire Damper 10\"'] = (fd_10, fire_wrap and fd_10 > 0)
+    # Passthrough sleeves (fire-rated wall penetrations)
+    pt_per_unit = 2 if passthroughs else 0
+    pt_6  = math.ceil(total_drops_6  / total_drops * U * pt_per_unit) if total_drops > 0 and passthroughs else 0
+    pt_8  = math.ceil(total_drops_8  / total_drops * U * pt_per_unit) if total_drops > 0 and passthroughs else 0
+    pt_10 = math.ceil(total_drops_10 / total_drops * U * pt_per_unit) if total_drops > 0 and passthroughs else 0
+    calc['Passthrough Sleeve 6\"']  = (pt_6,  passthroughs and pt_6 > 0)
+    calc['Passthrough Sleeve 8\"']  = (pt_8,  passthroughs and pt_8 > 0)
+    calc['Passthrough Sleeve 10\"'] = (pt_10, passthroughs and pt_10 > 0)
+    # Firestop caulk: 1 per 3 units baseline + 1 per unit for fire wrap builds
+    calc['Firestop Caulk (tube)'] = (max(1, math.ceil(U / 3)) + (U if fire_wrap else 0), True)
+    calc['Firestop Putty Pad (box)'] = (max(1, math.ceil(U / 6)) if fire_wrap else 0, fire_wrap)
+    calc['Smoke Damper (round)'] = (0, False)  # manual add
+
+    # =====================================================================
+    # TRIM OUT SECTION
+    # =====================================================================
+
+    # ── Shorts & Smalls ──
+    calc['3\" Pump Ups']        = (3 * U, True)                         # 3 per unit
+    calc['Safe T Switch']       = (U if above_living else 0, above_living)  # required above living space
+    calc['Float Switch']        = (U, True)                              # 1 per unit always
+    calc['Drain Pan (plastic)'] = (U if (drain_pans or above_living) else 0, drain_pans or above_living)
+    calc['Drain Pan (metal)']   = (0, False)
+    calc['P-Trap 3/4\" PVC']    = (U, True)                              # 1 per unit condensate
+
+    # ── Registers (Supply) — sized from drop size ──
+    # 6" drops: mix of 8x4 and 10x4 registers
+    # 8" drops: mix of 10x6 and 12x4 registers
+    # 10" drops: mix of 12x6 and 14x6 registers
+    calc['6x6 Register (white)']  = (0, False)
+    calc['8x4 Register (white)']  = (math.ceil(total_drops_6 * 0.5), total_drops_6 > 0)
+    calc['10x4 Register (white)'] = (total_drops_6 - math.ceil(total_drops_6 * 0.5), total_drops_6 > 0)
+    calc['10x6 Register (white)'] = (math.ceil(total_drops_8 * 0.5), total_drops_8 > 0)
+    calc['12x4 Register (white)'] = (total_drops_8 - math.ceil(total_drops_8 * 0.5), total_drops_8 > 0)
+    calc['12x6 Register (white)'] = (math.ceil(total_drops_10 * 0.5), total_drops_10 > 0)
+    calc['14x6 Register (white)'] = (total_drops_10 - math.ceil(total_drops_10 * 0.5), total_drops_10 > 0)
+    calc['14x8 Register (white)'] = (0, False)
+    calc['6\" Round Ceiling Diffuser']  = (0, False)
+    calc['8\" Round Ceiling Diffuser']  = (0, False)
+    calc['10\" Round Ceiling Diffuser'] = (0, False)
+
+    # ── Filters (sized by tonnage, 12-packs for initial stock) ──
+    calc['20x25x1 Filter (12-pack)'] = (max(1, math.ceil(filt_20x25 / 12)) if filt_20x25 > 0 else 0, filt_20x25 > 0)
+    calc['16x25x1 Filter (12-pack)'] = (0, False)
+    calc['20x20x1 Filter (12-pack)'] = (max(1, math.ceil(filt_20x20 / 12)) if filt_20x20 > 0 else 0, filt_20x20 > 0)
+    calc['16x20x1 Filter (12-pack)'] = (max(1, math.ceil(filt_16x20 / 12)) if filt_16x20 > 0 else 0, filt_16x20 > 0)
+    calc['24x24x1 Filter (12-pack)'] = (max(1, math.ceil(filt_24x24 / 12)) if filt_24x24 > 0 else 0, filt_24x24 > 0)
+
+    # ── Mounting / Pads ──
+    calc['Cork Pads (set of 4)']       = (U, True)                         # vibration isolation, 1 set per indoor unit
+    calc['Condenser Pad (plastic)']    = (U if outdoor_loc == 'ground' and not is_mini else 0, outdoor_loc == 'ground' and not is_mini)
+    calc['Condenser Pad (concrete)']   = (0, False)
+    calc['Wall Brackets (pair)']       = (U if is_mini else 0, is_mini)
+    calc['Rooftop Curb Adapter']       = (U if outdoor_loc == 'roof' else 0, outdoor_loc == 'roof' and not is_mini)
+    calc['Equipment Stand (28\" H)']   = (0, False)  # manual add
+
+    # ── Refrigerant ──
+    calc['Refrigerant R-410A (25lb)']    = (max(1, math.ceil(U / 4)), not is_mini)
+    calc['Refrigerant R-410A (50lb)']    = (0, False)
+    calc['Nitrogen (tank rental + gas)'] = (max(1, math.ceil(U / 10)), True)
+
+    # ── Brazing / Soldering ──
+    calc['Silver Brazing Rods (pkg)']  = (max(1, math.ceil(U / 5)), not is_mini)
+    calc['Stay-Brite #8 Solder (1lb)'] = (max(1, math.ceil(U / 8)), not is_mini)
+    calc['Flux Paste']                  = (max(1, math.ceil(U / 10)), not is_mini)
+    calc['MAP Gas Cylinder']            = (max(1, math.ceil(U / 6)), not is_mini)
+
+    # ── Tools (consumable) ──
+    calc['Pipe Cutter 1/4-1-5/8\"']    = (0, False)
+    calc['Flare Tool Kit']              = (0, False)
+    calc['Torque Wrench (refrigerant)'] = (0, False)
+    calc['Duct Knife / Blade (pkg)']    = (max(1, math.ceil(U / 10)), True)
+    calc['Hacksaw Blades (pkg)']        = (max(1, math.ceil(U / 15)), True)
+    calc['Hole Saw Kit (HVAC sizes)']   = (0, False)
+
+    # ── Misc Supplies ──
+    calc['Zip Ties 11\" (bag of 100)']  = (max(1, math.ceil(U / 8)), True)
+    calc['Zip Ties 14\" (bag of 100)']  = (0, False)
+    calc['Caulk / Firestop (tube)']     = (max(1, math.ceil(U / 3)) + (U if fire_wrap else 0), True)
+    calc['Metal Tape Measure 25ft']     = (0, False)
+    calc['Spray Paint (marking)']       = (max(1, math.ceil(U / 10)), True)
+    calc['Duct Seal Putty (1lb)']       = (max(1, math.ceil(U / 6)), True)
+    calc['Electrical Tape (10-pk)']     = (max(1, math.ceil(U / 15)), True)
+    calc['Tie Wire (roll)']             = (max(1, math.ceil(U / 10)), True)
+    calc['Condensate Pump (mini)']      = (0, False)
+    calc['Condensate Pump (full size)'] = (0, False)
+    calc['UV Light Kit']                = (0, False)
+    calc['Media Filter Cabinet']        = (0, False)
+
+    # =====================================================================
+    # EQUIPMENT SECTION
+    # =====================================================================
+
+    # ── Air Handlers — aggregate per tonnage ──
+    for t in ['1.5', '2', '2.5', '3', '3.5', '4', '5']:
+        qty = tonnage_counts.get(t, 0)
+        calc[f'{t} Ton Air Handler'] = (qty if not is_mini and not is_gas and qty > 0 else 0, not is_mini and not is_gas and qty > 0)
+        calc[f'{t} Ton Condenser']   = (qty if (is_ac or is_gas) and qty > 0 else 0, (is_ac or is_gas) and qty > 0)
+        calc[f'{t} Ton Heat Pump']   = (qty if is_hp and qty > 0 else 0, is_hp and qty > 0)
+
+    # ── Heat Strips — aggregate per kW ──
+    for kw in ['5', '8', '10', '15', '20']:
+        qty = hs_counts.get(kw, 0)
+        calc[f'{kw}kW Heat Strip'] = (qty if not is_mini and not is_gas and qty > 0 else 0, not is_mini and not is_gas and qty > 0)
+
+    # ── Gas Furnaces — sized by tonnage ──
+    for btu in ['40K', '60K', '80K', '100K', '120K']:
+        calc[f'{btu} BTU Gas Furnace 96%'] = (0, False)
+    if is_gas:
+        for ut in unit_types:
+            t = ut['tonnage']
+            if t >= 5:
+                calc['120K BTU Gas Furnace 96%'] = (calc.get('120K BTU Gas Furnace 96%', (0, False))[0] + ut['qty'], True)
+            elif t >= 4:
+                calc['100K BTU Gas Furnace 96%'] = (calc.get('100K BTU Gas Furnace 96%', (0, False))[0] + ut['qty'], True)
+            elif t >= 2.5:
+                calc['80K BTU Gas Furnace 96%'] = (calc.get('80K BTU Gas Furnace 96%', (0, False))[0] + ut['qty'], True)
+            elif t >= 1.5:
+                calc['60K BTU Gas Furnace 96%'] = (calc.get('60K BTU Gas Furnace 96%', (0, False))[0] + ut['qty'], True)
+            else:
+                calc['40K BTU Gas Furnace 96%'] = (calc.get('40K BTU Gas Furnace 96%', (0, False))[0] + ut['qty'], True)
+
+    # ── Mini Splits ──
+    for sz in ['9K', '12K', '18K', '24K', '36K']:
+        calc[f'Mini Split {sz} BTU'] = (0, False)
+    for z in ['2-zone', '3-zone', '4-zone']:
+        calc[f'Mini Split Multi-Zone Outdoor {z}'] = (0, False)
+    if is_mini:
+        mini_sizes = {'9K': 9000, '12K': 12000, '18K': 18000, '24K': 24000, '36K': 36000}
+        for ut in unit_types:
+            btu = ut['tonnage'] * 12000
+            best = min(mini_sizes.keys(), key=lambda k: abs(mini_sizes[k] - btu))
+            key = f'Mini Split {best} BTU'
+            calc[key] = (calc.get(key, (0, False))[0] + ut['qty'], True)
+
+    # ── Thermostats — 1 per unit ──
+    calc['Programmable Thermostat']        = (U if thermostat == 'programmable' else 0, thermostat == 'programmable')
+    calc['WiFi Thermostat']                = (U if thermostat == 'wifi' else 0, thermostat == 'wifi')
+    calc['Smart Thermostat (Ecobee/Nest)'] = (U if thermostat == 'smart' else 0, thermostat == 'smart')
+
+    # ── Ventilation / Exhaust ──
+    # ERV/HRV: if outside_air, 1 per unit (or per corridor if corridors specified)
+    erv_qty = corridor_units if corridor_units > 0 and outside_air else (U if outside_air else 0)
+    calc['ERV Unit']               = (erv_qty, outside_air)
+    calc['HRV Unit']               = (0, False)
+    calc['Inline Exhaust Fan 6\"'] = (0, False)
+    calc['Inline Exhaust Fan 8\"'] = (0, False)
+    # Bath exhaust fans: only if NOT using CRDs (CRDs replace bath fans)
+    bath_fan_qty = bath_ceil if not crds else 0
+    calc['Bath Exhaust Fan 50CFM']  = (0, False)
+    calc['Bath Exhaust Fan 80CFM']  = (bath_fan_qty if not crds and exhaust_type == 'ceiling' else 0, not crds and exhaust_type == 'ceiling')
+    calc['Bath Exhaust Fan 110CFM'] = (bath_fan_qty if not crds and exhaust_type == 'sidewall' else 0, not crds and exhaust_type == 'sidewall')
+    calc['Range Hood Vent Kit']     = (0, False)
+    # Dryer vent: if wrap_dryers_boots, full kit + components per unit
+    calc['Dryer Vent Kit']          = (U if wrap_dry_boots else 0, wrap_dry_boots)
+    calc['Dryer Vent Elbow (4\")']  = (2 * U if wrap_dry_boots else 0, wrap_dry_boots)   # ~2 elbows per run
+    calc['Dryer Vent Hose (4\" x 8ft)'] = (U if wrap_dry_boots else 0, wrap_dry_boots)
+    calc['Dryer Vent Wall Cap']     = (U if wrap_dry_boots else 0, wrap_dry_boots)
+
+    # ── Zoning ──
+    if zoning:
+        calc['Zoning Panel (2 zone)']   = (U, True)
+        calc['Zone Damper (round)']     = (total_drops, True)
+        calc['Zone Thermostat Sensor']  = (U, True)
+    else:
+        calc['Zoning Panel (2 zone)']   = (0, False)
+        calc['Zone Damper (round)']     = (0, False)
+        calc['Zone Thermostat Sensor']  = (0, False)
+    calc['Zoning Panel (3 zone)'] = (0, False)
+    calc['Zone Damper (rect)']    = (0, False)
+
+    # =====================================================================
+    # FREIGHT SECTION
+    # =====================================================================
+    calc['Freight to jobsite']  = (1 if include_freight else 0, include_freight)
+    calc['Crane / Lift Rental'] = (1 if outdoor_loc == 'roof' else 0, outdoor_loc == 'roof')
+    calc['Dumpster Rental']     = (1 if U >= 20 else 0, U >= 20)  # auto-add dumpster for large jobs
+    calc['Scissor Lift Rental'] = (0, False)
+    calc['License']             = (0, False)
+    calc['Permits']             = (0, False)
+
+    # ── New workbook items (default = manual add) ──
+    # Rough-In: Round Pipe
+    calc['4\" Adjustable 90']   = (0, False)
+    calc['3\" Adjustable 90']   = (0, False)
+    calc['4x3 Reducer']         = (0, False)
+    calc['3\" Conductor Pipe']  = (0, False)
+    calc['4\" Conductor Pipe']  = (0, False)
+    # Rough-In: Vent Boxes
+    for vb in ['4\" Triple Brick Vent Box', '4\" Single Brick Vent Box',
+               '4\" Single Siding Vent Box', '4\" Single Soffit Vent Box',
+               '6\" Single Brick Vent Box', '6\" Single Siding Vent Box',
+               '6\" Single Soffit Vent Box', '4\" Triple Siding Vent Box',
+               '4\" Triple Soffit Vent Box']:
+        calc[vb] = (0, False)
+    # Rough-In: Electrical
+    calc['14/4 S.O.Cable']         = (0, False)
+    calc['18/8 T-stat Wire per foot'] = (0, False)
+    # Rough-In: Hardware
+    calc['3/4 Screws']             = (0, False)
+    calc['Rails']                  = (0, False)
+    calc['Plumber Strap']          = (0, False)
+    calc['4.25\" Dryer Box']       = (0, False)
+    calc['16\" Boca Plate']        = (0, False)
+    # Rough-In: Tape/Sealant
+    calc['Black Duct Tape']        = (0, False)
+    calc['Flex Fix Tape']          = (0, False)
+    calc['Silicone']               = (0, False)
+    calc['Fire Caulk 5 Gal']      = (0, False)
+    calc['Paint Brush']            = (0, False)
+    # Rough-In: Misc
+    calc['SA Dryer Fire Wrap 16\"'] = (0, False)
+    calc['Duct Wrap']              = (0, False)
+    calc['3\" Gray Duct Strap']    = (0, False)
+    calc['Mini Split Line Set']    = (0, False)
+    # Trim Out: PVC Fittings
+    calc['3/4 PVC 90']             = (0, False)
+    calc['3/4 PVC Coupling']       = (0, False)
+    calc['3/4 PVC Male Adapter']   = (0, False)
+    calc['3/4 PVC Tee']            = (0, False)
+    calc['1QT PVC Cement']         = (0, False)
+    # Trim Out: Shorts & Smalls
+    calc['6\" Pump Ups']           = (0, False)
+    calc['30x30 Drain Pan']        = (0, False)
+    calc['30x60 Drain Pan']        = (0, False)
+    # Trim Out: Registers (workbook)
+    calc['8\" Supply Register']    = (0, False)
+    calc['6\" Supply Register']    = (0, False)
+    calc['12x6 Stamped Supply']    = (0, False)
+    calc['16x8 Hart Cooley Pass Through'] = (0, False)
+    calc['24x12 Stamped Return']   = (0, False)
+    calc['30x14 Stamped Return']   = (0, False)
+    calc['30x20 Stamped Return']   = (0, False)
+    calc['24x24x8 Drop-ins']       = (0, False)
+    calc['4\" Venthood Covers']    = (0, False)
+    # Trim Out: Mounting
+    calc['1\" Anchor Kit']         = (0, False)
+    # Trim Out: Refrigerant
+    calc['R454B Refrigerant']      = (0, False)
+    # Trim Out: Brazing
+    calc['Solder']                 = (0, False)
+    calc['Silver Locking Caps']    = (0, False)
+    # Trim Out: Consumables
+    calc['Acetylene Refill']       = (0, False)
+    calc['Oxygen Refill']          = (0, False)
+    # Trim Out: Tools
+    calc['12\" SawZaw Blade']      = (0, False)
+    calc['4-3/8\" Hole Saw']       = (0, False)
+    # Equipment: Thermostats
+    calc['Heat Pump Thermostat']   = (U if is_hp and thermostat == 'programmable' else 0, is_hp and thermostat == 'programmable')
+    calc['TH8 Vision Pro Honeywell'] = (0, False)
+    # Equipment: Corridor AH
+    for t in ['1.5', '2', '2.5', '3', '3.5', '4', '5']:
+        calc[f'{t} Ton Corridor Air Handler'] = (0, False)
+        calc[f'{t} Ton Corridor Heat Kit']    = (0, False)
+    # Equipment: Mini Splits (workbook indoor/outdoor)
+    calc['Mini Split 9K Indoor']     = (0, False)
+    calc['Mini Split 9K Outdoor']    = (0, False)
+    calc['Mini Split 12K Indoor']    = (0, False)
+    calc['Mini Split 12K Outdoor']   = (0, False)
+    calc['Mini Split 18K Cassette']  = (0, False)
+    calc['Mini Split 18K Indoor']    = (0, False)
+    calc['Mini Split 18K Outdoor HP'] = (0, False)
+    calc['Mini Split 24K Indoor']    = (0, False)
+    calc['Mini Split 24K Outdoor']   = (0, False)
+
+    # ── Resolve dynamic prices from supplier quotes/invoices ──
+    resolved_prices = _resolve_takeoff_prices(conn, plan['job_id'])
+    price_counts = {'quote': 0, 'historical': 0, 'default': 0}
+
+    # ── Apply to template ──
     for section in takeoff['sections']:
         for item in section['items']:
-            key = f"{section['name']}|{item['part']}"
-            if key in existing_items:
-                item['quantity'] = existing_items[key].get('quantity', 0)
-                item['use'] = existing_items[key].get('use', item['default_use'])
+            if item['part'] in calc:
+                qty, use = calc[item['part']]
+                item['quantity'] = qty
+                item['use'] = use
             else:
                 item['quantity'] = 0
-                item['use'] = item['default_use']
+                item['use'] = item.get('default_use', False)
 
-                # Auto-fill equipment quantities from review
-                if section['name'] == 'Equipment' and detected_tonnages:
-                    part_lower = item['part'].lower()
-                    for t in detected_tonnages:
-                        ton_str = str(t) if t != int(t) else str(int(t))
-                        if f"{ton_str} ton" in part_lower and ('air handler' in part_lower or 'condenser' in part_lower):
-                            item['use'] = True
-                            if detected_unit_count > 0:
-                                item['quantity'] = detected_unit_count
+            # Dynamic price override from supplier data
+            sku = item.get('sku', '')
+            if sku and sku in resolved_prices:
+                rp = resolved_prices[sku]
+                item['price'] = rp['price']
+                item['price_source'] = rp['source']
+                item['price_source_type'] = rp['source_type']
+                price_counts[rp['source_type']] += 1
+            else:
+                item['price_source'] = 'Template default'
+                item['price_source_type'] = 'default'
+                price_counts['default'] += 1
 
-            # Calculate item total
-            qty = item['quantity']
-            waste = qty * takeoff['waste_factor'] if item['use'] and qty > 0 else 0
-            item['total_with_waste'] = round((qty + waste) * item['price'], 2) if item['use'] else 0
+            q = item['quantity']
+            waste = q * takeoff['waste_factor'] if item['use'] and q > 0 else 0
+            item['total_with_waste'] = round((q + waste) * item['price'], 2) if item['use'] else 0
 
-    # Calculate summary totals
+    # ── Summary ──
     subtotal = sum(
         item['total_with_waste']
         for section in takeoff['sections']
         for item in section['items']
         if item['use']
     )
-    tax = round(subtotal * takeoff['tax_rate'], 2)
+    tax = round(subtotal * job_tax_rate, 2)
+
+    # Per-apartment = grand_total / number of apartments (U = total units/apartments)
+    grand_total = round(subtotal + tax, 2)
+    price_per_apt = round(grand_total / U, 2) if U > 0 else 0
+    # Number of HVAC systems (units + corridor units if any)
+    num_systems = U + corridor_units
+    price_per_system = round(grand_total / num_systems, 2) if num_systems > 0 else 0
 
     takeoff['summary'] = {
         'subtotal': round(subtotal, 2),
-        'tax_rate': takeoff['tax_rate'],
+        'tax_rate': job_tax_rate,
         'tax': tax,
-        'grand_total': round(subtotal + tax, 2),
-        'detected_tonnages': sorted(detected_tonnages),
-        'detected_unit_count': detected_unit_count,
+        'grand_total': grand_total,
+        'total_units': U,
+        'total_bedrooms': total_beds,
+        'total_bathrooms': math.ceil(total_baths),
+        'total_drops': total_drops,
+        'total_systems': num_systems,
+        'price_per_apartment': price_per_apt,
+        'price_per_system': price_per_system,
+        'price_sources': price_counts,
     }
     takeoff['generated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M')
 
-    # Save takeoff data
-    new_status = 'Takeoff Complete' if plan['status'] == 'Reviewed' else plan['status']
+    # Save
     conn.execute(
-        "UPDATE plans SET takeoff_data=?, status=?, updated_at=datetime('now','localtime') WHERE id=?",
-        (json.dumps(takeoff), new_status, pid)
+        "UPDATE plans SET takeoff_data=?, status='Takeoff Complete', updated_at=datetime('now','localtime') WHERE id=?",
+        (json.dumps(takeoff), pid)
     )
     conn.commit()
     conn.close()
@@ -6740,6 +9369,574 @@ def api_parse_supplier_quote(qid):
         return jsonify({'error': str(e)}), 500
 
 
+# ─── AI Price Check Helpers ─────────────────────────────────────
+
+def _build_historical_prices(conn, items):
+    """Build historical pricing data from past quotes and invoices."""
+    historical = {}
+    _STOPWORDS = {'the','a','an','and','or','for','with','in','of','to','from','by','at','on','x','w','per'}
+
+    for item in items:
+        sku = (item.get('sku') or '').strip().upper()
+        desc = (item.get('description') or '').strip()
+        item_key = f"{sku}|{desc}"
+        sources = []
+
+        # Source 1: Past supplier_quote_items
+        if sku and len(sku) >= 3:
+            # Exact match
+            rows = conn.execute('''
+                SELECT sqi.unit_price, sqi.quantity, sqi.extended_price, sqi.description,
+                       sq.supplier_name, sq.quote_date, sq.id as quote_id,
+                       j.name as job_name
+                FROM supplier_quote_items sqi
+                JOIN supplier_quotes sq ON sq.id = sqi.quote_id
+                LEFT JOIN jobs j ON j.id = sq.job_id
+                WHERE UPPER(TRIM(sqi.sku)) = ? AND sq.id != ?
+                ORDER BY sq.quote_date DESC
+            ''', (sku, item.get('_quote_id', 0))).fetchall()
+            for r in rows:
+                # Detect per-C/per-M pricing
+                qty = float(r['quantity'] or 0)
+                up = float(r['unit_price'] or 0)
+                ext = float(r['extended_price'] or 0)
+                norm_price = up  # default: per-each
+                pricing_unit = 'each'
+                if qty > 0 and ext > 0 and up > 0:
+                    each_ext = qty * up
+                    per_c_ext = qty * up / 100
+                    per_m_ext = qty * up / 1000
+                    if abs(per_c_ext - ext) < abs(each_ext - ext) * 0.5:
+                        norm_price = up / 100
+                        pricing_unit = 'per-C'
+                    elif abs(per_m_ext - ext) < abs(each_ext - ext) * 0.5:
+                        norm_price = up / 1000
+                        pricing_unit = 'per-M'
+                sources.append({
+                    'type': 'quote', 'price': norm_price, 'pricing_unit': pricing_unit,
+                    'supplier': r['supplier_name'], 'date': r['quote_date'] or '',
+                    'job': r['job_name'] or '', 'ref': f"Quote #{r['quote_id']}"
+                })
+
+            # Prefix match (6+ chars) if no exact matches
+            if not sources and len(sku) >= 6:
+                rows = conn.execute('''
+                    SELECT sqi.unit_price, sqi.quantity, sqi.extended_price, sqi.description,
+                           sq.supplier_name, sq.quote_date, sq.id as quote_id,
+                           j.name as job_name
+                    FROM supplier_quote_items sqi
+                    JOIN supplier_quotes sq ON sq.id = sqi.quote_id
+                    LEFT JOIN jobs j ON j.id = sq.job_id
+                    WHERE UPPER(TRIM(sqi.sku)) LIKE ? AND sq.id != ?
+                    ORDER BY sq.quote_date DESC LIMIT 20
+                ''', (sku[:6] + '%', item.get('_quote_id', 0))).fetchall()
+                for r in rows:
+                    qty = float(r['quantity'] or 0)
+                    up = float(r['unit_price'] or 0)
+                    ext = float(r['extended_price'] or 0)
+                    norm_price = up
+                    pricing_unit = 'each'
+                    if qty > 0 and ext > 0 and up > 0:
+                        each_ext = qty * up
+                        per_c_ext = qty * up / 100
+                        if abs(per_c_ext - ext) < abs(each_ext - ext) * 0.5:
+                            norm_price = up / 100
+                            pricing_unit = 'per-C'
+                    sources.append({
+                        'type': 'quote', 'price': norm_price, 'pricing_unit': pricing_unit,
+                        'supplier': r['supplier_name'], 'date': r['quote_date'] or '',
+                        'job': r['job_name'] or '', 'ref': f"Quote #{r['quote_id']} (prefix match)"
+                    })
+
+        # Source 2: supplier_invoices line_items JSON
+        if sku and len(sku) >= 3:
+            inv_rows = conn.execute('''
+                SELECT si.line_items, si.invoice_number, si.invoice_date,
+                       bc.supplier_name, j.name as job_name
+                FROM supplier_invoices si
+                JOIN billtrust_config bc ON bc.id = si.supplier_config_id
+                LEFT JOIN jobs j ON j.id = si.job_id
+                WHERE si.line_items IS NOT NULL AND si.line_items != '[]'
+                ORDER BY si.invoice_date DESC LIMIT 200
+            ''').fetchall()
+            for inv in inv_rows:
+                try:
+                    inv_items = json.loads(inv['line_items'] or '[]')
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                for li in inv_items:
+                    li_code = (li.get('product_code') or '').strip().upper()
+                    li_desc = (li.get('description') or '').upper()
+                    # Check product_code match or SKU in description
+                    if li_code == sku or (len(sku) >= 6 and li_code and li_code.startswith(sku[:6])) or sku in li_desc:
+                        up = float(li.get('unit_price') or 0)
+                        qty = float(li.get('qty_shipped') or li.get('qty_ordered') or li.get('quantity') or 0)
+                        ext = float(li.get('extended_price') or 0)
+                        norm_price = up
+                        pricing_unit = 'each'
+                        if qty > 0 and ext > 0 and up > 0:
+                            each_ext = qty * up
+                            per_c_ext = qty * up / 100
+                            if abs(per_c_ext - ext) < abs(each_ext - ext) * 0.5:
+                                norm_price = up / 100
+                                pricing_unit = 'per-C'
+                        sources.append({
+                            'type': 'invoice', 'price': norm_price, 'pricing_unit': pricing_unit,
+                            'supplier': inv['supplier_name'], 'date': inv['invoice_date'] or '',
+                            'job': inv['job_name'] or '', 'ref': f"Invoice {inv['invoice_number']}"
+                        })
+
+        # Description word overlap fallback
+        if not sources and desc and len(desc) >= 10:
+            desc_words = set(w.lower() for w in desc.split() if len(w) > 2 and w.lower() not in _STOPWORDS)
+            if len(desc_words) >= 3:
+                rows = conn.execute('''
+                    SELECT sqi.unit_price, sqi.quantity, sqi.extended_price, sqi.description,
+                           sq.supplier_name, sq.quote_date, sq.id as quote_id,
+                           j.name as job_name
+                    FROM supplier_quote_items sqi
+                    JOIN supplier_quotes sq ON sq.id = sqi.quote_id
+                    LEFT JOIN jobs j ON j.id = sq.job_id
+                    WHERE sq.id != ?
+                    ORDER BY sq.quote_date DESC LIMIT 500
+                ''', (item.get('_quote_id', 0),)).fetchall()
+                for r in rows:
+                    r_words = set(w.lower() for w in (r['description'] or '').split() if len(w) > 2 and w.lower() not in _STOPWORDS)
+                    if r_words and len(desc_words & r_words) / max(len(desc_words), 1) >= 0.6:
+                        up = float(r['unit_price'] or 0)
+                        qty = float(r['quantity'] or 0)
+                        ext = float(r['extended_price'] or 0)
+                        norm_price = up
+                        pricing_unit = 'each'
+                        if qty > 0 and ext > 0 and up > 0:
+                            each_ext = qty * up
+                            per_c_ext = qty * up / 100
+                            if abs(per_c_ext - ext) < abs(each_ext - ext) * 0.5:
+                                norm_price = up / 100
+                                pricing_unit = 'per-C'
+                        sources.append({
+                            'type': 'quote', 'price': norm_price, 'pricing_unit': pricing_unit,
+                            'supplier': r['supplier_name'], 'date': r['quote_date'] or '',
+                            'job': r['job_name'] or '', 'ref': f"Quote #{r['quote_id']} (desc match)"
+                        })
+
+        if sources:
+            prices = [s['price'] for s in sources if s['price'] > 0]
+            if prices:
+                prices_sorted = sorted(prices)
+                avg_price = sum(prices) / len(prices)
+                trend = 'stable'
+                dated = sorted([s for s in sources if s.get('date')], key=lambda x: x['date'])
+                if len(dated) >= 2:
+                    recent = [s['price'] for s in dated[-3:]]
+                    older = [s['price'] for s in dated[:max(1, len(dated)//2)]]
+                    recent_avg = sum(recent) / len(recent)
+                    older_avg = sum(older) / len(older)
+                    if recent_avg > older_avg * 1.05:
+                        trend = 'increasing'
+                    elif recent_avg < older_avg * 0.95:
+                        trend = 'decreasing'
+                historical[item_key] = {
+                    'avg_price': round(avg_price, 4),
+                    'min_price': round(prices_sorted[0], 4),
+                    'max_price': round(prices_sorted[-1], 4),
+                    'price_count': len(prices),
+                    'last_purchased': dated[-1]['date'] if dated else '',
+                    'trend': trend,
+                    'sources': sources[:10]
+                }
+    return historical
+
+
+def _search_web_prices(items, max_searches=10):
+    """Search DuckDuckGo Lite for public HVAC pricing on top-value items."""
+    import re as _re
+    import time as _time
+    try:
+        from urllib.request import urlopen, Request
+        from urllib.parse import quote_plus
+        from urllib.error import URLError
+    except ImportError:
+        return {}
+
+    # Sort by extended_price descending, only items >= $100
+    valued = [it for it in items if float(it.get('extended_price') or 0) >= 100]
+    valued.sort(key=lambda x: float(x.get('extended_price') or 0), reverse=True)
+    valued = valued[:max_searches]
+
+    web_data = {}
+    price_pattern = _re.compile(r'\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)')
+
+    for item in valued:
+        sku = (item.get('sku') or '').strip()
+        desc = (item.get('description') or '').strip()
+        item_key = f"{sku}|{desc}"
+
+        query_term = sku if sku and len(sku) >= 4 else desc[:60]
+        query = f"{query_term} HVAC supply price buy"
+        url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
+
+        try:
+            req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = urlopen(req, timeout=8)
+            html = resp.read().decode('utf-8', errors='ignore')
+            found_prices = []
+            for match in price_pattern.finditer(html):
+                val = float(match.group(1).replace(',', ''))
+                if 1 <= val <= 50000:
+                    found_prices.append(val)
+
+            if found_prices:
+                # Filter outliers (>3x or <1/3 of median)
+                found_prices.sort()
+                median = found_prices[len(found_prices) // 2]
+                filtered = [p for p in found_prices if median / 3 <= p <= median * 3]
+                if filtered:
+                    web_data[item_key] = {
+                        'found': True,
+                        'range_low': round(min(filtered), 2),
+                        'range_high': round(max(filtered), 2),
+                        'median': round(median, 2),
+                        'sources': [{'query': query, 'prices_found': len(filtered)}],
+                        'note': 'Web prices are typically retail; distributor pricing is usually 20-40% lower.'
+                    }
+            else:
+                web_data[item_key] = {'found': False, 'note': 'No web pricing found for this item.'}
+        except Exception:
+            web_data[item_key] = {'found': False, 'note': 'Web search failed for this item.'}
+
+        _time.sleep(0.5)
+
+    return web_data
+
+
+def _ai_analyze_pricing(items, historical, web_data, competitor_data, quote_info):
+    """Use Claude Haiku to analyze pricing across all data sources."""
+    import anthropic
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return {'error': 'No ANTHROPIC_API_KEY configured', 'items': [], 'summary': '', 'recommendations': []}
+
+    # Build per-item context
+    items_context = []
+    for item in items:
+        sku = (item.get('sku') or '').strip()
+        desc = (item.get('description') or '').strip()
+        item_key = f"{sku}|{desc}"
+        entry = {
+            'sku': sku, 'description': desc,
+            'quantity': item.get('quantity', 0),
+            'unit_price': item.get('unit_price', 0),
+            'extended_price': item.get('extended_price', 0),
+        }
+        hist = historical.get(item_key)
+        if hist:
+            entry['historical'] = {
+                'avg_price': hist['avg_price'], 'min_price': hist['min_price'],
+                'max_price': hist['max_price'], 'price_count': hist['price_count'],
+                'trend': hist['trend']
+            }
+        web = web_data.get(item_key)
+        if web and web.get('found'):
+            entry['web_pricing'] = {
+                'range_low': web['range_low'], 'range_high': web['range_high']
+            }
+        items_context.append(entry)
+
+    prompt = f"""You are an HVAC construction pricing analyst for LGHVAC LLC, an HVAC contractor in Oklahoma.
+
+Analyze this supplier quote and determine if prices are competitive.
+
+IMPORTANT HVAC industry context:
+- "Per-C" pricing = price per 100 units (common for pipe, flex duct, collars, fittings)
+- "Per-M" pricing = price per 1000 units
+- Distributor prices (Locke Supply, Plumb Supply) are typically 20-40% below retail/web prices
+- Seasonal trends: equipment prices rise in spring/summer
+- Major brands: Carrier, Trane, Lennox, Rheem, Goodman, Daikin
+
+Quote from: {quote_info.get('supplier_name', 'Unknown')}
+Quote total: ${quote_info.get('total', 0):,.2f}
+
+LINE ITEMS WITH AVAILABLE DATA:
+{json.dumps(items_context, indent=2)}
+
+"""
+    if competitor_data:
+        prompt += f"""COMPETITOR PRICING DATA:
+{json.dumps(competitor_data, indent=2)}
+
+"""
+
+    prompt += """For EACH line item, provide:
+1. assessment: "excellent" (great deal), "fair" (market rate), "above_average" (slightly high), or "high" (overpriced)
+2. savings_low: conservative estimated savings in dollars (0 if no savings)
+3. savings_high: optimistic estimated savings in dollars (0 if no savings)
+4. ai_note: brief explanation (1 sentence)
+
+Also provide:
+- summary: 2-3 sentence overall assessment
+- recommendations: list of 3-5 actionable negotiation points
+
+Return ONLY valid JSON in this format:
+{
+  "items": [{"sku": "...", "assessment": "...", "savings_low": 0, "savings_high": 0, "ai_note": "..."}],
+  "summary": "...",
+  "recommendations": ["...", "..."]
+}"""
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=4000,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        raw = resp.content[0].text
+        import re
+        match = re.search(r'\{[\s\S]*\}', raw)
+        if match:
+            result = json.loads(match.group())
+            return result
+        return {'error': 'Could not parse AI response', 'items': [], 'summary': raw[:500], 'recommendations': []}
+    except Exception as e:
+        return {'error': str(e), 'items': [], 'summary': '', 'recommendations': []}
+
+
+# ─── AI Price Check Endpoints ───────────────────────────────────
+
+@app.route('/api/supplier-quotes/<int:qid>/price-check', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_run_price_check(qid):
+    """Run AI-powered pricing analysis on a supplier quote."""
+    conn = get_db()
+    quote = conn.execute('''SELECT sq.*, j.name as job_name
+        FROM supplier_quotes sq LEFT JOIN jobs j ON j.id = sq.job_id
+        WHERE sq.id = ?''', (qid,)).fetchone()
+    if not quote:
+        conn.close()
+        return jsonify({'error': 'Quote not found'}), 404
+
+    items_rows = conn.execute(
+        'SELECT * FROM supplier_quote_items WHERE quote_id = ? ORDER BY line_number', (qid,)
+    ).fetchall()
+    if not items_rows:
+        conn.close()
+        return jsonify({'error': 'No line items to analyze'}), 400
+
+    items = []
+    for r in items_rows:
+        items.append({
+            'sku': r['sku'], 'description': r['description'],
+            'quantity': r['quantity'], 'unit_price': r['unit_price'],
+            'extended_price': r['extended_price'], '_quote_id': qid
+        })
+
+    # Get request data (competitor text/items)
+    data = request.get_json(silent=True) or {}
+    competitor_text = data.get('competitor_text', '').strip()
+    competitor_items = data.get('competitor_items', [])
+    competitor_data = {}
+    if competitor_text:
+        competitor_data['raw_text'] = competitor_text
+    if competitor_items:
+        competitor_data['items'] = competitor_items
+
+    # Run the 3 analysis steps
+    historical = _build_historical_prices(conn, items)
+    web_data = _search_web_prices(items)
+    quote_info = {
+        'supplier_name': quote['supplier_name'],
+        'total': quote['total'] or 0,
+        'job_name': quote['job_name'] or ''
+    }
+    ai_result = _ai_analyze_pricing(items, historical, web_data, competitor_data, quote_info)
+
+    # Build per-item report
+    item_reports = []
+    total_savings_low = 0
+    total_savings_high = 0
+    items_with_savings = 0
+    for i, item in enumerate(items):
+        sku = (item.get('sku') or '').strip()
+        desc = (item.get('description') or '').strip()
+        item_key = f"{sku}|{desc}"
+        hist = historical.get(item_key, {})
+        web = web_data.get(item_key, {})
+
+        # Match AI item by index or SKU
+        ai_item = {}
+        ai_items = ai_result.get('items', [])
+        if i < len(ai_items):
+            ai_item = ai_items[i]
+        else:
+            for ai in ai_items:
+                if ai.get('sku', '').upper() == sku.upper():
+                    ai_item = ai
+                    break
+
+        # Find competitor price for this item
+        comp_price = None
+        if competitor_items:
+            for ci in competitor_items:
+                ci_sku = (ci.get('sku') or '').strip().upper()
+                if ci_sku and ci_sku == sku.upper():
+                    comp_price = float(ci.get('unit_price') or 0)
+                    break
+
+        savings_low = float(ai_item.get('savings_low') or 0)
+        savings_high = float(ai_item.get('savings_high') or 0)
+        total_savings_low += savings_low
+        total_savings_high += savings_high
+        if savings_high > 0:
+            items_with_savings += 1
+
+        item_reports.append({
+            'sku': sku, 'description': desc,
+            'quantity': item['quantity'], 'unit_price': item['unit_price'],
+            'extended_price': item['extended_price'],
+            'historical_avg': hist.get('avg_price'),
+            'historical_min': hist.get('min_price'),
+            'historical_max': hist.get('max_price'),
+            'historical_count': hist.get('price_count', 0),
+            'historical_trend': hist.get('trend'),
+            'web_low': web.get('range_low') if web.get('found') else None,
+            'web_high': web.get('range_high') if web.get('found') else None,
+            'competitor_price': comp_price,
+            'assessment': ai_item.get('assessment', 'fair'),
+            'savings_low': savings_low,
+            'savings_high': savings_high,
+            'ai_note': ai_item.get('ai_note', '')
+        })
+
+    review = {
+        'quote_id': qid,
+        'supplier_name': quote['supplier_name'],
+        'quote_total': quote['total'] or 0,
+        'items_reviewed': len(item_reports),
+        'items_with_savings': items_with_savings,
+        'total_savings_low': round(total_savings_low, 2),
+        'total_savings_high': round(total_savings_high, 2),
+        'summary': ai_result.get('summary', ''),
+        'recommendations': ai_result.get('recommendations', []),
+        'items': item_reports,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'has_competitor_data': bool(competitor_text or competitor_items),
+        'has_historical_data': bool(historical),
+        'has_web_data': any(w.get('found') for w in web_data.values())
+    }
+
+    # Cache in database
+    conn.execute(
+        '''INSERT INTO pricing_reviews (quote_id, review_data, total_savings_low, total_savings_high,
+           items_reviewed, items_with_savings, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (qid, json.dumps(review), total_savings_low, total_savings_high,
+         len(item_reports), items_with_savings, session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(review)
+
+
+@app.route('/api/supplier-quotes/<int:qid>/price-check', methods=['GET'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_get_price_check(qid):
+    """Return the most recent cached pricing review for a quote."""
+    conn = get_db()
+    row = conn.execute(
+        'SELECT review_data, created_at FROM pricing_reviews WHERE quote_id = ? ORDER BY created_at DESC LIMIT 1',
+        (qid,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({'cached': False})
+    try:
+        review = json.loads(row['review_data'])
+        review['cached'] = True
+        review['cached_at'] = row['created_at']
+        return jsonify(review)
+    except (json.JSONDecodeError, TypeError):
+        return jsonify({'cached': False})
+
+
+@app.route('/api/supplier-quotes/<int:qid>/price-check/competitor', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_extract_competitor_pdf(qid):
+    """Extract line items from a competitor's quote PDF using pdfplumber + AI."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Only PDF files are supported'}), 400
+
+    try:
+        import pdfplumber
+        import tempfile
+
+        # Save to temp file
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        file.save(tmp.name)
+        tmp.close()
+
+        # Extract text
+        text_parts = []
+        with pdfplumber.open(tmp.name) as pdf:
+            for page in pdf.pages[:10]:
+                text_parts.append(page.extract_text() or '')
+        os.unlink(tmp.name)
+        pdf_text = '\n'.join(text_parts)
+
+        if len(pdf_text.strip()) < 20:
+            return jsonify({'error': 'Could not extract text from PDF'}), 400
+
+        # Use Claude to extract line items
+        import anthropic
+        api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 500
+
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=4000,
+            messages=[{'role': 'user', 'content': f"""Extract line items from this supplier quote PDF text.
+
+Return ONLY a valid JSON array of objects with these fields:
+- sku: product code/SKU (string)
+- description: item description (string)
+- quantity: number
+- unit_price: price per unit (number)
+- extended_price: total for this line (number)
+- supplier_name: supplier name if visible in the document (string)
+
+If a field is not found, use empty string for text or 0 for numbers.
+
+PDF TEXT:
+{pdf_text[:6000]}"""}]
+        )
+        raw = resp.content[0].text
+        import re
+        match = re.search(r'\[[\s\S]*\]', raw)
+        if match:
+            extracted = json.loads(match.group())
+            # Ensure supplier_name from doc or filename
+            supplier = ''
+            for it in extracted:
+                if it.get('supplier_name'):
+                    supplier = it['supplier_name']
+                    break
+            if not supplier:
+                supplier = file.filename.rsplit('.', 1)[0][:50]
+            for it in extracted:
+                it['supplier_name'] = it.get('supplier_name') or supplier
+            return jsonify({'ok': True, 'items': extracted, 'supplier_name': supplier})
+        return jsonify({'error': 'Could not parse items from PDF'}), 400
+    except ImportError:
+        return jsonify({'error': 'pdfplumber not installed'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ─── Inventory (Phase 3) ────────────────────────────────────────
 
 @app.route('/inventory')
@@ -6850,6 +10047,7 @@ def api_inventory_adjust(iid):
     elif ttype == 'count':
         conn.execute('UPDATE inventory_items SET quantity_on_hand = ?, last_count_date=date("now","localtime"), updated_at=datetime("now","localtime") WHERE id=?', (abs(qty), iid))
     conn.commit()
+    check_reorder_alerts(conn)
     conn.close()
     return jsonify({'ok': True})
 
@@ -7299,6 +10497,1423 @@ def api_check_duplicate():
     file.seek(0)  # Reset for potential subsequent read
     result = check_duplicate(content, doc_type, file.filename)
     return jsonify(result)
+
+
+# ─── Universal Table Export (Excel + PDF) ────────────────────────
+
+@app.route('/api/export/excel', methods=['POST'])
+@api_login_required
+def api_export_excel():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    payload = request.get_json(force=True)
+    title = payload.get('title', 'Export')
+    headers = payload.get('headers', [])
+    rows = payload.get('rows', [])
+    filename = payload.get('filename', title)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title[:31]  # Excel sheet name limit
+
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+    header_font = Font(color='FFFFFF', bold=True, size=11)
+    money_format = '#,##0.00'
+
+    # Header row
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+        cell.border = thin_border
+
+    # Data rows
+    for r, row in enumerate(rows, 2):
+        for c, val in enumerate(row, 1):
+            # Try to convert money strings to numbers
+            clean = val
+            is_money = False
+            if isinstance(val, str) and val.startswith('$'):
+                is_money = True
+                try:
+                    clean = float(val.replace('$', '').replace(',', ''))
+                except ValueError:
+                    clean = val
+            cell = ws.cell(row=r, column=c, value=clean)
+            cell.border = thin_border
+            if is_money and isinstance(clean, float):
+                cell.number_format = money_format
+
+    # Auto-width
+    for c in range(1, len(headers) + 1):
+        max_len = len(str(headers[c - 1]))
+        for r in range(2, len(rows) + 2):
+            val = ws.cell(row=r, column=c).value
+            if val:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[get_column_letter(c)].width = min(max_len + 3, 50)
+
+    export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'exports')
+    os.makedirs(export_dir, exist_ok=True)
+    safe = "".join(ch if ch.isalnum() or ch in ' -_' else '' for ch in filename)
+    filepath = os.path.join(export_dir, f'{safe}.xlsx')
+    wb.save(filepath)
+    return send_file(filepath, as_attachment=True, download_name=f'{safe}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/export/pdf', methods=['POST'])
+@api_login_required
+def api_export_pdf():
+    import subprocess, tempfile
+
+    payload = request.get_json(force=True)
+    title = payload.get('title', 'Export')
+    headers = payload.get('headers', [])
+    rows = payload.get('rows', [])
+    filename = payload.get('filename', title)
+
+    generated_at = datetime.now().strftime('%B %d, %Y %I:%M %p')
+    html = render_template('export_table_pdf.html', title=title, headers=headers,
+                           rows=rows, generated_at=generated_at)
+
+    export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'exports')
+    os.makedirs(export_dir, exist_ok=True)
+    safe = "".join(ch if ch.isalnum() or ch in ' -_' else '' for ch in filename)
+    filepath = os.path.join(export_dir, f'{safe}.pdf')
+
+    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+
+    try:
+        chrome_paths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ]
+        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
+        if not chrome:
+            return jsonify({'error': 'Chrome not found'}), 500
+
+        subprocess.run([
+            chrome, '--headless', '--disable-gpu', '--no-sandbox',
+            '--disable-software-rasterizer',
+            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
+            f'file://{tmp_path}',
+        ], capture_output=True, text=True, timeout=30)
+
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'PDF generation failed'}), 500
+    finally:
+        os.unlink(tmp_path)
+
+    return send_file(filepath, as_attachment=True, download_name=f'{safe}.pdf',
+                     mimetype='application/pdf')
+
+
+# ─── Submittal AI Analysis + Duplicate Detection ────────────────
+
+@app.route('/api/submittals/analyze', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_analyze_submittal():
+    import anthropic
+
+    file = request.files.get('file')
+    job_id = request.form.get('job_id')
+    if not file or not file.filename or not job_id:
+        return jsonify({'error': 'File and job_id required'}), 400
+
+    # Extract text from PDF
+    pdf_text = ''
+    try:
+        import pdfplumber
+        file_bytes = file.read()
+        file.seek(0)
+        import io
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages[:5]:  # First 5 pages max
+                pdf_text += (page.extract_text() or '') + '\n'
+    except Exception:
+        pdf_text = ''
+
+    if not pdf_text.strip():
+        return jsonify({'product_name': '', 'manufacturer': '', 'description': '', 'duplicate_of': None})
+
+    # Call Claude to extract product info
+    client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY', ''))
+    try:
+        extract_resp = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=300,
+            messages=[{
+                'role': 'user',
+                'content': f"""Extract from this HVAC submittal document:
+- product_name: the primary product name/model
+- manufacturer: the manufacturer or brand
+- description: a short one-line description suitable for a submittal log
+
+Return ONLY valid JSON: {{"product_name":"...","manufacturer":"...","description":"..."}}
+
+Document text:
+{pdf_text[:3000]}"""
+            }]
+        )
+        import re
+        raw = extract_resp.content[0].text
+        match = re.search(r'\{[^}]+\}', raw, re.DOTALL)
+        info = json.loads(match.group()) if match else {}
+    except Exception:
+        info = {}
+
+    product_name = info.get('product_name', '')
+    manufacturer = info.get('manufacturer', '')
+    description = info.get('description', '')
+
+    # Check for duplicates among existing submittals for this job
+    duplicate_of = None
+    conn = get_db()
+    existing = conn.execute(
+        'SELECT id, submittal_number, description, vendor FROM submittals WHERE job_id = ?',
+        (job_id,)
+    ).fetchall()
+    conn.close()
+
+    if existing and (product_name or description):
+        existing_list = [dict(r) for r in existing]
+        try:
+            dup_resp = client.messages.create(
+                model='claude-haiku-4-5-20251001',
+                max_tokens=200,
+                messages=[{
+                    'role': 'user',
+                    'content': f"""I'm uploading a submittal for: {product_name} by {manufacturer} — {description}
+
+Existing submittals for this job:
+{json.dumps(existing_list, default=str)}
+
+Does this new submittal match any existing one (same product/model)?
+Return ONLY valid JSON: {{"duplicate_of_id": <id or null>, "confidence": "high"/"medium"/"low"}}"""
+                }]
+            )
+            raw2 = dup_resp.content[0].text
+            match2 = re.search(r'\{[^}]+\}', raw2, re.DOTALL)
+            dup_info = json.loads(match2.group()) if match2 else {}
+            dup_id = dup_info.get('duplicate_of_id')
+            confidence = dup_info.get('confidence', 'low')
+            if dup_id and confidence in ('high', 'medium'):
+                dup_row = next((e for e in existing_list if e['id'] == dup_id), None)
+                if dup_row:
+                    duplicate_of = {
+                        'id': dup_row['id'],
+                        'submittal_number': dup_row['submittal_number'],
+                        'description': dup_row['description'] or '',
+                    }
+        except Exception:
+            pass
+
+    return jsonify({
+        'product_name': product_name,
+        'manufacturer': manufacturer,
+        'description': description,
+        'duplicate_of': duplicate_of,
+    })
+
+
+# ─── Feedback / Feature Requests ─────────────────────────────────
+
+@app.route('/feedback')
+@login_required
+def feedback_page():
+    return render_template('feedback/list.html')
+
+@app.route('/api/feedback')
+@api_login_required
+def api_feedback_list():
+    conn = get_db()
+    rows = conn.execute(
+        '''SELECT f.*, u.display_name as submitter_name,
+           (SELECT COUNT(*) FROM feedback_upvotes WHERE feedback_id = f.id) as upvote_count
+           FROM feedback_requests f
+           LEFT JOIN users u ON f.submitted_by = u.id
+           ORDER BY f.created_at DESC'''
+    ).fetchall()
+    result = [dict(r) for r in rows]
+    # Check if current user has upvoted each item
+    user_id = session['user_id']
+    user_upvotes = set()
+    uv_rows = conn.execute('SELECT feedback_id FROM feedback_upvotes WHERE user_id = ?', (user_id,)).fetchall()
+    for uv in uv_rows:
+        user_upvotes.add(uv['feedback_id'])
+    for r in result:
+        r['user_upvoted'] = r['id'] in user_upvotes
+        r['upvotes'] = r['upvote_count']
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/feedback', methods=['POST'])
+@api_login_required
+def api_feedback_create():
+    data = request.get_json(force=True)
+    title = data.get('title', '').strip()
+    if not title:
+        return jsonify({'error': 'Title is required'}), 400
+    conn = get_db()
+    cursor = conn.execute(
+        '''INSERT INTO feedback_requests (title, description, category, priority, submitted_by)
+           VALUES (?,?,?,?,?)''',
+        (title, data.get('description', ''), data.get('category', 'Feature'),
+         data.get('priority', 'Medium'), session['user_id'])
+    )
+    fb_id = cursor.lastrowid
+    conn.commit()
+    # Notify all owners
+    owners = conn.execute("SELECT id FROM users WHERE role = 'owner'").fetchall()
+    for owner in owners:
+        create_notification(
+            owner['id'], 'feedback', 'New Feedback Request',
+            f'{title}', '/feedback'
+        )
+    conn.close()
+    return jsonify({'ok': True, 'id': fb_id})
+
+@app.route('/api/feedback/<int:fid>', methods=['PUT'])
+@api_login_required
+def api_feedback_update(fid):
+    data = request.get_json(force=True)
+    conn = get_db()
+    fb = conn.execute('SELECT * FROM feedback_requests WHERE id = ?', (fid,)).fetchone()
+    if not fb:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+
+    user_id = session['user_id']
+    user_role = session.get('role', '')
+
+    # Owners can update status and response; submitter can update title/description
+    if user_role == 'owner':
+        status = data.get('status', fb['status'])
+        owner_response = data.get('owner_response', fb['owner_response'])
+        title = data.get('title', fb['title'])
+        description = data.get('description', fb['description'])
+        category = data.get('category', fb['category'])
+        priority = data.get('priority', fb['priority'])
+    elif user_id == fb['submitted_by']:
+        status = fb['status']
+        owner_response = fb['owner_response']
+        title = data.get('title', fb['title'])
+        description = data.get('description', fb['description'])
+        category = data.get('category', fb['category'])
+        priority = data.get('priority', fb['priority'])
+    else:
+        conn.close()
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    conn.execute(
+        '''UPDATE feedback_requests SET title=?, description=?, category=?, priority=?,
+           status=?, owner_response=?, updated_at=datetime('now','localtime') WHERE id=?''',
+        (title, description, category, priority, status, owner_response, fid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/feedback/<int:fid>/upvote', methods=['POST'])
+@api_login_required
+def api_feedback_upvote(fid):
+    user_id = session['user_id']
+    conn = get_db()
+    existing = conn.execute(
+        'SELECT id FROM feedback_upvotes WHERE feedback_id = ? AND user_id = ?',
+        (fid, user_id)
+    ).fetchone()
+    if existing:
+        conn.execute('DELETE FROM feedback_upvotes WHERE id = ?', (existing['id'],))
+        conn.execute('UPDATE feedback_requests SET upvotes = MAX(0, upvotes - 1) WHERE id = ?', (fid,))
+    else:
+        conn.execute('INSERT INTO feedback_upvotes (feedback_id, user_id) VALUES (?,?)', (fid, user_id))
+        conn.execute('UPDATE feedback_requests SET upvotes = upvotes + 1 WHERE id = ?', (fid,))
+    conn.commit()
+    new_count = conn.execute('SELECT upvotes FROM feedback_requests WHERE id = ?', (fid,)).fetchone()
+    conn.close()
+    return jsonify({'ok': True, 'upvotes': new_count['upvotes'] if new_count else 0, 'toggled': not existing})
+
+@app.route('/api/feedback/<int:fid>', methods=['DELETE'])
+@api_role_required('owner')
+def api_feedback_delete(fid):
+    conn = get_db()
+    conn.execute('DELETE FROM feedback_requests WHERE id = ?', (fid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+# ─── Job Pipeline (32-Step Workflow) ──────────────────────────────
+
+PIPELINE_STEPS = [
+    (1, 'Receive ITB / Invitation to Bid', 'bidding', 'bids'),
+    (2, 'Review Plans & Specifications', 'bidding', 'plans'),
+    (3, 'Perform Takeoff', 'bidding', 'plans'),
+    (4, 'Request Supplier Quotes', 'bidding', 'supplier_quotes'),
+    (5, 'Build Bid / Estimate', 'bidding', 'bids'),
+    (6, 'Create Proposal', 'bidding', 'bids'),
+    (7, 'Submit Bid', 'bidding', 'bids'),
+    (8, 'Bid Follow-up', 'bidding', 'bid_followups'),
+    (9, 'Contract Execution', 'contract', 'contracts'),
+    (10, 'Bonds & Insurance (COI)', 'contract', 'coi'),
+    (11, 'Notice to Proceed', 'contract', 'contracts'),
+    (12, 'Set Up Pay App / SOV', 'contract', 'payapps'),
+    (13, 'Assign Project Manager', 'contract', 'projects'),
+    (14, 'Submittal Preparation', 'preconstruction', 'submittals'),
+    (15, 'Submittal Submission', 'preconstruction', 'submittals'),
+    (16, 'Submittal Approval', 'preconstruction', 'submittals'),
+    (17, 'Pre-Construction Meeting', 'preconstruction', 'precon'),
+    (18, 'Permits & Inspections', 'preconstruction', 'projects'),
+    (19, 'RFI Resolution', 'preconstruction', 'rfis'),
+    (20, 'Material Ordering / Delivery Schedule', 'materials', 'materials'),
+    (21, 'Material Receiving', 'materials', 'receiving'),
+    (22, 'Material Shortage Check', 'materials', 'inventory'),
+    (23, 'Invoice Verification', 'finance', 'invoices'),
+    (24, 'Pay Application Submission', 'finance', 'payapps'),
+    (25, 'Material Shipping by Phase', 'construction', 'shipments'),
+    (26, 'Rough-In', 'construction', 'schedule'),
+    (27, 'Trim Out', 'construction', 'schedule'),
+    (28, 'Equipment Start-Up', 'construction', 'schedule'),
+    (29, 'Job Photos / Documentation', 'construction', 'photos'),
+    (30, 'Punch List', 'construction', 'projects'),
+    (31, 'Closeout / O&M / Warranty', 'closeout', 'documents'),
+    (32, 'Final Billing / Lien Waiver / COI', 'closeout', 'billing'),
+]
+
+MODULE_LINKS = {
+    'bids': '/bids', 'plans': '/plans', 'supplier_quotes': '/supplier-quotes',
+    'bid_followups': '/bids', 'contracts': '/contracts', 'coi': '/coi',
+    'payapps': '/payapps', 'projects': '/projects/{job_id}',
+    'submittals': '/submittals', 'precon': '/projects/{job_id}',
+    'rfis': '/rfis', 'materials': '/materials/job/{job_id}',
+    'receiving': '/receiving', 'inventory': '/inventory',
+    'invoices': '/invoices', 'shipments': '/material-shipments',
+    'schedule': '/schedule', 'photos': '/photos',
+    'documents': '/documents', 'billing': '/projects/{job_id}',
+}
+
+def seed_pipeline_steps(conn, job_id):
+    """Idempotent seed of 32 pipeline steps for a job."""
+    existing = conn.execute('SELECT step_number FROM job_pipeline_steps WHERE job_id = ?', (job_id,)).fetchall()
+    existing_nums = {r['step_number'] for r in existing}
+    for step_num, name, category, module in PIPELINE_STEPS:
+        if step_num not in existing_nums:
+            conn.execute(
+                '''INSERT INTO job_pipeline_steps (job_id, step_number, step_name, step_category, linked_module)
+                   VALUES (?,?,?,?,?)''',
+                (job_id, step_num, name, category, module)
+            )
+
+def auto_detect_pipeline(conn, job_id):
+    """Auto-detect step completion from linked modules."""
+    updates = {}
+    # Step 1: bid exists
+    bid = conn.execute('SELECT id, status FROM bids WHERE job_id = ?', (job_id,)).fetchone()
+    if bid:
+        updates[1] = 'complete'
+        # Step 5: bid has values
+        if bid['status'] in ('Draft', 'Submitted', 'Accepted', 'Rejected'):
+            updates[5] = 'complete'
+        # Step 6: proposal exists (bid with status beyond draft)
+        if bid['status'] in ('Submitted', 'Accepted', 'Rejected'):
+            updates[6] = 'complete'
+        # Step 7: bid submitted
+        if bid['status'] in ('Submitted', 'Accepted', 'Rejected'):
+            updates[7] = 'complete'
+        # Step 8: followups
+        followup = conn.execute('SELECT id FROM bid_followups WHERE bid_id = ?', (bid['id'],)).fetchone()
+        if followup:
+            updates[8] = 'complete'
+
+    # Step 2-3: plans reviewed / takeoff
+    plan_reviewed = conn.execute("SELECT id FROM plans WHERE job_id = ? AND status = 'Reviewed'", (job_id,)).fetchone()
+    plan_takeoff = conn.execute("SELECT id FROM plans WHERE job_id = ? AND status = 'Takeoff Complete'", (job_id,)).fetchone()
+    if plan_reviewed or plan_takeoff:
+        updates[2] = 'complete'
+    if plan_takeoff:
+        updates[3] = 'complete'
+
+    # Step 4: supplier quotes
+    sq = conn.execute("SELECT id FROM supplier_quotes WHERE job_id = ? AND status IN ('Received','Reviewing','Selected')", (job_id,)).fetchone()
+    if sq:
+        updates[4] = 'complete'
+
+    # Step 9: contract exists
+    contract = conn.execute('SELECT id FROM contracts WHERE job_id = ?', (job_id,)).fetchone()
+    if contract:
+        updates[9] = 'complete'
+
+    # Step 10: COI exists
+    coi = conn.execute('SELECT id FROM certificates_of_insurance WHERE job_id = ?', (job_id,)).fetchone()
+    if coi:
+        updates[10] = 'complete'
+
+    # Step 12: pay app contract exists
+    pac = conn.execute('SELECT id FROM pay_app_contracts WHERE job_id = ?', (job_id,)).fetchone()
+    if pac:
+        updates[12] = 'complete'
+
+    # Step 13: PM assigned
+    job = conn.execute('SELECT project_manager_id FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if job and job['project_manager_id']:
+        updates[13] = 'complete'
+
+    # Steps 14-16: submittals
+    sub_submitted = conn.execute("SELECT id FROM submittals WHERE job_id = ? AND status IN ('Submitted','Approved','Approved as Noted')", (job_id,)).fetchone()
+    sub_approved = conn.execute("SELECT id FROM submittals WHERE job_id = ? AND status IN ('Approved','Approved as Noted')", (job_id,)).fetchone()
+    sub_any = conn.execute("SELECT id FROM submittals WHERE job_id = ?", (job_id,)).fetchone()
+    if sub_any:
+        updates[14] = 'complete'
+    if sub_submitted:
+        updates[15] = 'complete'
+    if sub_approved:
+        updates[16] = 'complete'
+
+    # Step 17: precon meeting
+    precon = conn.execute("SELECT id FROM precon_meetings WHERE job_id = ? AND status = 'Completed'", (job_id,)).fetchone()
+    if precon:
+        updates[17] = 'complete'
+
+    # Step 19: RFIs
+    rfi_closed = conn.execute("SELECT id FROM rfis WHERE job_id = ? AND status = 'Closed'", (job_id,)).fetchone()
+    if rfi_closed:
+        updates[19] = 'complete'
+
+    # Step 20: materials ordered
+    mat_ordered = conn.execute("SELECT id FROM line_items WHERE job_id = ? AND qty_ordered > 0", (job_id,)).fetchone()
+    if mat_ordered:
+        updates[20] = 'complete'
+
+    # Step 24: pay app submitted
+    if pac:
+        pa = conn.execute("SELECT id FROM pay_applications WHERE contract_id = ? AND status IN ('Submitted','Approved','Paid')", (pac['id'],)).fetchone()
+        if pa:
+            updates[24] = 'complete'
+
+    # Step 26-28: schedule phases
+    for step, phase in [(26, 'Rough-In'), (27, 'Trim Out'), (28, 'Startup')]:
+        phase_done = conn.execute("SELECT id FROM job_schedule_events WHERE job_id = ? AND phase_name = ? AND status = 'Complete'", (job_id, phase)).fetchone()
+        if phase_done:
+            updates[step] = 'complete'
+
+    # Step 31: closeout items complete
+    closeout = conn.execute("SELECT COUNT(*) as total, SUM(CASE WHEN status='Complete' THEN 1 ELSE 0 END) as done FROM closeout_checklists WHERE job_id = ?", (job_id,)).fetchone()
+    if closeout and closeout['total'] > 0 and closeout['done'] == closeout['total']:
+        updates[31] = 'complete'
+
+    # Step 32: lien waiver executed
+    lw = conn.execute("SELECT id FROM lien_waivers WHERE job_id = ? AND status = 'Executed'", (job_id,)).fetchone()
+    if lw:
+        updates[32] = 'complete'
+
+    # Apply auto-detected updates (only upgrade, never downgrade manual overrides)
+    for step_num, new_status in updates.items():
+        conn.execute(
+            '''UPDATE job_pipeline_steps SET status = ?, updated_at = datetime('now','localtime')
+               WHERE job_id = ? AND step_number = ? AND status IN ('pending','active')''',
+            (new_status, job_id, step_num)
+        )
+
+@app.route('/api/jobs/<int:job_id>/pipeline/seed', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_seed_pipeline(job_id):
+    conn = get_db()
+    seed_pipeline_steps(conn, job_id)
+    auto_detect_pipeline(conn, job_id)
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/jobs/<int:job_id>/pipeline')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_get_pipeline(job_id):
+    conn = get_db()
+    # Auto-seed if empty
+    existing = conn.execute('SELECT COUNT(*) FROM job_pipeline_steps WHERE job_id = ?', (job_id,)).fetchone()[0]
+    if existing == 0:
+        seed_pipeline_steps(conn, job_id)
+        conn.commit()
+    auto_detect_pipeline(conn, job_id)
+    conn.commit()
+    steps = conn.execute(
+        'SELECT * FROM job_pipeline_steps WHERE job_id = ? ORDER BY step_number', (job_id,)
+    ).fetchall()
+    conn.close()
+    result = []
+    for s in steps:
+        d = dict(s)
+        link_tpl = MODULE_LINKS.get(d['linked_module'], '')
+        d['module_link'] = link_tpl.replace('{job_id}', str(job_id))
+        result.append(d)
+    return jsonify(result)
+
+@app.route('/api/jobs/<int:job_id>/pipeline/<int:step>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_pipeline_step(job_id, step):
+    data = request.get_json() or {}
+    conn = get_db()
+    updates = []
+    params = []
+    if 'status' in data:
+        updates.append('status = ?')
+        params.append(data['status'])
+        if data['status'] == 'complete':
+            updates.append('completed_date = date("now","localtime")')
+            updates.append('completed_by = ?')
+            params.append(session.get('user_id'))
+    if 'notes' in data:
+        updates.append('notes = ?')
+        params.append(data['notes'])
+    updates.append('updated_at = datetime("now","localtime")')
+    params.extend([job_id, step])
+    conn.execute(
+        f'UPDATE job_pipeline_steps SET {", ".join(updates)} WHERE job_id = ? AND step_number = ?',
+        params
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/pipeline/overview')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_pipeline_overview():
+    conn = get_db()
+    jobs = conn.execute("SELECT id, name, status FROM jobs WHERE status NOT IN ('Complete','Cancelled') ORDER BY name").fetchall()
+    result = []
+    for job in jobs:
+        steps = conn.execute(
+            'SELECT step_number, step_name, step_category, status FROM job_pipeline_steps WHERE job_id = ? ORDER BY step_number',
+            (job['id'],)
+        ).fetchall()
+        if not steps:
+            continue
+        active_step = None
+        complete_count = sum(1 for s in steps if s['status'] == 'complete')
+        for s in steps:
+            if s['status'] in ('pending', 'active'):
+                active_step = dict(s)
+                break
+        result.append({
+            'job_id': job['id'], 'job_name': job['name'], 'job_status': job['status'],
+            'total_steps': len(steps), 'complete_steps': complete_count,
+            'current_step': active_step,
+            'steps': [dict(s) for s in steps]
+        })
+    conn.close()
+    return jsonify(result)
+
+# ─── Material Receiving ──────────────────────────────────────────
+
+@app.route('/receiving')
+@role_required('owner', 'admin', 'project_manager', 'warehouse')
+def receiving_page():
+    return render_template('receiving/list.html')
+
+@app.route('/api/receiving/<int:job_id>')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_receiving_items(job_id):
+    conn = get_db()
+    items = conn.execute('''
+        SELECT li.id, li.sku, li.description, li.qty_ordered,
+               COALESCE(SUM(re.quantity), 0) as qty_received
+        FROM line_items li
+        LEFT JOIN received_entries re ON re.line_item_id = li.id
+        WHERE li.job_id = ?
+        GROUP BY li.id
+        ORDER BY li.line_number
+    ''', (job_id,)).fetchall()
+    conn.close()
+    result = []
+    for i in items:
+        d = dict(i)
+        d['qty_remaining'] = max(0, (d['qty_ordered'] or 0) - (d['qty_received'] or 0))
+        result.append(d)
+    return jsonify(result)
+
+@app.route('/api/receiving/<int:job_id>/quick', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_quick_receive(job_id):
+    data = request.get_json() or {}
+    items = data.get('items', [])
+    conn = get_db()
+    # Create delivery receipt
+    cur = conn.execute(
+        '''INSERT INTO delivery_receipts (job_id, supplier_name, po_number, received_by, notes)
+           VALUES (?,?,?,?,?)''',
+        (job_id, data.get('supplier_name',''), data.get('po_number',''),
+         session.get('user_id'), data.get('notes',''))
+    )
+    receipt_id = cur.lastrowid
+    for item in items:
+        lid = item.get('line_item_id')
+        qty = float(item.get('qty', 0) or 0)
+        if qty <= 0 or not lid:
+            continue
+        # Find next available column
+        col = conn.execute(
+            'SELECT COALESCE(MAX(column_number), 0) + 1 as next_col FROM received_entries WHERE line_item_id = ?',
+            (lid,)
+        ).fetchone()['next_col']
+        if col > 15:
+            col = 15
+        conn.execute(
+            'INSERT OR REPLACE INTO received_entries (line_item_id, column_number, quantity, entry_date) VALUES (?,?,?,date("now","localtime"))',
+            (lid, col, qty)
+        )
+        # Also update inventory if item exists
+        inv = conn.execute('SELECT id FROM inventory_items WHERE sku = (SELECT sku FROM line_items WHERE id = ?)', (lid,)).fetchone()
+        if inv:
+            conn.execute('UPDATE inventory_items SET quantity_on_hand = quantity_on_hand + ?, updated_at=datetime("now","localtime") WHERE id=?', (qty, inv['id']))
+            conn.execute(
+                'INSERT INTO inventory_transactions (inventory_item_id, transaction_type, quantity, job_id, reference, created_by) VALUES (?,?,?,?,?,?)',
+                (inv['id'], 'receive', qty, job_id, f'Receipt #{receipt_id}', session.get('user_id'))
+            )
+    conn.commit()
+    # Check for shortage alerts after receiving
+    check_reorder_alerts(conn)
+    conn.close()
+    return jsonify({'ok': True, 'receipt_id': receipt_id})
+
+@app.route('/api/receiving/pending')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_receiving_pending():
+    conn = get_db()
+    jobs = conn.execute('''
+        SELECT j.id, j.name, COUNT(li.id) as total_items,
+               SUM(CASE WHEN li.qty_ordered > COALESCE(recv.received, 0) THEN 1 ELSE 0 END) as items_pending
+        FROM jobs j
+        JOIN line_items li ON li.job_id = j.id AND li.qty_ordered > 0
+        LEFT JOIN (
+            SELECT line_item_id, SUM(quantity) as received
+            FROM received_entries GROUP BY line_item_id
+        ) recv ON recv.line_item_id = li.id
+        WHERE j.status NOT IN ('Complete','Cancelled')
+        GROUP BY j.id
+        HAVING items_pending > 0
+        ORDER BY j.name
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(j) for j in jobs])
+
+# ─── Material Shortage Notifications ──────────────────────────────
+
+def check_reorder_alerts(conn):
+    """Check for items below reorder point and create notifications."""
+    low_items = conn.execute('''
+        SELECT id, sku, description, quantity_on_hand, reorder_point
+        FROM inventory_items
+        WHERE reorder_point > 0 AND quantity_on_hand <= reorder_point
+    ''').fetchall()
+    if not low_items:
+        return
+    # Notify warehouse + admin users
+    users = conn.execute("SELECT id FROM users WHERE role IN ('owner','admin','warehouse') AND is_active = 1").fetchall()
+    for item in low_items:
+        for u in users:
+            # Check if notification already exists (avoid duplicates)
+            existing = conn.execute(
+                "SELECT id FROM notifications WHERE user_id = ? AND type = 'inventory' AND title LIKE ? AND is_read = 0",
+                (u['id'], f'%{item["sku"]}%')
+            ).fetchone()
+            if not existing:
+                create_notification(
+                    u['id'], 'inventory',
+                    f'Low Stock: {item["sku"]}',
+                    f'{item["description"]} — {item["quantity_on_hand"]} on hand (reorder point: {item["reorder_point"]})',
+                    '/inventory'
+                )
+
+# ─── Drag-Drop Invoice Upload ────────────────────────────────────
+
+@app.route('/api/invoices/upload', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_upload_invoice():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    f = request.files['file']
+    job_id = request.form.get('job_id') or None
+    os.makedirs(os.path.join(app.root_path, 'data', 'invoices'), exist_ok=True)
+    filename = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{f.filename}'
+    filepath = os.path.join(app.root_path, 'data', 'invoices', filename)
+    f.save(filepath)
+    conn = get_db()
+    # Get or create a default supplier config
+    supplier = conn.execute('SELECT id FROM billtrust_config LIMIT 1').fetchone()
+    supplier_id = supplier['id'] if supplier else 1
+    conn.execute(
+        '''INSERT INTO supplier_invoices (supplier_config_id, invoice_number, status, job_id, notes, total)
+           VALUES (?,?,?,?,?,?)''',
+        (supplier_id, f.filename.replace('.pdf','').replace('.PDF',''),
+         'open', job_id, f'Uploaded via drag-drop: {filepath}', 0)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'file': filename})
+
+# ─── Invoice Verification ────────────────────────────────────────
+
+@app.route('/api/invoices/<int:iid>/verify', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_verify_invoice(iid):
+    conn = get_db()
+    invoice = conn.execute('SELECT * FROM supplier_invoices WHERE id = ?', (iid,)).fetchone()
+    if not invoice:
+        conn.close()
+        return jsonify({'error': 'Invoice not found'}), 404
+    quote_id = invoice['supplier_quote_id']
+    if not quote_id:
+        conn.close()
+        return jsonify({'error': 'No linked supplier quote to verify against'}), 400
+
+    # Get quote items
+    quote_items = conn.execute(
+        'SELECT sku, description, quantity, unit_price, extended_price FROM supplier_quote_items WHERE quote_id = ?',
+        (quote_id,)
+    ).fetchall()
+    quote_map = {qi['sku']: dict(qi) for qi in quote_items if qi['sku']}
+
+    # Parse invoice line items (JSON)
+    inv_lines = json.loads(invoice['line_items'] or '[]')
+
+    flags = []
+    matched = 0
+    for line in inv_lines:
+        inv_sku = line.get('sku', '')
+        inv_qty = float(line.get('quantity', 0) or 0)
+        inv_price = float(line.get('unit_price', 0) or 0)
+        if inv_sku in quote_map:
+            qi = quote_map[inv_sku]
+            matched += 1
+            if abs(inv_qty - qi['quantity']) > 0.01:
+                flags.append({
+                    'sku': inv_sku, 'severity': 'error', 'category': 'qty_mismatch',
+                    'message': f'Qty mismatch for {inv_sku}: invoice={inv_qty}, quote={qi["quantity"]}'
+                })
+            if abs(inv_price - qi['unit_price']) > 0.01:
+                variance = ((inv_price - qi['unit_price']) / qi['unit_price'] * 100) if qi['unit_price'] else 0
+                flags.append({
+                    'sku': inv_sku, 'severity': 'warning', 'category': 'price_mismatch',
+                    'message': f'Price mismatch for {inv_sku}: invoice=${inv_price:.2f}, quote=${qi["unit_price"]:.2f} ({variance:+.1f}%)'
+                })
+        elif inv_sku:
+            flags.append({
+                'sku': inv_sku, 'severity': 'warning', 'category': 'not_on_quote',
+                'message': f'{inv_sku} on invoice but not found in quote'
+            })
+
+    # Check for quote items missing from invoice
+    inv_skus = {line.get('sku','') for line in inv_lines}
+    for sku, qi in quote_map.items():
+        if sku not in inv_skus:
+            flags.append({
+                'sku': sku, 'severity': 'info', 'category': 'missing_from_invoice',
+                'message': f'{sku} on quote but not on invoice (qty={qi["quantity"]})'
+            })
+
+    verification_data = json.dumps({
+        'flags': flags, 'matched': matched,
+        'total_invoice_lines': len(inv_lines), 'total_quote_lines': len(quote_items)
+    })
+    status = 'verified' if not flags else ('issues_found' if any(f['severity'] == 'error' for f in flags) else 'reviewed')
+    conn.execute(
+        'UPDATE supplier_invoices SET verification_status=?, verification_data=?, updated_at=datetime("now","localtime") WHERE id=?',
+        (status, verification_data, iid)
+    )
+    # Store flags in invoice_review_flags table
+    conn.execute('DELETE FROM invoice_review_flags WHERE invoice_id = ?', (iid,))
+    for flag in flags:
+        conn.execute(
+            'INSERT INTO invoice_review_flags (invoice_id, invoice_number, job_id, severity, category, message) VALUES (?,?,?,?,?,?)',
+            (iid, invoice['invoice_number'], invoice['job_id'], flag['severity'], flag['category'], flag['message'])
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'status': status, 'flags': flags, 'matched': matched})
+
+# ─── Job Photos ──────────────────────────────────────────────────
+
+@app.route('/photos')
+@role_required('owner', 'admin', 'project_manager', 'warehouse')
+def photos_page():
+    return render_template('photos/gallery.html')
+
+@app.route('/api/photos')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_list_photos():
+    job_id = request.args.get('job_id', type=int)
+    category = request.args.get('category', '')
+    conn = get_db()
+    query = 'SELECT p.*, j.name as job_name, u.display_name as uploaded_by_name FROM job_photos p LEFT JOIN jobs j ON p.job_id = j.id LEFT JOIN users u ON p.uploaded_by = u.id WHERE 1=1'
+    params = []
+    if job_id:
+        query += ' AND p.job_id = ?'
+        params.append(job_id)
+    if category:
+        query += ' AND p.category = ?'
+        params.append(category)
+    query += ' ORDER BY p.created_at DESC'
+    photos = conn.execute(query, params).fetchall()
+    conn.close()
+    return jsonify([dict(p) for p in photos])
+
+@app.route('/api/photos', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_upload_photos():
+    job_id = request.form.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'Job required'}), 400
+    category = request.form.get('category', 'General')
+    caption = request.form.get('caption', '')
+    os.makedirs(os.path.join(app.root_path, 'data', 'photos'), exist_ok=True)
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'error': 'No files'}), 400
+    conn = get_db()
+    ids = []
+    for f in files:
+        filename = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{f.filename}'
+        filepath = os.path.join(app.root_path, 'data', 'photos', filename)
+        f.save(filepath)
+        cur = conn.execute(
+            '''INSERT INTO job_photos (job_id, file_path, caption, category, taken_date, uploaded_by)
+               VALUES (?,?,?,?,date('now','localtime'),?)''',
+            (job_id, f'data/photos/{filename}', caption, category, session.get('user_id'))
+        )
+        ids.append(cur.lastrowid)
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'ids': ids})
+
+@app.route('/api/photos/<int:pid>/file')
+@api_login_required
+def api_photo_file(pid):
+    conn = get_db()
+    photo = conn.execute('SELECT file_path FROM job_photos WHERE id = ?', (pid,)).fetchone()
+    conn.close()
+    if not photo:
+        return jsonify({'error': 'Not found'}), 404
+    return send_file(os.path.join(app.root_path, photo['file_path']))
+
+@app.route('/api/photos/<int:pid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_photo(pid):
+    conn = get_db()
+    photo = conn.execute('SELECT file_path FROM job_photos WHERE id = ?', (pid,)).fetchone()
+    if photo:
+        path = os.path.join(app.root_path, photo['file_path'])
+        if os.path.exists(path):
+            os.remove(path)
+    conn.execute('DELETE FROM job_photos WHERE id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Material Shipments by Phase ──────────────────────────────────
+
+@app.route('/material-shipments')
+@role_required('owner', 'admin', 'project_manager', 'warehouse')
+def material_shipments_page():
+    return render_template('material_shipments/list.html')
+
+@app.route('/api/material-shipments')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_list_shipments():
+    conn = get_db()
+    shipments = conn.execute('''
+        SELECT ms.*, j.name as job_name, u.display_name as created_by_name
+        FROM material_shipments ms
+        LEFT JOIN jobs j ON ms.job_id = j.id
+        LEFT JOIN users u ON ms.created_by = u.id
+        ORDER BY ms.created_at DESC
+    ''').fetchall()
+    result = []
+    for s in shipments:
+        d = dict(s)
+        items = conn.execute('SELECT * FROM material_shipment_items WHERE shipment_id = ?', (s['id'],)).fetchall()
+        d['items'] = [dict(i) for i in items]
+        result.append(d)
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/material-shipments', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_create_shipment():
+    data = request.get_json() or {}
+    conn = get_db()
+    cur = conn.execute(
+        '''INSERT INTO material_shipments (job_id, phase, shipment_date, status, notes, created_by)
+           VALUES (?,?,?,?,?,?)''',
+        (data['job_id'], data.get('phase','Rough-In'), data.get('shipment_date',''),
+         data.get('status','Draft'), data.get('notes',''), session.get('user_id'))
+    )
+    shipment_id = cur.lastrowid
+    for item in data.get('items', []):
+        conn.execute(
+            '''INSERT INTO material_shipment_items (shipment_id, line_item_id, sku, description, quantity, quantity_loaded, notes)
+               VALUES (?,?,?,?,?,?,?)''',
+            (shipment_id, item.get('line_item_id'), item.get('sku',''), item.get('description',''),
+             float(item.get('quantity', 0) or 0), float(item.get('quantity_loaded', 0) or 0), item.get('notes',''))
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': shipment_id}), 201
+
+@app.route('/api/material-shipments/<int:sid>', methods=['GET'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_get_shipment(sid):
+    conn = get_db()
+    s = conn.execute('SELECT ms.*, j.name as job_name FROM material_shipments ms LEFT JOIN jobs j ON ms.job_id = j.id WHERE ms.id = ?', (sid,)).fetchone()
+    if not s:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    d = dict(s)
+    items = conn.execute('SELECT * FROM material_shipment_items WHERE shipment_id = ?', (sid,)).fetchall()
+    d['items'] = [dict(i) for i in items]
+    conn.close()
+    return jsonify(d)
+
+@app.route('/api/material-shipments/<int:sid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_update_shipment(sid):
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute(
+        '''UPDATE material_shipments SET phase=?, shipment_date=?, status=?, notes=?,
+           shipped_by=?, updated_at=datetime('now','localtime') WHERE id=?''',
+        (data.get('phase','Rough-In'), data.get('shipment_date',''), data.get('status','Draft'),
+         data.get('notes',''), data.get('shipped_by'), sid)
+    )
+    if 'items' in data:
+        conn.execute('DELETE FROM material_shipment_items WHERE shipment_id = ?', (sid,))
+        for item in data['items']:
+            conn.execute(
+                '''INSERT INTO material_shipment_items (shipment_id, line_item_id, sku, description, quantity, quantity_loaded, notes)
+                   VALUES (?,?,?,?,?,?,?)''',
+                (sid, item.get('line_item_id'), item.get('sku',''), item.get('description',''),
+                 float(item.get('quantity', 0) or 0), float(item.get('quantity_loaded', 0) or 0), item.get('notes',''))
+            )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/material-shipments/<int:sid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_shipment(sid):
+    conn = get_db()
+    conn.execute('DELETE FROM material_shipments WHERE id = ?', (sid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/jobs/<int:job_id>/available-materials')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_available_materials(job_id):
+    conn = get_db()
+    items = conn.execute('''
+        SELECT li.id, li.sku, li.description, li.qty_ordered,
+               COALESCE(recv.received, 0) as qty_received,
+               COALESCE(ship.shipped, 0) as qty_shipped
+        FROM line_items li
+        LEFT JOIN (SELECT line_item_id, SUM(quantity) as received FROM received_entries GROUP BY line_item_id) recv ON recv.line_item_id = li.id
+        LEFT JOIN (SELECT line_item_id, SUM(quantity_loaded) as shipped FROM material_shipment_items GROUP BY line_item_id) ship ON ship.line_item_id = li.id
+        WHERE li.job_id = ? AND li.qty_ordered > 0
+        ORDER BY li.line_number
+    ''', (job_id,)).fetchall()
+    conn.close()
+    result = []
+    for i in items:
+        d = dict(i)
+        d['qty_available'] = max(0, (d['qty_received'] or 0) - (d['qty_shipped'] or 0))
+        result.append(d)
+    return jsonify(result)
+
+# ─── Billing Schedules ───────────────────────────────────────────
+
+@app.route('/api/jobs/<int:job_id>/billing-schedule')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_list_billing_schedule(job_id):
+    conn = get_db()
+    items = conn.execute('SELECT * FROM billing_schedules WHERE job_id = ? ORDER BY billing_number', (job_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(i) for i in items])
+
+@app.route('/api/jobs/<int:job_id>/billing-schedule', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_create_billing_milestone(job_id):
+    data = request.get_json() or {}
+    conn = get_db()
+    next_num = conn.execute('SELECT COALESCE(MAX(billing_number), 0) + 1 FROM billing_schedules WHERE job_id = ?', (job_id,)).fetchone()[0]
+    conn.execute(
+        '''INSERT INTO billing_schedules (job_id, billing_number, description, scheduled_date, amount, status, required_docs, notes, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?)''',
+        (job_id, next_num, data.get('description',''), data.get('scheduled_date',''),
+         float(data.get('amount', 0) or 0), data.get('status','Pending'),
+         json.dumps(data.get('required_docs', [])), data.get('notes',''), session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/billing-schedule/<int:bid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_billing_milestone(bid):
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute(
+        '''UPDATE billing_schedules SET description=?, scheduled_date=?, amount=?, status=?,
+           required_docs=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?''',
+        (data.get('description',''), data.get('scheduled_date',''),
+         float(data.get('amount', 0) or 0), data.get('status','Pending'),
+         json.dumps(data.get('required_docs', [])), data.get('notes',''), bid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/billing-schedule/<int:bid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_billing_milestone(bid):
+    conn = get_db()
+    conn.execute('DELETE FROM billing_schedules WHERE id = ?', (bid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/billing-schedule/upcoming')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_upcoming_billing():
+    conn = get_db()
+    items = conn.execute('''
+        SELECT bs.*, j.name as job_name FROM billing_schedules bs
+        LEFT JOIN jobs j ON bs.job_id = j.id
+        WHERE bs.status IN ('Pending','Ready')
+        ORDER BY bs.scheduled_date
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(i) for i in items])
+
+# ─── Certificates of Insurance (COI) ─────────────────────────────
+
+@app.route('/coi')
+@role_required('owner', 'admin', 'project_manager')
+def coi_page():
+    return render_template('coi/list.html')
+
+@app.route('/api/coi')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_list_coi():
+    conn = get_db()
+    cois = conn.execute('''
+        SELECT c.*, j.name as job_name FROM certificates_of_insurance c
+        LEFT JOIN jobs j ON c.job_id = j.id
+        ORDER BY c.expiration_date
+    ''').fetchall()
+    conn.close()
+    today = datetime.now().strftime('%Y-%m-%d')
+    soon = (datetime.now() + timedelta(days=60)).strftime('%Y-%m-%d')
+    result = []
+    for c in cois:
+        d = dict(c)
+        if d['expiration_date'] and d['expiration_date'] < today:
+            d['computed_status'] = 'Expired'
+        elif d['expiration_date'] and d['expiration_date'] <= soon:
+            d['computed_status'] = 'Expiring Soon'
+        else:
+            d['computed_status'] = d['status']
+        result.append(d)
+    return jsonify(result)
+
+@app.route('/api/coi', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_create_coi():
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+        f = request.files.get('file')
+    else:
+        data = request.get_json() or {}
+        f = None
+    file_path = ''
+    if f:
+        os.makedirs(os.path.join(app.root_path, 'data', 'coi'), exist_ok=True)
+        filename = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{f.filename}'
+        filepath = os.path.join(app.root_path, 'data', 'coi', filename)
+        f.save(filepath)
+        file_path = f'data/coi/{filename}'
+    conn = get_db()
+    conn.execute(
+        '''INSERT INTO certificates_of_insurance (job_id, policy_type, carrier, policy_number,
+           effective_date, expiration_date, coverage_amount, certificate_holder, file_path, status, notes, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (data.get('job_id') or None, data.get('policy_type','General Liability'),
+         data.get('carrier',''), data.get('policy_number',''),
+         data.get('effective_date',''), data.get('expiration_date',''),
+         float(data.get('coverage_amount', 0) or 0), data.get('certificate_holder',''),
+         file_path, data.get('status','Active'), data.get('notes',''), session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/coi/<int:cid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_coi(cid):
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+        f = request.files.get('file')
+    else:
+        data = request.get_json() or {}
+        f = None
+    conn = get_db()
+    file_path = data.get('file_path', '')
+    if f:
+        os.makedirs(os.path.join(app.root_path, 'data', 'coi'), exist_ok=True)
+        filename = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{f.filename}'
+        filepath = os.path.join(app.root_path, 'data', 'coi', filename)
+        f.save(filepath)
+        file_path = f'data/coi/{filename}'
+    conn.execute(
+        '''UPDATE certificates_of_insurance SET job_id=?, policy_type=?, carrier=?, policy_number=?,
+           effective_date=?, expiration_date=?, coverage_amount=?, certificate_holder=?,
+           file_path=?, status=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?''',
+        (data.get('job_id') or None, data.get('policy_type','General Liability'),
+         data.get('carrier',''), data.get('policy_number',''),
+         data.get('effective_date',''), data.get('expiration_date',''),
+         float(data.get('coverage_amount', 0) or 0), data.get('certificate_holder',''),
+         file_path, data.get('status','Active'), data.get('notes',''), cid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/coi/<int:cid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_coi(cid):
+    conn = get_db()
+    conn.execute('DELETE FROM certificates_of_insurance WHERE id = ?', (cid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/coi/<int:cid>/file')
+@api_login_required
+def api_coi_file(cid):
+    conn = get_db()
+    coi = conn.execute('SELECT file_path FROM certificates_of_insurance WHERE id = ?', (cid,)).fetchone()
+    conn.close()
+    if not coi or not coi['file_path']:
+        return jsonify({'error': 'No file'}), 404
+    return send_file(os.path.join(app.root_path, coi['file_path']))
+
+# ─── Payment Days-to-Receive & Aged Receivables ──────────────────
+
+@app.route('/api/accounting/receivables')
+@api_role_required('owner', 'admin')
+def api_aged_receivables():
+    conn = get_db()
+    today = datetime.now().strftime('%Y-%m-%d')
+    invoices = conn.execute('''
+        SELECT ci.*, j.name as job_name FROM client_invoices ci
+        LEFT JOIN jobs j ON ci.job_id = j.id
+        WHERE ci.status != 'Paid'
+        ORDER BY ci.issue_date
+    ''').fetchall()
+    conn.close()
+    buckets = {'0_30': [], '31_60': [], '61_90': [], '90_plus': []}
+    for inv in invoices:
+        d = dict(inv)
+        if d['issue_date']:
+            days = (datetime.strptime(today, '%Y-%m-%d') - datetime.strptime(d['issue_date'], '%Y-%m-%d')).days
+        else:
+            days = 0
+        d['days_outstanding'] = days
+        if days <= 30:
+            buckets['0_30'].append(d)
+        elif days <= 60:
+            buckets['31_60'].append(d)
+        elif days <= 90:
+            buckets['61_90'].append(d)
+        else:
+            buckets['90_plus'].append(d)
+    return jsonify({
+        'buckets': {k: v for k, v in buckets.items()},
+        'totals': {k: sum(i['amount'] for i in v) for k, v in buckets.items()}
+    })
+
+# ─── Supplier Delivery Schedules ─────────────────────────────────
+
+@app.route('/api/delivery-schedules')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_list_delivery_schedules():
+    job_id = request.args.get('job_id', type=int)
+    conn = get_db()
+    query = 'SELECT ds.*, j.name as job_name FROM delivery_schedules ds LEFT JOIN jobs j ON ds.job_id = j.id WHERE 1=1'
+    params = []
+    if job_id:
+        query += ' AND ds.job_id = ?'
+        params.append(job_id)
+    query += ' ORDER BY ds.expected_date'
+    items = conn.execute(query, params).fetchall()
+    conn.close()
+    return jsonify([dict(i) for i in items])
+
+@app.route('/api/delivery-schedules', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_create_delivery_schedule():
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute(
+        '''INSERT INTO delivery_schedules (job_id, supplier_name, expected_date, status,
+           items_summary, tracking_number, notes, created_by) VALUES (?,?,?,?,?,?,?,?)''',
+        (data['job_id'], data.get('supplier_name',''), data.get('expected_date',''),
+         data.get('status','Scheduled'), data.get('items_summary',''),
+         data.get('tracking_number',''), data.get('notes',''), session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/delivery-schedules/<int:did>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_update_delivery_schedule(did):
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute(
+        '''UPDATE delivery_schedules SET supplier_name=?, expected_date=?, actual_date=?, status=?,
+           items_summary=?, tracking_number=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?''',
+        (data.get('supplier_name',''), data.get('expected_date',''), data.get('actual_date',''),
+         data.get('status','Scheduled'), data.get('items_summary',''),
+         data.get('tracking_number',''), data.get('notes',''), did)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/delivery-schedules/<int:did>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_delivery_schedule(did):
+    conn = get_db()
+    conn.execute('DELETE FROM delivery_schedules WHERE id = ?', (did,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/delivery-schedules/upcoming')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_upcoming_deliveries():
+    conn = get_db()
+    items = conn.execute('''
+        SELECT ds.*, j.name as job_name FROM delivery_schedules ds
+        LEFT JOIN jobs j ON ds.job_id = j.id
+        WHERE ds.status NOT IN ('Delivered')
+        ORDER BY ds.expected_date
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(i) for i in items])
+
+# ─── Lien Waiver Auto-Prompt (on payment) ─────────────────────────
+# (Integrated into create_payment above — see modification below)
+
+# ─── Job Import Tools ─────────────────────────────────────────────
+
+@app.route('/jobs/import')
+@role_required('owner', 'admin')
+def job_import_page():
+    return render_template('jobs/import.html')
+
+@app.route('/api/jobs/import-excel', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_import_jobs_excel():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file'}), 400
+    f = request.files['file']
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(f, data_only=True)
+        ws = wb.active
+        headers = [str(c.value or '').strip().lower() for c in ws[1]]
+        conn = get_db()
+        imported = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            row_dict = {}
+            for i, h in enumerate(headers):
+                if i < len(row):
+                    row_dict[h] = row[i]
+            name = row_dict.get('name') or row_dict.get('job_name') or row_dict.get('project')
+            if not name:
+                continue
+            status = row_dict.get('status', 'In Progress')
+            cur = conn.execute(
+                '''INSERT INTO jobs (name, status, address, city, state, zip_code)
+                   VALUES (?,?,?,?,?,?)''',
+                (str(name), str(status),
+                 str(row_dict.get('address', '') or ''),
+                 str(row_dict.get('city', '') or ''),
+                 str(row_dict.get('state', '') or ''),
+                 str(row_dict.get('zip', '') or row_dict.get('zip_code', '') or ''))
+            )
+            job_id = cur.lastrowid
+            # Link customer if provided
+            customer_name = row_dict.get('customer') or row_dict.get('customer_name')
+            if customer_name:
+                cust = conn.execute('SELECT id FROM customers WHERE name = ?', (str(customer_name),)).fetchone()
+                if cust:
+                    conn.execute('UPDATE jobs SET customer_id = ? WHERE id = ?', (cust['id'], job_id))
+            # Seed pipeline
+            seed_pipeline_steps(conn, job_id)
+            # Auto-complete pipeline steps based on status
+            if status in ('Awarded', 'In Progress', 'Complete'):
+                for s in range(1, 9):
+                    conn.execute("UPDATE job_pipeline_steps SET status='complete' WHERE job_id=? AND step_number=?", (job_id, s))
+            if status in ('In Progress', 'Complete'):
+                for s in range(9, 14):
+                    conn.execute("UPDATE job_pipeline_steps SET status='complete' WHERE job_id=? AND step_number=?", (job_id, s))
+            if status == 'Complete':
+                conn.execute("UPDATE job_pipeline_steps SET status='complete' WHERE job_id=?", (job_id,))
+            imported += 1
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True, 'imported': imported})
+    except ImportError:
+        return jsonify({'error': 'openpyxl not installed. Run: pip install openpyxl'}), 500
+
+@app.route('/api/jobs/quick-add', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_quick_add_job():
+    data = request.get_json() or {}
+    name = data.get('name')
+    if not name:
+        return jsonify({'error': 'Job name required'}), 400
+    conn = get_db()
+    cur = conn.execute(
+        '''INSERT INTO jobs (name, status, address, city, state, zip_code)
+           VALUES (?,?,?,?,?,?)''',
+        (name, data.get('status', 'In Progress'),
+         data.get('address',''), data.get('city',''), data.get('state',''), data.get('zip_code',''))
+    )
+    job_id = cur.lastrowid
+    if data.get('customer_id'):
+        conn.execute('UPDATE jobs SET customer_id = ? WHERE id = ?', (data['customer_id'], job_id))
+    seed_pipeline_steps(conn, job_id)
+    # Mark completed steps
+    for step_num in data.get('completed_steps', []):
+        conn.execute(
+            "UPDATE job_pipeline_steps SET status='complete', completed_date=date('now','localtime') WHERE job_id=? AND step_number=?",
+            (job_id, int(step_num))
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'job_id': job_id}), 201
 
 
 # ─── Startup ────────────────────────────────────────────────────

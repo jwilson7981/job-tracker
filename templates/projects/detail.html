@@ -17,6 +17,9 @@
         <button class="tab" onclick="switchProjectTab('service', this)">Service Calls</button>
         <button class="tab" onclick="switchProjectTab('warranty', this)">Warranties</button>
         <button class="tab" onclick="switchProjectTab('labor', this)">Labor</button>
+        <button class="tab" onclick="switchProjectTab('precon', this)">Pre-Con</button>
+        <button class="tab" onclick="switchProjectTab('benchmarks', this)">Benchmarks</button>
+        <button class="tab" onclick="switchProjectTab('billing', this)">Billing</button>
     </div>
 
     <div class="project-tab active" id="ptab-expenses">
@@ -54,6 +57,86 @@
             <table class="data-table"><thead><tr><th>Date</th><th>Employee</th><th>Hours</th><th>Rate</th><th>Total</th><th>Description</th></tr></thead>
             <tbody id="pLabor"></tbody></table>
         </div>
+    </div>
+
+    <!-- Precon Meeting Tab (Phase 4) -->
+    <div class="project-tab" id="ptab-precon" style="display:none;">
+        <div id="preconContent" style="max-width:700px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3>Pre-Construction Meeting</h3>
+                <span class="status-badge" id="preconStatus">Loading...</span>
+            </div>
+            <div style="display:grid;gap:12px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div><label class="form-label">Meeting Date</label><input type="date" id="preconDate" class="form-input"></div>
+                    <div><label class="form-label">Status</label>
+                        <select id="preconStatusSel" class="form-select">
+                            <option value="Not Scheduled">Not Scheduled</option>
+                            <option value="Scheduled">Scheduled</option>
+                            <option value="Completed">Completed</option>
+                        </select>
+                    </div>
+                </div>
+                <div><label class="form-label">GC Contact</label><input type="text" id="preconGC" class="form-input" placeholder="Name / Phone / Email"></div>
+                <div><label class="form-label">Location</label><input type="text" id="preconLocation" class="form-input" placeholder="Meeting location"></div>
+                <div><label class="form-label">Attendees</label><input type="text" id="preconAttendees" class="form-input" placeholder="Comma-separated names"></div>
+                <div><label class="form-label">Agenda</label><textarea id="preconAgenda" class="form-textarea" rows="3" placeholder="Meeting agenda items..."></textarea></div>
+                <div><label class="form-label">Minutes / Notes</label><textarea id="preconMinutes" class="form-textarea" rows="4" placeholder="Meeting minutes..."></textarea></div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary btn-small" onclick="savePrecon()">Save Pre-Con</button>
+                    <button class="btn btn-secondary btn-small" onclick="completePrecon()" id="btnCompletePrecon">Mark Complete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Billing Schedule Tab -->
+    <div class="project-tab" id="ptab-billing" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h3>Billing Schedule</h3>
+            <button class="btn btn-primary btn-small" onclick="showBillingModal()">+ Add Milestone</button>
+        </div>
+        <div id="billingTimeline"></div>
+    </div>
+
+    <!-- Billing Modal -->
+    <div id="billingModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+        <div class="modal" style="max-width:500px;">
+            <div class="modal-header">
+                <h2 id="billingModalTitle">Add Billing Milestone</h2>
+                <button class="modal-close" onclick="document.getElementById('billingModal').style.display='none'">&times;</button>
+            </div>
+            <form onsubmit="saveBillingMilestone(event)">
+                <input type="hidden" id="billingId">
+                <div class="form-group"><label class="form-label">Description</label><input type="text" id="billingDesc" class="form-input" required placeholder="e.g. Rough-In Complete"></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group"><label class="form-label">Scheduled Date</label><input type="date" id="billingDate" class="form-input"></div>
+                    <div class="form-group"><label class="form-label">Amount ($)</label><input type="number" id="billingAmount" class="form-input" step="0.01" min="0"></div>
+                </div>
+                <div class="form-group"><label class="form-label">Status</label>
+                    <select id="billingStatus" class="form-select">
+                        <option value="Pending">Pending</option>
+                        <option value="Ready">Ready</option>
+                        <option value="Submitted">Submitted</option>
+                        <option value="Paid">Paid</option>
+                    </select>
+                </div>
+                <div class="form-group"><label class="form-label">Notes</label><textarea id="billingNotes" class="form-input" rows="2" style="resize:vertical;font-family:inherit;"></textarea></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('billingModal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- PM Benchmarks Tab (Phase 4) -->
+    <div class="project-tab" id="ptab-benchmarks" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h3>PM Benchmarks</h3>
+            <div id="benchmarkProgress" style="font-size:14px;color:var(--gray-500);"></div>
+        </div>
+        <div id="benchmarksContainer"><p class="empty-state">No benchmarks found. Benchmarks are seeded when a bid is awarded.</p></div>
     </div>
 </div>
 <script>window.JOB_ID = {{ job.id }};</script>

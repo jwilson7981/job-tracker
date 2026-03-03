@@ -12,12 +12,14 @@
     var fileStates = [];  // {file, dupResult, selected}
 
     var DOC_TYPE_LABELS = {
-        plan:           { label: 'Plan',             dest: '/plans',           icon: 'Plans' },
-        submittal:      { label: 'Submittal',        dest: '/submittals',      icon: 'Submittal Library' },
-        supplier_quote: { label: 'Supplier Quote',   dest: '/supplier-quotes', icon: 'Supplier Quotes' },
-        contract:       { label: 'Contract',         dest: '/contracts',       icon: 'Contracts' },
-        license:        { label: 'License',          dest: '/licenses',        icon: 'Licenses' },
-        closeout:       { label: 'Closeout Document',dest: '/documents',       icon: 'Documents' }
+        materials:        { label: 'Materials',         dest: '/materials',       icon: 'Materials' },
+        plan:             { label: 'Plan',              dest: '/plans',           icon: 'Plans' },
+        submittal:        { label: 'Submittal',         dest: '/submittals',      icon: 'Submittal Library' },
+        supplier_quote:   { label: 'Supplier Quote',    dest: '/supplier-quotes', icon: 'Supplier Quotes' },
+        supplier_invoice: { label: 'Supplier Invoice',  dest: '/invoices',        icon: 'Invoices' },
+        contract:         { label: 'Contract',          dest: '/contracts',       icon: 'Contracts' },
+        license:          { label: 'License',           dest: '/licenses',        icon: 'Licenses' },
+        closeout:         { label: 'Closeout Document', dest: '/documents',       icon: 'Documents' }
     };
 
     // ─── Create Overlay ─────────────────────────────────────────
@@ -53,9 +55,11 @@
                     '<div class="form-group">' +
                         '<label class="form-label">Document Type</label>' +
                         '<select id="ddDocType" class="form-select">' +
+                            '<option value="materials">Materials (Excel Import)</option>' +
                             '<option value="plan">Plan</option>' +
                             '<option value="submittal">Submittal</option>' +
                             '<option value="supplier_quote">Supplier Quote</option>' +
+                            '<option value="supplier_invoice">Supplier Invoice</option>' +
                             '<option value="contract">Contract</option>' +
                             '<option value="license">License</option>' +
                             '<option value="closeout">Closeout Document</option>' +
@@ -123,7 +127,11 @@
         var dt = ddDocType.value;
         var info = DOC_TYPE_LABELS[dt] || {};
         ddJobGroup.style.display = (dt === 'license') ? 'none' : 'block';
-        ddDestInfo.innerHTML = 'Files will be uploaded to <strong>' + (info.icon || dt) + '</strong>';
+        if (dt === 'materials') {
+            ddDestInfo.innerHTML = 'Excel workbook will be imported into <strong>Material Management</strong> for the selected job';
+        } else {
+            ddDestInfo.innerHTML = 'Files will be uploaded to <strong>' + (info.icon || dt) + '</strong>';
+        }
     });
 
     // ─── Drag Events ────────────────────────────────────────────
@@ -289,9 +297,9 @@
         ddProgressBar.style.width = '0%';
         ddUploadBtn.disabled = false;
         ddUploadBtn.textContent = 'Upload Selected';
-        ddDocType.value = 'plan';
+        ddDocType.value = 'materials';
         ddJobGroup.style.display = 'block';
-        ddDestInfo.innerHTML = 'Files will be uploaded to <strong>Plans</strong>';
+        ddDestInfo.innerHTML = 'Excel workbook will be imported into <strong>Material Management</strong> for the selected job';
         loadJobs().then(populateJobSelect);
         modal.style.display = 'flex';
 
@@ -321,6 +329,12 @@
 
     // ─── Upload Routes ──────────────────────────────────────────
     var UPLOAD_ROUTES = {
+        materials: {
+            url: '/api/materials/import',
+            fields: function (f, jobId) {
+                return { job_id: jobId };
+            }
+        },
         plan: {
             url: '/api/plans',
             fields: function (f, jobId) {
@@ -351,6 +365,12 @@
                 return { license_type: 'Trade', license_name: f.name.replace(/\.[^.]+$/, '') };
             }
         },
+        supplier_invoice: {
+            url: '/api/invoices/upload',
+            fields: function (f, jobId) {
+                return { job_id: jobId };
+            }
+        },
         closeout: {
             url: '/api/documents/checklist',
             fields: function (f, jobId) {
@@ -364,7 +384,7 @@
         var docType = ddDocType.value;
         var jobId = ddJobSelect.value;
 
-        if (docType !== 'license' && !jobId) {
+        if (docType !== 'license' && docType !== 'supplier_invoice' && !jobId) {
             alert('Please select a job.');
             return;
         }

@@ -30,7 +30,12 @@
 
 <!-- Line Items -->
 <div class="bid-section" style="margin-top:24px;">
-    <h3>Line Items</h3>
+    <h3 style="display:flex;align-items:center;gap:12px;">Line Items
+        <span class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Invoice Line Items','lineItemsBody','Invoice_Line_Items')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Invoice Line Items','lineItemsBody','Invoice_Line_Items')">PDF</button>
+        </span>
+    </h3>
     <div class="module-table-wrapper">
         <table class="data-table" style="margin-top:8px;">
             <thead><tr>
@@ -41,6 +46,15 @@
             <tbody id="lineItemsBody"><tr><td colspan="9" class="loading">Loading...</td></tr></tbody>
         </table>
     </div>
+</div>
+
+<!-- Verification -->
+<div class="bid-section" style="margin-top:24px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3>Invoice Verification <span id="verifyStatusBadge"></span></h3>
+        <button class="btn btn-primary btn-small" onclick="verifyInvoice()" id="btnVerify">Verify Against Quote</button>
+    </div>
+    <div id="verifyResult" style="margin-top:8px;display:none;"></div>
 </div>
 
 <!-- Review Flags -->
@@ -135,6 +149,40 @@ async function resolveFlag(id, btn) {
     btn.textContent = '...';
     await fetch(`/api/invoice-flags/${id}/resolve`, {method:'PUT'});
     loadInvoiceFlags();
+}
+
+async function verifyInvoice() {
+    const btn = document.getElementById('btnVerify');
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    try {
+        const res = await fetch(`/api/invoices/${invoiceId}/verify`, { method: 'POST' });
+        const data = await res.json();
+        const resultEl = document.getElementById('verifyResult');
+        resultEl.style.display = '';
+        if (data.error) {
+            resultEl.innerHTML = `<div style="padding:12px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;color:#991B1B;">${data.error}</div>`;
+        } else {
+            const statusColor = data.status === 'verified' ? '#22C55E' : (data.status === 'issues_found' ? '#EF4444' : '#F59E0B');
+            let html = `<div style="padding:12px;background:${statusColor}10;border:1px solid ${statusColor}40;border-radius:8px;">`;
+            html += `<div style="font-weight:700;color:${statusColor};margin-bottom:8px;">${data.status === 'verified' ? 'All items match!' : data.flags.length + ' issue(s) found'} — ${data.matched} items matched</div>`;
+            if (data.flags && data.flags.length > 0) {
+                html += '<table class="data-table" style="margin-top:8px;font-size:13px;"><thead><tr><th>SKU</th><th>Severity</th><th>Issue</th></tr></thead><tbody>';
+                data.flags.forEach(f => {
+                    const sevColor = f.severity === 'error' ? '#DC2626' : (f.severity === 'warning' ? '#D97706' : '#2563EB');
+                    html += `<tr><td>${f.sku || '-'}</td><td><span style="color:${sevColor};font-weight:600;">${f.severity}</span></td><td>${f.message}</td></tr>`;
+                });
+                html += '</tbody></table>';
+            }
+            html += '</div>';
+            resultEl.innerHTML = html;
+            document.getElementById('verifyStatusBadge').innerHTML = `<span style="font-size:12px;padding:2px 8px;border-radius:9999px;background:${statusColor}20;color:${statusColor};font-weight:600;">${data.status}</span>`;
+        }
+    } catch(e) {
+        console.error(e);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Verify Against Quote';
 }
 
 document.addEventListener('DOMContentLoaded', loadInvoiceDetail);

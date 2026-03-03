@@ -3,7 +3,14 @@
 {% block content %}
 <div class="page-header">
     <h1>Submittals</h1>
-    <button class="btn btn-primary" onclick="showAddSubmittal()">+ New Submittal</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Submittals','submittalsBody','Submittals')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Submittals','submittalsBody','Submittals')">PDF</button>
+        </div>
+        <button class="btn btn-secondary" onclick="showLibraryModal()">Library</button>
+        <button class="btn btn-primary" onclick="showAddSubmittal()">+ New Submittal</button>
+    </div>
 </div>
 
 <!-- Summary Cards -->
@@ -27,6 +34,10 @@
     <div class="kpi-card" id="sumRejectedCard" style="border-left: 4px solid #EF4444;">
         <div class="kpi-value" id="sumRejected">0</div>
         <div class="kpi-label">Rejected / Resubmit</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #F97316;">
+        <div class="kpi-value" id="sumNeedsAction">0</div>
+        <div class="kpi-label">Needs Action</div>
     </div>
 </div>
 
@@ -100,11 +111,14 @@
             </div>
             <div class="form-group">
                 <label class="form-label">File (PDF)</label>
-                <input type="file" id="addFile" class="form-input" accept=".pdf">
+                <input type="file" id="addFile" class="form-input" accept=".pdf" onchange="analyzeSubmittalFile(this)">
+                <div id="analyzeStatus" style="display:none;margin-top:6px;font-size:13px;color:var(--gray-500);">
+                    <span class="spinner-sm"></span> Analyzing submittal...
+                </div>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('addModal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Submittal</button>
+                <button type="submit" class="btn btn-primary" id="addSubmitBtn">Save Submittal</button>
             </div>
         </form>
     </div>
@@ -181,6 +195,110 @@
         </form>
     </div>
 </div>
+
+<!-- Submittal Library Modal -->
+<div class="modal-overlay" id="libraryModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:800px;">
+        <div class="modal-header">
+            <h2>Submittal Library</h2>
+            <button class="modal-close" onclick="document.getElementById('libraryModal').style.display='none'">&times;</button>
+        </div>
+        <p style="color:var(--gray-500);font-size:13px;margin-bottom:12px;">Shared submittal PDFs that can be linked across multiple jobs.</p>
+        <div class="table-wrapper" style="max-height:400px;overflow-y:auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th>Title</th>
+                    <th>Vendor</th>
+                    <th>Category</th>
+                    <th>Used In</th>
+                    <th>File</th>
+                </tr></thead>
+                <tbody id="libraryBody">
+                    <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="form-actions" style="margin-top:12px;">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('libraryModal').style.display='none'">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Duplicate Confirmation Modal -->
+<div class="modal-overlay" id="dupModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h2 style="color:#EF4444;">Possible Duplicate</h2>
+            <button class="modal-close" onclick="document.getElementById('dupModal').style.display='none'">&times;</button>
+        </div>
+        <p id="dupMessage" style="margin:12px 0;font-size:14px;"></p>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="cancelDuplicate()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="proceedDespiteDuplicate()">Upload Anyway</button>
+        </div>
+    </div>
+</div>
+
+<style>.spinner-sm{display:inline-block;width:14px;height:14px;border:2px solid #ccc;border-top-color:#3B82F6;border-radius:50%;animation:spin .6s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+<script>
+let dupConfirmed = false;
+
+async function analyzeSubmittalFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const jobId = document.getElementById('addJob').value;
+    if (!jobId) return;
+
+    const status = document.getElementById('analyzeStatus');
+    status.style.display = 'block';
+
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('job_id', jobId);
+
+    try {
+        const res = await fetch('/api/submittals/analyze', { method: 'POST', body: fd });
+        if (!res.ok) { status.style.display = 'none'; return; }
+        const data = await res.json();
+
+        // Auto-fill description if empty
+        const descInput = document.getElementById('addDescription');
+        if (!descInput.value && data.description) {
+            descInput.value = data.description;
+        }
+        // Auto-fill vendor if empty
+        const vendorInput = document.getElementById('addVendor');
+        if (!vendorInput.value && data.manufacturer) {
+            vendorInput.value = data.manufacturer;
+        }
+
+        // Check for duplicate
+        if (data.duplicate_of) {
+            const dup = data.duplicate_of;
+            document.getElementById('dupMessage').textContent =
+                `This appears to be a duplicate of Submittal #${dup.submittal_number}: "${dup.description}". Upload anyway?`;
+            document.getElementById('dupModal').style.display = 'flex';
+            dupConfirmed = false;
+        }
+    } catch (e) {
+        // Silently fail — don't block upload
+    }
+    status.style.display = 'none';
+}
+
+function cancelDuplicate() {
+    document.getElementById('dupModal').style.display = 'none';
+    // Clear the file input
+    document.getElementById('addFile').value = '';
+    dupConfirmed = false;
+}
+
+function proceedDespiteDuplicate() {
+    document.getElementById('dupModal').style.display = 'none';
+    dupConfirmed = true;
+}
+</script>
 
 <script src="/static/submittals.js"></script>
 {% endblock %}

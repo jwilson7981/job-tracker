@@ -1,15 +1,60 @@
 {% extends "base.html" %}
 {% block title %}Job Schedule - Construction Management{% endblock %}
 {% block content %}
+<style>
+@media print {
+    @page { size: letter; margin: 0.6in 0.75in; }
+    .sidebar, .page-header, .gantt-wrapper, .schedule-timeline,
+    .modal-overlay, #bpActionBar, #bpSavedPlans,
+    #bpResultCrewOverride, #bpRecalcBtn,
+    button, .btn, nav, header, footer { display: none !important; }
+    #bpResults { display: block !important; margin: 0 !important; padding: 0 !important; }
+    #bpResults > div:first-child button { display: none !important; }
+    body { background: #fff !important; padding: 0 !important; margin: 0 !important; font-size: 12px !important; }
+    .main-content, .content-wrapper { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+    .data-table { font-size: 11px !important; width: 100% !important; }
+    .data-table th { background: #eee !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 6px 8px !important; }
+    .data-table td { padding: 5px 8px !important; }
+    #bpCrewCard { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 12px 16px !important; margin-bottom: 12px !important; }
+    #bpSummaryCard { gap: 8px !important; margin-bottom: 16px !important; }
+    #bpSummaryCard > div { border: 1px solid #ccc !important; padding: 8px !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    #bpBenchmarks { page-break-before: always; }
+    #bpWeatherSection { margin-top: 12px !important; }
+    h2, h3 { margin-top: 12px !important; margin-bottom: 8px !important; }
+    .table-wrapper { overflow: visible !important; }
+    /* Print header */
+    #bpResults::before {
+        content: "LGHVAC Mechanical, LLC — Schedule Plan";
+        display: block;
+        text-align: center;
+        font-size: 18px;
+        font-weight: 700;
+        color: #1a5276;
+        border-bottom: 3px solid #1a5276;
+        padding-bottom: 8px;
+        margin-bottom: 16px;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}
+</style>
 <div class="page-header">
     <div>
         <a href="/schedule" class="link" style="font-size:14px;">&larr; Back to Schedule</a>
         <h1 id="schedJobName">Job Schedule</h1>
     </div>
     <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="loadSavedPlans()">Saved Plans</button>
+        <button class="btn btn-secondary" onclick="showBackwardsPlan()">Backwards Plan</button>
         <button class="btn btn-secondary" onclick="addDefaultPhases()">Add Default Phases</button>
         <button class="btn btn-primary" onclick="showAddPhase()">+ Add Phase</button>
     </div>
+</div>
+
+<!-- Gantt Chart -->
+<div class="gantt-wrapper" id="ganttWrapper" style="display:none;">
+    <div class="gantt-chart" id="ganttChart"></div>
+    <svg class="gantt-arrows" id="ganttArrows"></svg>
 </div>
 
 <div class="table-wrapper">
@@ -19,15 +64,101 @@
                 <th>Phase</th>
                 <th>Start</th>
                 <th>End</th>
+                <th>Hours</th>
+                <th>% Done</th>
                 <th>Assigned To</th>
+                <th>Depends On</th>
                 <th>Status</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody id="phaseBody">
-            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="9" class="empty-state">Loading...</td></tr>
         </tbody>
     </table>
+</div>
+
+<!-- Backwards Plan Results (persists on page after calculation) -->
+<div id="bpResults" style="display:none;margin-top:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h2 style="margin:0;font-size:18px;color:var(--gray-800);">Backwards Plan Results</h2>
+        <button class="btn btn-small btn-secondary" onclick="document.getElementById('bpResults').style.display='none'" title="Hide results">&times; Hide</button>
+    </div>
+
+    <!-- Crew Recommendation Card -->
+    <div id="bpCrewCard" style="background:linear-gradient(135deg,#1a5276,#2980b9);border-radius:10px;padding:18px 24px;margin-bottom:16px;color:#fff;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;">
+            <div style="text-align:center;flex:1;">
+                <div id="bpCrewText" style="font-size:22px;font-weight:700;letter-spacing:0.5px;"></div>
+                <div id="bpCrewSubtext" style="font-size:13px;margin-top:4px;opacity:0.85;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.15);border-radius:8px;padding:8px 14px;">
+                <label style="font-size:12px;white-space:nowrap;">Adjust Crew:</label>
+                <input type="number" id="bpResultCrewOverride" min="1" max="50" style="width:60px;text-align:center;padding:6px;border:1px solid rgba(255,255,255,0.3);border-radius:4px;background:rgba(255,255,255,0.2);color:#fff;font-size:14px;font-weight:600;" placeholder="Auto">
+                <button class="btn btn-small" style="background:rgba(255,255,255,0.25);color:#fff;border:1px solid rgba(255,255,255,0.3);padding:6px 12px;font-size:12px;" onclick="recalcWithCrew()" id="bpRecalcBtn">Recalculate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Override Impact -->
+    <div id="bpOverrideImpact" style="display:none;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#92400E;"></div>
+
+    <!-- Action Buttons -->
+    <div id="bpActionBar" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="applyPlanDates()" id="bpApplyBtn" title="Write the calculated dates to the schedule">Apply Dates to Schedule</button>
+        <button class="btn btn-secondary" onclick="savePlan()" id="bpSaveBtn">Save Plan</button>
+        <button class="btn btn-secondary" onclick="printPlan()">Print</button>
+        <button class="btn btn-secondary" onclick="exportPlanPDF()" id="bpExportBtn">Export PDF</button>
+        <button class="btn btn-secondary" onclick="showEmailPlanModal()">Email</button>
+    </div>
+    <p style="font-size:12px;color:var(--gray-500);margin:-10px 0 16px;">Plan dates are calculated for review only. Click "Apply Dates to Schedule" to update your schedule with these dates.</p>
+
+    <!-- Summary Cards -->
+    <div id="bpSummaryCard" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;"></div>
+
+    <!-- Results Table -->
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:10px;color:var(--gray-700);">Phase Schedule</h3>
+    <div class="table-wrapper">
+        <table class="data-table" style="font-size:13px;">
+            <thead>
+                <tr>
+                    <th>Phase</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Work Days</th>
+                    <th>Remaining Hrs</th>
+                    <th>Crew Needed</th>
+                    <th>Weather Risk</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody id="bpResultsBody"></tbody>
+        </table>
+    </div>
+
+    <!-- Weather Risk Days -->
+    <div id="bpWeatherSection" style="display:none;margin-top:16px;">
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:10px;color:var(--gray-700);">Weather Risk Days</h3>
+        <div id="bpWeatherDays" style="display:flex;flex-wrap:wrap;gap:6px;max-height:160px;overflow-y:auto;"></div>
+    </div>
+
+    <!-- Detailed Benchmarks Section -->
+    <div id="bpBenchmarks" style="display:none;margin-top:24px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h2 style="margin:0;font-size:18px;color:var(--gray-800);">Detailed Benchmarks &amp; Daily/Weekly Targets</h2>
+            <button class="btn btn-small btn-secondary" onclick="document.getElementById('bpBenchmarks').style.display=document.getElementById('bpBenchmarks').style.display==='none'?'':'none'">Toggle</button>
+        </div>
+        <div id="bpBenchmarksContent"></div>
+    </div>
+</div>
+
+<!-- Saved Plans Section (toggled from header button) -->
+<div id="bpSavedPlans" style="display:none;margin-top:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <h2 style="margin:0;font-size:18px;color:var(--gray-800);">Saved Plans</h2>
+        <button class="btn btn-small btn-secondary" onclick="document.getElementById('bpSavedPlans').style.display='none'">&times; Hide</button>
+    </div>
+    <div id="bpSavedPlansList"></div>
 </div>
 
 <!-- Add/Edit Phase Modal -->
@@ -63,6 +194,22 @@
                     <input type="date" id="pmEnd" class="form-input">
                 </div>
             </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Estimated Hours</label>
+                    <input type="number" id="pmEstHours" class="form-input" min="0" step="0.5" value="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Crew Size</label>
+                    <input type="number" id="pmCrewSize" class="form-input" min="1" value="1">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Depends On</label>
+                <select id="pmDependsOn" class="form-select">
+                    <option value="">None</option>
+                </select>
+            </div>
             <div class="form-group">
                 <label class="form-label">Assigned To</label>
                 <select id="pmAssigned" class="form-select">
@@ -80,6 +227,165 @@
         </form>
     </div>
 </div>
-<script>window.SCHEDULE_PAGE = 'job'; window.SCHEDULE_JOB_ID = {{ job_id }};</script>
-<script src="/static/schedule.js"></script>
+
+<!-- Backwards Plan Modal -->
+<div class="modal-overlay" id="bpModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:900px;width:95%;display:flex;flex-direction:column;max-height:90vh;">
+        <div class="modal-header" style="flex-shrink:0;">
+            <h2>Smart Backwards Planning</h2>
+            <button class="modal-close" onclick="document.getElementById('bpModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="runBackwardsPlan(event)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div style="flex:1;overflow-y:auto;padding:0 16px;">
+
+        <!-- Section 1: Bid Labor Summary (auto-populated) -->
+        <div id="bpBidSection" style="display:none;margin-bottom:20px;">
+            <h3 style="font-size:15px;font-weight:600;margin-bottom:10px;color:var(--gray-700);">Job Labor Summary (from Bid)</h3>
+            <div id="bpBidSummary" class="bp-summary-card" style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:14px;margin-bottom:12px;font-size:14px;"></div>
+            <div class="table-wrapper" style="max-height:200px;overflow-y:auto;">
+                <table class="data-table" style="font-size:13px;">
+                    <thead>
+                        <tr>
+                            <th>Phase</th>
+                            <th>Hrs/System</th>
+                            <th>Total Hrs</th>
+                            <th>% Done</th>
+                            <th>Remaining Hrs</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bpBidPhaseBody"></tbody>
+                </table>
+            </div>
+        </div>
+        <div id="bpNoBid" style="display:none;margin-bottom:16px;padding:12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;font-size:13px;color:#92400E;">
+            No bid found for this job — using manually entered hours from each phase.
+        </div>
+
+        <!-- Section 2: Planning Inputs -->
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Project Type *</label>
+                    <select id="bpProjectType" class="form-select" onchange="toggleCommercialQuestions()">
+                        <option value="apartment">Apartment / Multi-Family</option>
+                        <option value="commercial">Commercial / Hotel</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Deadline *</label>
+                    <input type="date" id="bpDeadline" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Hours Per Work Day</label>
+                    <input type="number" id="bpHoursPerDay" class="form-input" value="10" min="1" max="24">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Crew Override <small class="text-muted">(blank = auto)</small></label>
+                    <input type="number" id="bpCrewOverride" class="form-input" min="1" max="50" placeholder="Auto-calculate">
+                </div>
+            </div>
+
+            <!-- Commercial/Hotel Questions (hidden by default) -->
+            <div id="bpCommercialQuestions" style="display:none;background:var(--gray-50);border-radius:8px;padding:16px;margin-bottom:16px;">
+                <h3 style="margin:0 0 12px;font-size:15px;color:var(--primary);">Commercial Project Details</h3>
+                <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">PTAC Rooms</label>
+                        <input type="number" id="bpPtacCount" class="form-input" min="0" value="0" placeholder="# of PTAC units">
+                        <small class="text-muted">Packaged terminal AC (hotel rooms)</small>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">VTAC Rooms</label>
+                        <input type="number" id="bpVtacCount" class="form-input" min="0" value="0" placeholder="# of VTAC units">
+                        <small class="text-muted">Vertical terminal AC (hotel rooms)</small>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">Split Systems (Common Areas)</label>
+                        <input type="number" id="bpSplitCount" class="form-input" min="0" value="0" placeholder="# of splits for lobby, etc.">
+                        <small class="text-muted">Lobby, restaurant, office areas</small>
+                    </div>
+                </div>
+                <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">RTUs (Rooftop Units)</label>
+                        <input type="number" id="bpRtuCount" class="form-input" min="0" value="0" placeholder="# of RTUs">
+                        <small class="text-muted">Conference rooms, ballrooms, etc.</small>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">Metal Duct (linear ft)</label>
+                        <input type="number" id="bpMetalDuctLf" class="form-input" min="0" value="0" placeholder="Total LF of metal duct">
+                        <small class="text-muted">Main trunk & branches for common areas</small>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">Stories / Floors</label>
+                        <input type="number" id="bpStories" class="form-input" min="1" max="50" value="4">
+                        <small class="text-muted">Total building floors</small>
+                    </div>
+                </div>
+                <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">Exhaust Fans</label>
+                        <input type="number" id="bpExhaustFanCount" class="form-input" min="0" value="0" placeholder="Kitchen hoods, bath, etc.">
+                        <small class="text-muted">Kitchen hoods, bath exhaust, etc.</small>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">Make-Up Air Units</label>
+                        <input type="number" id="bpMakeupAirCount" class="form-input" min="0" value="0" placeholder="MAUs for ventilation">
+                        <small class="text-muted">MAUs / ERVs for code ventilation</small>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">Avg PTAC Sleeve Install?</label>
+                        <select id="bpSleeveInstall" class="form-select">
+                            <option value="yes" selected>Yes - We install sleeves</option>
+                            <option value="no">No - Sleeves pre-installed by GC</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <p class="text-muted" style="font-size:13px;margin-bottom:16px;">
+                Calculates dates, crew size, and weather risk working backwards from deadline. Uses bid labor data when available.
+                Leave crew blank to auto-calculate minimum crew needed. Set a crew number to see adjusted days/hours.
+            </p>
+
+        </div><!-- end scrollable area -->
+
+            <div class="form-actions" style="flex-shrink:0;padding:12px 16px;border-top:1px solid var(--gray-200);background:var(--white);display:flex;gap:12px;justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('bpModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="bpCalcBtn">Calculate Plan</button>
+            </div>
+        </form>
+
+    </div>
+</div>
+
+<!-- Email Plan Modal -->
+<div class="modal-overlay" id="emailPlanModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Email Schedule Plan</h2>
+            <button class="modal-close" onclick="document.getElementById('emailPlanModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="sendPlanEmail(event)">
+            <div class="form-group">
+                <label class="form-label">Recipients <small class="text-muted">(comma-separated)</small></label>
+                <input type="text" id="epRecipients" class="form-input" placeholder="email@example.com, another@example.com" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="epSubject" class="form-input" value="Schedule Plan">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Message</label>
+                <textarea id="epBody" class="form-input" rows="4" placeholder="Please find the attached schedule plan..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('emailPlanModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="epSendBtn">Send Email</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>window.SCHEDULE_PAGE = 'job'; window.SCHEDULE_JOB_ID = {{ job_id }}; window.SCHEDULE_USER_ROLE = '{{ current_user.role }}';</script>
+<script src="/static/schedule.js?v={{ range(10000, 99999) | random }}"></script>
 {% endblock %}

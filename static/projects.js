@@ -86,4 +86,210 @@ function switchProjectTab(tab, btn) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById('ptab-' + tab).style.display = 'block';
     if (btn) btn.classList.add('active');
+    // Lazy-load precon, benchmarks, billing on first tab visit
+    if (tab === 'precon' && !window._preconLoaded) { loadPrecon(); window._preconLoaded = true; }
+    if (tab === 'benchmarks' && !window._benchmarksLoaded) { loadBenchmarks(); window._benchmarksLoaded = true; }
+    if (tab === 'billing' && !window._billingLoaded) { loadBillingSchedule(); window._billingLoaded = true; }
 }
+
+// ─── Pre-Con Meeting (Phase 4) ──────────────────────────────
+
+async function loadPrecon() {
+    try {
+        const res = await fetch(`/api/jobs/${JOB_ID}/precon`);
+        const m = await res.json();
+        document.getElementById('preconStatus').textContent = m.status || 'No Meeting';
+        document.getElementById('preconStatus').className = 'status-badge ' +
+            (m.status === 'Completed' ? 'status-complete' : m.status === 'Scheduled' ? 'status-in-progress' : '');
+        if (m.meeting_date) document.getElementById('preconDate').value = m.meeting_date;
+        if (m.status) document.getElementById('preconStatusSel').value = m.status;
+        if (m.gc_contact) document.getElementById('preconGC').value = m.gc_contact;
+        if (m.location) document.getElementById('preconLocation').value = m.location;
+        if (m.attendees) document.getElementById('preconAttendees').value = m.attendees;
+        if (m.agenda) document.getElementById('preconAgenda').value = m.agenda;
+        if (m.minutes) document.getElementById('preconMinutes').value = m.minutes;
+        if (m.status === 'Completed') {
+            document.getElementById('btnCompletePrecon').style.display = 'none';
+        }
+    } catch (e) { /* ignore */ }
+}
+
+async function savePrecon() {
+    const data = {
+        meeting_date: document.getElementById('preconDate').value,
+        status: document.getElementById('preconStatusSel').value,
+        gc_contact: document.getElementById('preconGC').value,
+        location: document.getElementById('preconLocation').value,
+        attendees: document.getElementById('preconAttendees').value,
+        agenda: document.getElementById('preconAgenda').value,
+        minutes: document.getElementById('preconMinutes').value,
+    };
+    await fetch(`/api/jobs/${JOB_ID}/precon`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(data)
+    });
+    window._preconLoaded = false;
+    loadPrecon();
+    alert('Pre-con meeting saved.');
+}
+
+async function completePrecon() {
+    if (!confirm('Mark pre-construction meeting as complete?')) return;
+    await fetch(`/api/jobs/${JOB_ID}/precon/complete`, { method: 'POST' });
+    window._preconLoaded = false;
+    loadPrecon();
+}
+
+// ─── PM Benchmarks (Phase 4) ───────────────────────────────
+
+let benchmarks = [];
+
+async function loadBenchmarks() {
+    try {
+        const res = await fetch(`/api/jobs/${JOB_ID}/benchmarks`);
+        benchmarks = await res.json();
+        renderBenchmarks();
+    } catch (e) { /* ignore */ }
+}
+
+function renderBenchmarks() {
+    const container = document.getElementById('benchmarksContainer');
+    if (!benchmarks.length) {
+        container.innerHTML = '<p class="empty-state">No benchmarks found. Benchmarks are seeded when a bid is awarded.</p>';
+        document.getElementById('benchmarkProgress').textContent = '';
+        return;
+    }
+    const total = benchmarks.length;
+    const done = benchmarks.filter(b => b.status === 'Complete').length;
+    const pct = Math.round((done / total) * 100);
+    document.getElementById('benchmarkProgress').innerHTML =
+        `<strong>${done}/${total}</strong> complete (${pct}%) <div style="display:inline-block;width:100px;height:8px;background:var(--gray-200);border-radius:4px;vertical-align:middle;margin-left:6px;"><div style="width:${pct}%;height:100%;background:var(--green, #22c55e);border-radius:4px;"></div></div>`;
+
+    // Group by phase
+    const phases = {};
+    benchmarks.forEach(b => { if (!phases[b.phase]) phases[b.phase] = []; phases[b.phase].push(b); });
+
+    let html = '';
+    for (const [phase, items] of Object.entries(phases)) {
+        const phaseDone = items.filter(b => b.status === 'Complete').length;
+        const phaseTotal = items.length;
+        html += `<div style="margin-bottom:16px;">
+            <h4 style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+                ${phase}
+                <small style="font-weight:400;color:var(--gray-400);">${phaseDone}/${phaseTotal}</small>
+            </h4>
+            <table class="data-table"><thead><tr><th style="width:30px;"></th><th>Task</th><th>Status</th><th>Completed</th><th>Notes</th></tr></thead><tbody>`;
+        items.forEach(b => {
+            const statusOpts = ['Not Started','In Progress','Complete','N/A'].map(s =>
+                `<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`
+            ).join('');
+            html += `<tr>
+                <td style="text-align:center;">${b.status === 'Complete' ? '<span style="color:var(--green,#22c55e);font-size:18px;">&#10003;</span>' : '<span style="color:var(--gray-300);font-size:18px;">&#9675;</span>'}</td>
+                <td>${b.task_name}</td>
+                <td><select class="form-select" style="width:auto;font-size:12px;padding:2px 4px;" onchange="updateBenchmark(${b.id}, this.value)">${statusOpts}</select></td>
+                <td>${b.completed_date || '-'} ${b.completed_by_name ? '<small>('+b.completed_by_name+')</small>' : ''}</td>
+                <td><input type="text" class="form-input" value="${b.notes || ''}" style="font-size:12px;padding:2px 6px;" onchange="updateBenchmarkNotes(${b.id}, this.value)"></td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+    }
+    container.innerHTML = html;
+}
+
+async function updateBenchmark(bid, status) {
+    const b = benchmarks.find(x => x.id === bid);
+    await fetch(`/api/jobs/${JOB_ID}/benchmarks/${bid}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ status, notes: b?.notes || '' })
+    });
+    loadBenchmarks();
+}
+
+async function updateBenchmarkNotes(bid, notes) {
+    const b = benchmarks.find(x => x.id === bid);
+    await fetch(`/api/jobs/${JOB_ID}/benchmarks/${bid}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ status: b?.status || 'Not Started', notes })
+    });
+}
+
+// ─── Billing Schedule ─────────────────────────────────────────
+var billingItems = [];
+
+async function loadBillingSchedule() {
+    const res = await fetch(`/api/jobs/${JOB_ID}/billing-schedule`);
+    billingItems = await res.json();
+    renderBillingTimeline();
+}
+
+function renderBillingTimeline() {
+    const el = document.getElementById('billingTimeline');
+    if (!el) return;
+    if (!billingItems.length) {
+        el.innerHTML = '<p class="empty-state">No billing milestones yet. Add milestones to track billing progress.</p>';
+        return;
+    }
+    const today = new Date().toISOString().split('T')[0];
+    const statusColors = { Pending: '#6B7280', Ready: '#22C55E', Submitted: '#3B82F6', Paid: '#10B981' };
+    let html = '';
+    billingItems.forEach(b => {
+        const color = statusColors[b.status] || '#6B7280';
+        const isOverdue = b.scheduled_date && b.scheduled_date < today && b.status === 'Pending';
+        const bg = isOverdue ? '#FEF2F2' : (b.status === 'Ready' ? '#F0FDF4' : '#F9FAFB');
+        html += `<div style="display:flex;align-items:center;gap:12px;padding:12px;background:${bg};border-radius:8px;margin-bottom:8px;border-left:4px solid ${color};">`;
+        html += `<div style="font-weight:700;font-size:18px;color:${color};width:32px;text-align:center;">${b.billing_number}</div>`;
+        html += `<div style="flex:1;">`;
+        html += `<div style="font-weight:600;font-size:14px;">${b.description || 'Milestone #' + b.billing_number}</div>`;
+        html += `<div style="font-size:12px;color:#6B7280;">${b.scheduled_date || 'No date'} — $${(b.amount || 0).toLocaleString()}</div>`;
+        if (b.notes) html += `<div style="font-size:11px;color:#9CA3AF;margin-top:2px;">${b.notes}</div>`;
+        html += `</div>`;
+        html += `<span style="font-size:12px;padding:2px 8px;border-radius:9999px;background:${color}20;color:${color};font-weight:600;">${b.status}</span>`;
+        if (isOverdue) html += `<span style="font-size:11px;padding:2px 6px;border-radius:9999px;background:#FEE2E2;color:#EF4444;font-weight:600;">OVERDUE</span>`;
+        html += `<button class="btn btn-secondary btn-small" onclick="editBillingMilestone(${b.id})" style="font-size:11px;">Edit</button>`;
+        html += `<button class="btn btn-secondary btn-small" onclick="deleteBillingMilestone(${b.id})" style="font-size:11px;color:#EF4444;">Del</button>`;
+        html += `</div>`;
+    });
+    el.innerHTML = html;
+}
+
+function showBillingModal(item) {
+    document.getElementById('billingId').value = item ? item.id : '';
+    document.getElementById('billingModalTitle').textContent = item ? 'Edit Billing Milestone' : 'Add Billing Milestone';
+    document.getElementById('billingDesc').value = item ? item.description : '';
+    document.getElementById('billingDate').value = item ? item.scheduled_date : '';
+    document.getElementById('billingAmount').value = item ? item.amount : '';
+    document.getElementById('billingStatus').value = item ? item.status : 'Pending';
+    document.getElementById('billingNotes').value = item ? item.notes : '';
+    document.getElementById('billingModal').style.display = 'flex';
+}
+
+function editBillingMilestone(id) {
+    const item = billingItems.find(b => b.id === id);
+    if (item) showBillingModal(item);
+}
+
+async function saveBillingMilestone(e) {
+    e.preventDefault();
+    const id = document.getElementById('billingId').value;
+    const payload = {
+        description: document.getElementById('billingDesc').value,
+        scheduled_date: document.getElementById('billingDate').value,
+        amount: document.getElementById('billingAmount').value || 0,
+        status: document.getElementById('billingStatus').value,
+        notes: document.getElementById('billingNotes').value
+    };
+    if (id) {
+        await fetch('/api/billing-schedule/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    } else {
+        await fetch('/api/jobs/' + JOB_ID + '/billing-schedule', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    }
+    document.getElementById('billingModal').style.display = 'none';
+    loadBillingSchedule();
+}
+
+async function deleteBillingMilestone(id) {
+    if (!confirm('Delete this billing milestone?')) return;
+    await fetch('/api/billing-schedule/' + id, { method: 'DELETE' });
+    loadBillingSchedule();
+}
+

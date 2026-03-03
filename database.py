@@ -475,6 +475,24 @@ def init_db():
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
 
+        /* ─── Saved Schedule Plans ─── */
+
+        CREATE TABLE IF NOT EXISTS schedule_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            plan_name TEXT NOT NULL DEFAULT '',
+            deadline_date TEXT NOT NULL,
+            hours_per_day INTEGER DEFAULT 10,
+            crew_override INTEGER,
+            plan_data TEXT NOT NULL DEFAULT '{}',
+            summary_data TEXT NOT NULL DEFAULT '{}',
+            weather_data TEXT NOT NULL DEFAULT '[]',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
         /* ─── Recurring Expenses ─── */
 
         CREATE TABLE IF NOT EXISTS recurring_expenses (
@@ -910,6 +928,25 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_supplier_quotes_job ON supplier_quotes(job_id);
         CREATE INDEX IF NOT EXISTS idx_supplier_quotes_status ON supplier_quotes(status);
         CREATE INDEX IF NOT EXISTS idx_supplier_quote_items_quote ON supplier_quote_items(quote_id);
+        CREATE INDEX IF NOT EXISTS idx_sqi_takeoff_sku ON supplier_quote_items(takeoff_sku);
+
+        /* ─── Pricing Reviews ─── */
+
+        CREATE TABLE IF NOT EXISTS pricing_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quote_id INTEGER NOT NULL,
+            review_data TEXT NOT NULL DEFAULT '{}',
+            total_savings_low REAL DEFAULT 0,
+            total_savings_high REAL DEFAULT 0,
+            items_reviewed INTEGER DEFAULT 0,
+            items_with_savings INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (quote_id) REFERENCES supplier_quotes(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pricing_reviews_quote ON pricing_reviews(quote_id);
 
         /* ─── Inventory (Phase 3) ─── */
 
@@ -1108,9 +1145,214 @@ def init_db():
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
 
+        /* ─── Feedback Requests ─── */
+
+        CREATE TABLE IF NOT EXISTS feedback_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            category TEXT NOT NULL DEFAULT 'Feature'
+                CHECK(category IN ('Bug','Feature','Improvement','Question')),
+            priority TEXT NOT NULL DEFAULT 'Medium'
+                CHECK(priority IN ('Low','Medium','High')),
+            status TEXT NOT NULL DEFAULT 'New'
+                CHECK(status IN ('New','Under Review','Planned','In Progress','Complete','Wont Fix')),
+            submitted_by INTEGER NOT NULL,
+            owner_response TEXT DEFAULT '',
+            upvotes INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (submitted_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS feedback_upvotes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feedback_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            FOREIGN KEY (feedback_id) REFERENCES feedback_requests(id) ON DELETE CASCADE,
+            UNIQUE(feedback_id, user_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_lien_waivers_job ON lien_waivers(job_id);
         CREATE INDEX IF NOT EXISTS idx_lien_waivers_status ON lien_waivers(status);
         CREATE INDEX IF NOT EXISTS idx_lien_waivers_type ON lien_waivers(waiver_type);
+        CREATE INDEX IF NOT EXISTS idx_feedback_submitted_by ON feedback_requests(submitted_by);
+        CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_requests(status);
+        CREATE INDEX IF NOT EXISTS idx_feedback_upvotes_fid ON feedback_upvotes(feedback_id);
+
+        /* ─── Job Pipeline (32-Step Workflow) ─── */
+
+        CREATE TABLE IF NOT EXISTS job_pipeline_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            step_number INTEGER NOT NULL,
+            step_name TEXT NOT NULL,
+            step_category TEXT NOT NULL DEFAULT 'bidding',
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','active','complete','skipped','blocked')),
+            completed_date TEXT,
+            completed_by INTEGER,
+            notes TEXT DEFAULT '',
+            linked_module TEXT DEFAULT '',
+            linked_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (completed_by) REFERENCES users(id),
+            UNIQUE(job_id, step_number)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pipeline_job ON job_pipeline_steps(job_id);
+        CREATE INDEX IF NOT EXISTS idx_pipeline_status ON job_pipeline_steps(status);
+
+        /* ─── Delivery Receipts (Material Receiving) ─── */
+
+        CREATE TABLE IF NOT EXISTS delivery_receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            delivery_date TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            supplier_name TEXT DEFAULT '',
+            po_number TEXT DEFAULT '',
+            received_by INTEGER,
+            notes TEXT DEFAULT '',
+            shortage_notes TEXT DEFAULT '',
+            photo_path TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (received_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_delivery_receipts_job ON delivery_receipts(job_id);
+
+        /* ─── Job Photos ─── */
+
+        CREATE TABLE IF NOT EXISTS job_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            file_path TEXT NOT NULL,
+            thumbnail_path TEXT DEFAULT '',
+            caption TEXT DEFAULT '',
+            category TEXT NOT NULL DEFAULT 'General'
+                CHECK(category IN ('General','Rough-In','Trim Out','Startup','Closeout','Issue','Progress','Before','After')),
+            taken_date TEXT DEFAULT '',
+            uploaded_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_job_photos_job ON job_photos(job_id);
+        CREATE INDEX IF NOT EXISTS idx_job_photos_category ON job_photos(category);
+
+        /* ─── Material Shipments ─── */
+
+        CREATE TABLE IF NOT EXISTS material_shipments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            phase TEXT NOT NULL DEFAULT 'Rough-In'
+                CHECK(phase IN ('Rough-In','Trim Out','Equipment','Startup')),
+            shipment_date TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Draft'
+                CHECK(status IN ('Draft','Ready','Shipped','Delivered')),
+            shipped_by INTEGER,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (shipped_by) REFERENCES users(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS material_shipment_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            shipment_id INTEGER NOT NULL,
+            line_item_id INTEGER,
+            sku TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            quantity REAL DEFAULT 0,
+            quantity_loaded REAL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            FOREIGN KEY (shipment_id) REFERENCES material_shipments(id) ON DELETE CASCADE,
+            FOREIGN KEY (line_item_id) REFERENCES line_items(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_material_shipments_job ON material_shipments(job_id);
+        CREATE INDEX IF NOT EXISTS idx_material_shipment_items_ship ON material_shipment_items(shipment_id);
+
+        /* ─── Billing Schedules ─── */
+
+        CREATE TABLE IF NOT EXISTS billing_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            billing_number INTEGER NOT NULL DEFAULT 1,
+            description TEXT DEFAULT '',
+            scheduled_date TEXT DEFAULT '',
+            amount REAL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'Pending'
+                CHECK(status IN ('Pending','Ready','Submitted','Paid')),
+            pay_app_id INTEGER,
+            required_docs TEXT DEFAULT '[]',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (pay_app_id) REFERENCES pay_applications(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_billing_schedules_job ON billing_schedules(job_id);
+
+        /* ─── Certificates of Insurance (COI) ─── */
+
+        CREATE TABLE IF NOT EXISTS certificates_of_insurance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER,
+            policy_type TEXT NOT NULL DEFAULT 'General Liability'
+                CHECK(policy_type IN ('General Liability','Auto','Workers Comp','Umbrella','Professional','Builders Risk')),
+            carrier TEXT DEFAULT '',
+            policy_number TEXT DEFAULT '',
+            effective_date TEXT DEFAULT '',
+            expiration_date TEXT DEFAULT '',
+            coverage_amount REAL DEFAULT 0,
+            certificate_holder TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Active'
+                CHECK(status IN ('Active','Expiring Soon','Expired','Renewed')),
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coi_job ON certificates_of_insurance(job_id);
+        CREATE INDEX IF NOT EXISTS idx_coi_expiration ON certificates_of_insurance(expiration_date);
+
+        /* ─── Delivery Schedules (Supplier) ─── */
+
+        CREATE TABLE IF NOT EXISTS delivery_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            supplier_name TEXT DEFAULT '',
+            expected_date TEXT DEFAULT '',
+            actual_date TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Scheduled'
+                CHECK(status IN ('Scheduled','Confirmed','In Transit','Delivered','Partial','Delayed')),
+            items_summary TEXT DEFAULT '',
+            tracking_number TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_delivery_schedules_job ON delivery_schedules(job_id);
+        CREATE INDEX IF NOT EXISTS idx_delivery_schedules_status ON delivery_schedules(status);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -1247,6 +1489,69 @@ def init_db():
         if 'file_hash' not in tbl_cols:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN file_hash TEXT DEFAULT ''")
             conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{tbl}_file_hash ON {tbl}(file_hash)")
+
+    # Migration: pricing_reviews table
+    try:
+        conn.execute("SELECT 1 FROM pricing_reviews LIMIT 0")
+    except Exception:
+        conn.execute("""CREATE TABLE IF NOT EXISTS pricing_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quote_id INTEGER NOT NULL,
+            review_data TEXT NOT NULL DEFAULT '{}',
+            total_savings_low REAL DEFAULT 0,
+            total_savings_high REAL DEFAULT 0,
+            items_reviewed INTEGER DEFAULT 0,
+            items_with_savings INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (quote_id) REFERENCES supplier_quotes(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pricing_reviews_quote ON pricing_reviews(quote_id)")
+
+    # Migration: add dependency/planning columns to job_schedule_events
+    sched_cols = [row[1] for row in conn.execute("PRAGMA table_info(job_schedule_events)").fetchall()]
+    if 'depends_on' not in sched_cols:
+        conn.execute("ALTER TABLE job_schedule_events ADD COLUMN depends_on INTEGER")
+    if 'estimated_hours' not in sched_cols:
+        conn.execute("ALTER TABLE job_schedule_events ADD COLUMN estimated_hours REAL DEFAULT 0")
+    if 'crew_size' not in sched_cols:
+        conn.execute("ALTER TABLE job_schedule_events ADD COLUMN crew_size INTEGER DEFAULT 1")
+    if 'pct_complete' not in sched_cols:
+        conn.execute("ALTER TABLE job_schedule_events ADD COLUMN pct_complete INTEGER DEFAULT 0")
+
+    # Migration: schedule_plans table
+    existing_tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if 'schedule_plans' not in existing_tables:
+        conn.execute("""CREATE TABLE IF NOT EXISTS schedule_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            plan_name TEXT NOT NULL DEFAULT '',
+            deadline_date TEXT NOT NULL,
+            hours_per_day INTEGER DEFAULT 10,
+            crew_override INTEGER,
+            plan_data TEXT NOT NULL DEFAULT '{}',
+            summary_data TEXT NOT NULL DEFAULT '{}',
+            weather_data TEXT NOT NULL DEFAULT '[]',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )""")
+
+    # Migration: add verification columns to supplier_invoices
+    si_cols3 = [row[1] for row in conn.execute("PRAGMA table_info(supplier_invoices)").fetchall()]
+    for col, typedef in [
+        ('verification_status', "TEXT DEFAULT ''"),
+        ('verification_data', "TEXT DEFAULT '{}'"),
+    ]:
+        if col not in si_cols3:
+            conn.execute(f"ALTER TABLE supplier_invoices ADD COLUMN {col} {typedef}")
+
+    # Migration: add days_to_pay to client_invoices
+    ci_cols = [row[1] for row in conn.execute("PRAGMA table_info(client_invoices)").fetchall()]
+    if 'days_to_pay' not in ci_cols:
+        conn.execute("ALTER TABLE client_invoices ADD COLUMN days_to_pay INTEGER")
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]

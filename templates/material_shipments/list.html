@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Material Shipments - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Material Shipments by Phase</h1>
+    <button class="btn btn-primary" onclick="showShipmentModal()">New Shipment</button>
+</div>
+
+<!-- Shipments Table -->
+<div class="table-container">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Phase</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Items</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="shipmentsBody">
+            <tr><td colspan="6" style="text-align:center;color:#6B7280;padding:40px;">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Shipment Modal -->
+<div id="shipmentModal" class="modal-overlay" style="display:none;">
+    <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+            <h2 id="shipmentModalTitle">New Shipment</h2>
+            <button class="modal-close" onclick="document.getElementById('shipmentModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveShipment(event)" id="shipmentForm" style="padding:16px;">
+            <input type="hidden" id="shipmentId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">Job</label>
+                    <select id="shipJob" class="form-select" required onchange="loadAvailableMaterials()">
+                        <option value="">Select Job...</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">Phase</label>
+                    <select id="shipPhase" class="form-select">
+                        <option value="Rough-In">Rough-In</option>
+                        <option value="Trim Out">Trim Out</option>
+                        <option value="Equipment">Equipment</option>
+                        <option value="Startup">Startup</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">Shipment Date</label>
+                    <input type="date" id="shipDate" class="form-input">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">Status</label>
+                    <select id="shipStatus" class="form-select">
+                        <option value="Draft">Draft</option>
+                        <option value="Ready">Ready</option>
+                        <option value="Shipped">Shipped</option>
+                        <option value="Delivered">Delivered</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">Notes</label>
+                <input type="text" id="shipNotes" class="form-input" placeholder="Notes">
+            </div>
+            <h3 style="font-size:14px;font-weight:700;margin:16px 0 8px;">Available Materials</h3>
+            <div id="availableMaterials" style="max-height:300px;overflow-y:auto;border:1px solid #E5E7EB;border-radius:8px;padding:8px;"></div>
+            <div class="modal-actions" style="margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('shipmentModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Shipment</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/material_shipments.js"></script>
+{% endblock %}

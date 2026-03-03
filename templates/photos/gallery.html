@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Job Photos - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Job Photos</h1>
+    <button class="btn btn-primary" onclick="showUploadModal()">Upload Photos</button>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap;">
+    <select id="photoJobFilter" class="form-select" onchange="loadPhotos()" style="max-width:250px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="photoCategoryFilter" class="form-select" onchange="loadPhotos()" style="max-width:200px;">
+        <option value="">All Categories</option>
+        <option value="General">General</option>
+        <option value="Rough-In">Rough-In</option>
+        <option value="Trim Out">Trim Out</option>
+        <option value="Startup">Startup</option>
+        <option value="Closeout">Closeout</option>
+        <option value="Issue">Issue</option>
+        <option value="Progress">Progress</option>
+        <option value="Before">Before</option>
+        <option value="After">After</option>
+    </select>
+</div>
+
+<!-- Gallery Grid -->
+<div id="photoGallery" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:12px;"></div>
+
+<!-- Upload Modal -->
+<div id="uploadModal" class="modal-overlay" style="display:none;">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Upload Photos</h2>
+            <button class="modal-close" onclick="document.getElementById('uploadModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="uploadPhotos(event)" style="padding:16px;">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="uploadJob" class="form-select" required>
+                    <option value="">Select Job...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Category</label>
+                <select id="uploadCategory" class="form-select">
+                    <option value="General">General</option>
+                    <option value="Rough-In">Rough-In</option>
+                    <option value="Trim Out">Trim Out</option>
+                    <option value="Startup">Startup</option>
+                    <option value="Closeout">Closeout</option>
+                    <option value="Issue">Issue</option>
+                    <option value="Progress">Progress</option>
+                    <option value="Before">Before</option>
+                    <option value="After">After</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Caption</label>
+                <input type="text" id="uploadCaption" class="form-input" placeholder="Optional caption">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Photos</label>
+                <input type="file" id="uploadFiles" accept="image/*" multiple required style="padding:8px;">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('uploadModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10000;align-items:center;justify-content:center;flex-direction:column;">
+    <button onclick="closeLightbox()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:white;font-size:32px;cursor:pointer;">&times;</button>
+    <button id="lbPrev" onclick="navLightbox(-1)" style="position:absolute;left:16px;top:50%;background:none;border:none;color:white;font-size:40px;cursor:pointer;">&#8249;</button>
+    <button id="lbNext" onclick="navLightbox(1)" style="position:absolute;right:16px;top:50%;background:none;border:none;color:white;font-size:40px;cursor:pointer;">&#8250;</button>
+    <img id="lbImage" style="max-width:90%;max-height:80vh;object-fit:contain;">
+    <div id="lbCaption" style="color:white;text-align:center;padding:12px;font-size:14px;"></div>
+</div>
+
+<script src="/static/photos.js"></script>
+{% endblock %}

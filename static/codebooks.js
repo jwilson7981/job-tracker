@@ -72,6 +72,14 @@ function hasChildren(sectionId) {
     return allSections.some(s => s.parent_section_id === sectionId);
 }
 
+function getCompletionIndicator(section) {
+    if (typeof section.is_complete === 'undefined' || section.is_complete === null) return '';
+    if (section.is_complete) {
+        return '<span class="completion-dot complete" title="Content complete"></span>';
+    }
+    return '<span class="completion-dot incomplete" title="Content pending"></span>';
+}
+
 function renderSections() {
     const query = (document.getElementById('sectionSearch')?.value || '').toLowerCase();
     const tree = document.getElementById('sectionTree');
@@ -89,7 +97,7 @@ function renderSections() {
         }
         tree.innerHTML = filtered.map(s => renderSectionItem(s, true)).join('');
     } else {
-        // Hierarchical tree view — start with top-level (depth 0)
+        // Hierarchical tree view -- start with top-level (depth 0)
         const topLevel = allSections.filter(s => s.depth === 0);
         if (!topLevel.length) {
             tree.innerHTML = '<p class="text-muted">No sections found.</p>';
@@ -121,6 +129,9 @@ function renderTreeNode(section) {
         html += `<span class="tree-toggle-spacer"></span>`;
     }
 
+    // Completion indicator
+    html += getCompletionIndicator(section);
+
     html += `<span class="section-number">${section.section_number}</span>`;
     html += `<span class="section-title" onclick="selectSection(${section.id})">${section.title}</span>`;
     html += `<button class="bookmark-btn ${isBookmarked ? 'bookmarked' : ''}" onclick="event.stopPropagation(); toggleBookmark(${section.id})" title="${isBookmarked ? 'Remove bookmark' : 'Bookmark'}">`;
@@ -148,6 +159,7 @@ function renderSectionItem(section, flat) {
 
     return `<div class="section-item ${isSelected ? 'selected' : ''}" data-id="${section.id}" onclick="selectSection(${section.id})">
         <span class="tree-toggle-spacer"></span>
+        ${getCompletionIndicator(section)}
         <span class="section-number">${section.section_number}</span>
         <span class="section-title">${section.title}</span>
         <span class="depth-badge">${depthLabel}</span>
@@ -196,6 +208,7 @@ function showContent(section) {
     const panel = document.getElementById('contentPanel');
     const children = getChildren(section.id);
     const parent = section.parent_section_id ? allSections.find(s => s.id === section.parent_section_id) : null;
+    const canEdit = window.USER_ROLE && ['owner', 'admin'].includes(window.USER_ROLE);
 
     let breadcrumb = '';
     if (parent) {
@@ -208,7 +221,21 @@ function showContent(section) {
 
     let html = `<div class="content-header">`;
     if (breadcrumb) html += `<div class="content-breadcrumb">${breadcrumb}</div>`;
+    html += `<div style="display:flex;align-items:center;gap:12px;">`;
     html += `<h2>${section.section_number} &mdash; ${section.title}</h2>`;
+
+    // Completion status badge
+    if (section.is_complete) {
+        html += `<span class="status-badge status-complete">Complete</span>`;
+    } else {
+        html += `<span class="status-badge status-pending">Pending</span>`;
+    }
+
+    // Edit button for owner/admin
+    if (canEdit) {
+        html += `<button class="btn btn-small btn-secondary" onclick="editSectionContent(${section.id})" style="margin-left:auto;">Edit Content</button>`;
+    }
+    html += `</div>`;
     html += `</div>`;
 
     if (section.content) {
@@ -228,6 +255,7 @@ function showContent(section) {
         for (const child of children) {
             html += `<div class="content-subsection-item" onclick="selectSection(${child.id})">`;
             html += `<strong>${child.section_number}</strong> &mdash; ${child.title}`;
+            html += ` ${getCompletionIndicator(child)}`;
             if (child.content) {
                 const preview = child.content.substring(0, 200);
                 html += `<p class="subsection-preview">${preview}${child.content.length > 200 ? '...' : ''}</p>`;
@@ -239,10 +267,44 @@ function showContent(section) {
 
     if (!section.content && !children.length) {
         html += `<p class="text-muted">No detailed content available for this section.</p>`;
+        if (canEdit) {
+            html += `<button class="btn btn-primary" onclick="editSectionContent(${section.id})">Add Content</button>`;
+        }
     }
 
     panel.innerHTML = html;
     panel.scrollTop = 0;
+}
+
+function editSectionContent(sectionId) {
+    const section = allSections.find(s => s.id === sectionId);
+    if (!section) return;
+    document.getElementById('editSectionId').value = sectionId;
+    document.getElementById('editSectionTitle').textContent = `Edit: ${section.section_number} - ${section.title}`;
+    document.getElementById('editSectionContent').value = section.content || '';
+    document.getElementById('editSectionModal').style.display = 'flex';
+}
+
+async function saveSectionContent(e) {
+    e.preventDefault();
+    const sid = document.getElementById('editSectionId').value;
+    const content = document.getElementById('editSectionContent').value;
+    const res = await fetch(`/api/codebooks/${window.BOOK_ID}/sections/${sid}/content`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: content })
+    });
+    if (res.ok) {
+        // Update local data
+        const section = allSections.find(s => s.id === parseInt(sid));
+        if (section) {
+            section.content = content;
+            section.is_complete = 1;
+        }
+        document.getElementById('editSectionModal').style.display = 'none';
+        renderSections();
+        showContent(section);
+    }
 }
 
 async function loadBookmarks() {

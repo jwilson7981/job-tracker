@@ -3,8 +3,23 @@
 {% block content %}
 <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
     <h1>Invoice Reports</h1>
-    <button class="btn btn-secondary" onclick="window.print()">Print</button>
+    <div style="display:flex;gap:6px;">
+        <button class="btn btn-secondary btn-small" onclick="exportActiveReportTab('excel')">Excel</button>
+        <button class="btn btn-secondary btn-small" onclick="exportActiveReportTab('pdf')">PDF</button>
+        <button class="btn btn-secondary" onclick="window.print()">Print</button>
+    </div>
 </div>
+<script>
+function exportActiveReportTab(fmt) {
+    const tabs = {flags:'flagsBody',spend:'spendBody',supplier:'supplierBody',trends:'trendsBody'};
+    const active = document.querySelector('.tab-btn.active');
+    const tab = active ? active.dataset.tab : 'flags';
+    const bodyId = tabs[tab] || 'flagsBody';
+    const title = 'Invoice Report - ' + (active ? active.textContent.trim() : 'Flags');
+    if (fmt === 'excel') exportToExcel(title, bodyId, 'Invoice_Report');
+    else exportToPDF(title, bodyId, 'Invoice_Report');
+}
+</script>
 
 <!-- Global Filters -->
 <div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">

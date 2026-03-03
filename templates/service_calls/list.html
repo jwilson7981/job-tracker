@@ -3,7 +3,13 @@
 {% block content %}
 <div class="page-header">
     <h1>Service Calls</h1>
-    <button class="btn btn-primary" onclick="showNewCall()">+ New Service Call</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Service Calls','callsBody','Service_Calls')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Service Calls','callsBody','Service_Calls')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showNewCall()">+ New Service Call</button>
+    </div>
 </div>
 <div class="filter-bar">
     <select id="filterStatus" onchange="loadCalls()">

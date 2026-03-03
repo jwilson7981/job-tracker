@@ -3,6 +3,10 @@
 {% block content %}
 <div class="page-header">
     <h1>Supplier Invoices</h1>
+    <div class="export-btns" style="display:inline-flex;gap:6px;">
+        <button class="btn btn-secondary btn-small" onclick="exportToExcel('Supplier Invoices','invoicesBody','Supplier_Invoices')">Excel</button>
+        <button class="btn btn-secondary btn-small" onclick="exportToPDF('Supplier Invoices','invoicesBody','Supplier_Invoices')">PDF</button>
+    </div>
 </div>
 
 <!-- Analytics Dashboard -->

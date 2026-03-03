@@ -46,7 +46,11 @@
             <h3>Bid Details</h3>
             <div class="bid-form-grid">
                 <div class="bid-field"><label class="form-label">Contracting GC</label>
-                    <input type="text" id="bidGC" class="form-input"></div>
+                    <div style="position:relative;">
+                        <input type="text" id="bidGC" class="form-input" autocomplete="off" oninput="searchCustomers(this.value)">
+                        <input type="hidden" id="bidCustomerId">
+                        <div id="gcDropdown" class="autocomplete-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--gray-200);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:100;max-height:200px;overflow-y:auto;"></div>
+                    </div></div>
                 <div class="bid-field"><label class="form-label">Attention</label>
                     <input type="text" id="bidAttention" class="form-input"></div>
                 <div class="bid-field"><label class="form-label">Bid #</label>
@@ -303,6 +307,25 @@
         </div>
     </div>
 </div>
+
+<!-- Follow-ups Section (Phase 4) -->
+{% if bid_id %}
+<div class="bid-section" id="followupsSection" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3>Follow-ups</h3>
+        <button class="btn btn-secondary btn-small" onclick="showAddFollowup()">+ Add Follow-up</button>
+    </div>
+    <table class="data-table" style="margin-top:8px;">
+        <thead><tr><th>Date</th><th>Type</th><th>Assigned To</th><th>Status</th><th>Notes</th><th>Result</th><th></th></tr></thead>
+        <tbody id="followupsBody"><tr><td colspan="7" class="empty-state">No follow-ups</td></tr></tbody>
+    </table>
+</div>
+
+<!-- Award Button -->
+<div id="awardSection" style="display:none;margin-top:16px;">
+    <button class="btn btn-primary" onclick="awardBid()" style="background:var(--green, #22c55e);">Award This Bid</button>
+</div>
+{% endif %}
 
 <script>window.BID_ID = {{ bid_id }};</script>
 <script src="/static/bids.js"></script>
