@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Team Pay - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Team Pay (Internal Progress Payroll)</h1>
+    <button class="btn btn-primary" onclick="showNewSchedule()">+ New Schedule</button>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Total Job Value</th>
+                <th>Members</th>
+                <th>Scheduled Total</th>
+                <th>Total Paid</th>
+                <th>Periods</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="schedulesBody">
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- New Schedule Modal -->
+<div class="modal-overlay" id="scheduleModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>New Team Pay Schedule</h2>
+            <button class="modal-close" onclick="document.getElementById('scheduleModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveSchedule(event)">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="nsJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Total Job Value</label>
+                <input type="number" id="nsTotalValue" class="form-input" step="0.01" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="nsNotes" class="form-input" rows="3"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('scheduleModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Schedule</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>window.TP_PAGE = 'list';</script>
+<script src="/static/team_pay.js"></script>
+{% endblock %}

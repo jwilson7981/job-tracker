@@ -1558,6 +1558,67 @@ def init_db():
     if 'must_change_password' not in u_cols:
         conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
+    # Migration: Team Pay tables (internal progress-based payroll)
+    existing_tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if 'team_pay_schedules' not in existing_tables:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL UNIQUE,
+            total_job_value REAL NOT NULL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_schedules_job ON team_pay_schedules(job_id)")
+
+    if 'team_pay_members' not in existing_tables:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            scheduled_amount REAL NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (schedule_id) REFERENCES team_pay_schedules(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            UNIQUE(schedule_id, user_id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_members_schedule ON team_pay_members(schedule_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_members_user ON team_pay_members(user_id)")
+
+    if 'team_pay_periods' not in existing_tables:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_periods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            period_number INTEGER NOT NULL,
+            payment_date TEXT NOT NULL DEFAULT (date('now','localtime')),
+            source_payment_id INTEGER,
+            source_amount REAL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft','Finalized')),
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (schedule_id) REFERENCES team_pay_schedules(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_payment_id) REFERENCES payments(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_periods_schedule ON team_pay_periods(schedule_id)")
+
+    if 'team_pay_entries' not in existing_tables:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_id INTEGER NOT NULL,
+            member_id INTEGER NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (period_id) REFERENCES team_pay_periods(id) ON DELETE CASCADE,
+            FOREIGN KEY (member_id) REFERENCES team_pay_members(id) ON DELETE CASCADE,
+            UNIQUE(period_id, member_id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_entries_period ON team_pay_entries(period_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_entries_member ON team_pay_entries(member_id)")
+
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:

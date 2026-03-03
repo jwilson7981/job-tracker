@@ -1071,6 +1071,24 @@ def create_payment():
                 )
         else:
             conn2.close()
+    # Team Pay auto-prompt: if job has a team pay schedule, notify owners
+    if job_id_val:
+        conn3 = get_db()
+        tp_sched = conn3.execute('SELECT id FROM team_pay_schedules WHERE job_id = ?', (job_id_val,)).fetchone()
+        if tp_sched:
+            job_row3 = conn3.execute('SELECT name FROM jobs WHERE id = ?', (job_id_val,)).fetchone()
+            job_label3 = job_row3['name'] if job_row3 else f'Job #{job_id_val}'
+            owners = conn3.execute("SELECT id FROM users WHERE role = 'owner' AND is_active = 1").fetchall()
+            conn3.close()
+            for u in owners:
+                create_notification(
+                    u['id'], 'system',
+                    f'Team Pay: Payment for {job_label3}',
+                    f'Payment received for {job_label3}. Distribute to team members.',
+                    f'/team-pay/job/{tp_sched["id"]}'
+                )
+        else:
+            conn3.close()
     conn.close()
     return jsonify({'ok': True}), 201
 
@@ -11941,6 +11959,336 @@ def api_quick_add_job():
     conn.close()
     return jsonify({'ok': True, 'job_id': job_id}), 201
 
+
+# ─── Team Pay (Internal Progress Payroll) ─────────────────────────
+
+@app.route('/team-pay')
+@role_required('owner')
+def team_pay_list_page():
+    return render_template('team_pay/list.html')
+
+@app.route('/team-pay/job/<int:schedule_id>')
+@role_required('owner')
+def team_pay_job_page(schedule_id):
+    return render_template('team_pay/job.html', schedule_id=schedule_id)
+
+@app.route('/team-pay/period/<int:period_id>')
+@role_required('owner')
+def team_pay_period_page(period_id):
+    return render_template('team_pay/period.html', period_id=period_id)
+
+@app.route('/api/team-pay/schedules', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_schedules_list():
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT s.*, j.name as job_name,
+            (SELECT COUNT(*) FROM team_pay_members WHERE schedule_id = s.id) as member_count,
+            (SELECT COALESCE(SUM(scheduled_amount), 0) FROM team_pay_members WHERE schedule_id = s.id) as scheduled_total,
+            (SELECT COUNT(*) FROM team_pay_periods WHERE schedule_id = s.id) as period_count,
+            (SELECT COALESCE(SUM(e.amount), 0) FROM team_pay_entries e
+             JOIN team_pay_periods p ON e.period_id = p.id
+             WHERE p.schedule_id = s.id) as total_paid
+        FROM team_pay_schedules s
+        JOIN jobs j ON s.job_id = j.id
+        ORDER BY s.created_at DESC
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/team-pay/schedules', methods=['POST'])
+@api_role_required('owner')
+def api_team_pay_schedules_create():
+    data = request.get_json()
+    job_id = data.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'Job is required'}), 400
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM team_pay_schedules WHERE job_id = ?', (job_id,)).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({'error': 'A team pay schedule already exists for this job'}), 409
+    cursor = conn.execute(
+        'INSERT INTO team_pay_schedules (job_id, total_job_value, notes, created_by) VALUES (?,?,?,?)',
+        (job_id, float(data.get('total_job_value', 0)), data.get('notes', ''), session.get('user_id'))
+    )
+    conn.commit()
+    schedule_id = cursor.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': schedule_id}), 201
+
+@app.route('/api/team-pay/schedules/<int:sid>', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_schedule_detail(sid):
+    conn = get_db()
+    row = conn.execute('''
+        SELECT s.*, j.name as job_name
+        FROM team_pay_schedules s
+        JOIN jobs j ON s.job_id = j.id
+        WHERE s.id = ?
+    ''', (sid,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify(dict(row))
+
+@app.route('/api/team-pay/schedules/<int:sid>', methods=['PUT'])
+@api_role_required('owner')
+def api_team_pay_schedule_update(sid):
+    data = request.get_json()
+    conn = get_db()
+    conn.execute(
+        "UPDATE team_pay_schedules SET total_job_value = ?, notes = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+        (float(data.get('total_job_value', 0)), data.get('notes', ''), sid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-pay/schedules/<int:sid>', methods=['DELETE'])
+@api_role_required('owner')
+def api_team_pay_schedule_delete(sid):
+    conn = get_db()
+    conn.execute('DELETE FROM team_pay_schedules WHERE id = ?', (sid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# --- Team Pay Members ---
+
+@app.route('/api/team-pay/schedules/<int:sid>/members', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_members_list(sid):
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT m.*, u.display_name, u.username,
+            (SELECT COALESCE(SUM(e.amount), 0) FROM team_pay_entries e
+             JOIN team_pay_periods p ON e.period_id = p.id
+             WHERE e.member_id = m.id) as total_paid
+        FROM team_pay_members m
+        JOIN users u ON m.user_id = u.id
+        WHERE m.schedule_id = ?
+        ORDER BY m.sort_order, m.id
+    ''', (sid,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/team-pay/schedules/<int:sid>/members', methods=['POST'])
+@api_role_required('owner')
+def api_team_pay_member_add(sid):
+    data = request.get_json()
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'User is required'}), 400
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM team_pay_members WHERE schedule_id = ? AND user_id = ?', (sid, user_id)).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({'error': 'Member already in schedule'}), 409
+    max_order = conn.execute('SELECT COALESCE(MAX(sort_order), 0) FROM team_pay_members WHERE schedule_id = ?', (sid,)).fetchone()[0]
+    conn.execute(
+        'INSERT INTO team_pay_members (schedule_id, user_id, scheduled_amount, sort_order) VALUES (?,?,?,?)',
+        (sid, user_id, float(data.get('scheduled_amount', 0)), max_order + 1)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/team-pay/members/<int:mid>', methods=['PUT'])
+@api_role_required('owner')
+def api_team_pay_member_update(mid):
+    data = request.get_json()
+    conn = get_db()
+    fields, values = [], []
+    if 'scheduled_amount' in data:
+        fields.append('scheduled_amount = ?')
+        values.append(float(data['scheduled_amount']))
+    if 'sort_order' in data:
+        fields.append('sort_order = ?')
+        values.append(int(data['sort_order']))
+    if fields:
+        values.append(mid)
+        conn.execute(f"UPDATE team_pay_members SET {', '.join(fields)} WHERE id = ?", values)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-pay/members/<int:mid>', methods=['DELETE'])
+@api_role_required('owner')
+def api_team_pay_member_delete(mid):
+    conn = get_db()
+    conn.execute('DELETE FROM team_pay_members WHERE id = ?', (mid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# --- Team Pay Periods ---
+
+@app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_periods_list(sid):
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT p.*,
+            (SELECT COALESCE(SUM(e.amount), 0) FROM team_pay_entries e WHERE e.period_id = p.id) as distributed_total
+        FROM team_pay_periods p
+        WHERE p.schedule_id = ?
+        ORDER BY p.period_number
+    ''', (sid,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['POST'])
+@api_role_required('owner')
+def api_team_pay_period_create(sid):
+    conn = get_db()
+    max_num = conn.execute('SELECT COALESCE(MAX(period_number), 0) FROM team_pay_periods WHERE schedule_id = ?', (sid,)).fetchone()[0]
+    cursor = conn.execute(
+        'INSERT INTO team_pay_periods (schedule_id, period_number, created_by) VALUES (?,?,?)',
+        (sid, max_num + 1, session.get('user_id'))
+    )
+    period_id = cursor.lastrowid
+    # Pre-create entry rows for all members
+    members = conn.execute('SELECT id FROM team_pay_members WHERE schedule_id = ?', (sid,)).fetchall()
+    for m in members:
+        conn.execute('INSERT INTO team_pay_entries (period_id, member_id, amount) VALUES (?,?,0)', (period_id, m['id']))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': period_id}), 201
+
+@app.route('/api/team-pay/periods/<int:pid>', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_period_detail(pid):
+    """Main G703 endpoint — returns members with calculated previous/total/balance."""
+    conn = get_db()
+    period = conn.execute('SELECT * FROM team_pay_periods WHERE id = ?', (pid,)).fetchone()
+    if not period:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    schedule_id = period['schedule_id']
+    period_number = period['period_number']
+    schedule = conn.execute('''
+        SELECT s.*, j.name as job_name
+        FROM team_pay_schedules s JOIN jobs j ON s.job_id = j.id
+        WHERE s.id = ?
+    ''', (schedule_id,)).fetchone()
+    # Get all members
+    members = conn.execute('''
+        SELECT m.*, u.display_name, u.username
+        FROM team_pay_members m JOIN users u ON m.user_id = u.id
+        WHERE m.schedule_id = ?
+        ORDER BY m.sort_order, m.id
+    ''', (schedule_id,)).fetchall()
+    # Get current period entries
+    entries = conn.execute('SELECT * FROM team_pay_entries WHERE period_id = ?', (pid,)).fetchall()
+    entry_map = {e['member_id']: e['amount'] for e in entries}
+    # Get prior period IDs
+    prior_periods = conn.execute(
+        'SELECT id FROM team_pay_periods WHERE schedule_id = ? AND period_number < ?',
+        (schedule_id, period_number)
+    ).fetchall()
+    prior_ids = [p['id'] for p in prior_periods]
+    # Calculate previous payments per member
+    prev_map = {}
+    if prior_ids:
+        placeholders = ','.join('?' * len(prior_ids))
+        prev_rows = conn.execute(
+            f'SELECT member_id, COALESCE(SUM(amount), 0) as prev FROM team_pay_entries WHERE period_id IN ({placeholders}) GROUP BY member_id',
+            prior_ids
+        ).fetchall()
+        prev_map = {r['member_id']: r['prev'] for r in prev_rows}
+    conn.close()
+    result = dict(period)
+    result['schedule_id'] = schedule_id
+    result['job_name'] = schedule['job_name'] if schedule else ''
+    result['total_job_value'] = schedule['total_job_value'] if schedule else 0
+    result['members'] = []
+    for m in members:
+        prev = prev_map.get(m['id'], 0)
+        this_amt = entry_map.get(m['id'], 0)
+        result['members'].append({
+            'member_id': m['id'],
+            'user_id': m['user_id'],
+            'display_name': m['display_name'],
+            'username': m['username'],
+            'scheduled_amount': m['scheduled_amount'],
+            'previous_payments': prev,
+            'this_period': this_amt,
+        })
+    return jsonify(result)
+
+@app.route('/api/team-pay/periods/<int:pid>', methods=['PUT'])
+@api_role_required('owner')
+def api_team_pay_period_update(pid):
+    data = request.get_json()
+    conn = get_db()
+    period = conn.execute('SELECT * FROM team_pay_periods WHERE id = ?', (pid,)).fetchone()
+    if not period:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if period['status'] == 'Finalized' and data.get('status') != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Period is finalized'}), 400
+    # Update period fields
+    update_fields = []
+    update_vals = []
+    if 'notes' in data:
+        update_fields.append('notes = ?')
+        update_vals.append(data['notes'])
+    if 'source_amount' in data:
+        update_fields.append('source_amount = ?')
+        update_vals.append(float(data['source_amount']))
+    if 'payment_date' in data:
+        update_fields.append('payment_date = ?')
+        update_vals.append(data['payment_date'])
+    if 'status' in data:
+        update_fields.append('status = ?')
+        update_vals.append(data['status'])
+    if update_fields:
+        update_vals.append(pid)
+        conn.execute(f"UPDATE team_pay_periods SET {', '.join(update_fields)} WHERE id = ?", update_vals)
+    # Save entries
+    entries = data.get('entries', [])
+    for entry in entries:
+        conn.execute('''
+            INSERT INTO team_pay_entries (period_id, member_id, amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT(period_id, member_id) DO UPDATE SET amount = excluded.amount
+        ''', (pid, entry['member_id'], float(entry.get('amount', 0))))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-pay/periods/<int:pid>', methods=['DELETE'])
+@api_role_required('owner')
+def api_team_pay_period_delete(pid):
+    conn = get_db()
+    period = conn.execute('SELECT status FROM team_pay_periods WHERE id = ?', (pid,)).fetchone()
+    if period and period['status'] == 'Finalized':
+        conn.close()
+        return jsonify({'error': 'Cannot delete a finalized period'}), 400
+    conn.execute('DELETE FROM team_pay_periods WHERE id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-pay/dashboard')
+@api_role_required('owner')
+def api_team_pay_dashboard():
+    """Cross-job summary per member."""
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT u.id as user_id, u.display_name, u.username,
+            COALESCE(SUM(m.scheduled_amount), 0) as total_scheduled,
+            COALESCE((SELECT SUM(e.amount) FROM team_pay_entries e WHERE e.member_id IN
+                (SELECT id FROM team_pay_members WHERE user_id = u.id)), 0) as total_paid
+        FROM users u
+        JOIN team_pay_members m ON m.user_id = u.id
+        GROUP BY u.id
+        ORDER BY u.display_name
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
 
 # ─── Startup ────────────────────────────────────────────────────
 

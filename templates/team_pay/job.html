@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Team Pay - Job Setup{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/team-pay" class="link" style="font-size:14px;">&larr; Back to Team Pay</a>
+        <h1 id="jobTitle">Team Pay Schedule</h1>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="showEditSchedule()">Edit Schedule</button>
+        <button class="btn btn-primary" onclick="showAddMember()">+ Add Member</button>
+    </div>
+</div>
+
+<!-- Schedule Info -->
+<div class="detail-grid" id="scheduleInfo" style="grid-template-columns:1fr 1fr 1fr; margin-bottom:24px;"></div>
+
+<!-- Members Table -->
+<h3 style="margin-bottom:8px;">Team Members</h3>
+<div class="table-wrapper" style="margin-bottom:24px;">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">#</th>
+                <th>Member</th>
+                <th>Scheduled Amount</th>
+                <th>Total Paid</th>
+                <th>% Complete</th>
+                <th>Balance</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="membersBody">
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+        </tbody>
+        <tfoot id="membersFoot"></tfoot>
+    </table>
+</div>
+
+<!-- Quick Setup -->
+<div style="margin-bottom:24px;">
+    <button class="btn btn-secondary" onclick="showQuickSetup()">Quick Setup — Split Evenly</button>
+</div>
+
+<!-- Payment Periods -->
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <h3>Payment Periods</h3>
+    <button class="btn btn-primary" onclick="createPeriod()">+ New Period</button>
+</div>
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Period #</th>
+                <th>Payment Date</th>
+                <th>Source Amount</th>
+                <th>Distributed</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="periodsBody">
+            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add Member Modal -->
+<div class="modal-overlay" id="memberModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="memberModalTitle">Add Team Member</h2>
+            <button class="modal-close" onclick="document.getElementById('memberModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveMember(event)">
+            <input type="hidden" id="amMemberId" value="">
+            <div class="form-group" id="amUserGroup">
+                <label class="form-label">Team Member</label>
+                <select id="amUser" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Scheduled Amount</label>
+                <input type="number" id="amAmount" class="form-input" step="0.01" required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('memberModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Schedule Modal -->
+<div class="modal-overlay" id="editScheduleModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Edit Schedule</h2>
+            <button class="modal-close" onclick="document.getElementById('editScheduleModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="updateSchedule(event)">
+            <div class="form-group">
+                <label class="form-label">Total Job Value</label>
+                <input type="number" id="esValue" class="form-input" step="0.01" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="esNotes" class="form-input" rows="3"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('editScheduleModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Quick Setup Modal -->
+<div class="modal-overlay" id="quickSetupModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Quick Setup — Split Evenly</h2>
+            <button class="modal-close" onclick="document.getElementById('quickSetupModal').style.display='none'">&times;</button>
+        </div>
+        <p style="margin-bottom:12px;">Select team members to add and split the job value evenly among them.</p>
+        <div id="qsUserList" style="margin-bottom:16px;"></div>
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('quickSetupModal').style.display='none'">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="applyQuickSetup()">Add & Split</button>
+        </div>
+    </div>
+</div>
+
+<script>window.TP_PAGE = 'job'; window.TP_SCHEDULE_ID = {{ schedule_id }};</script>
+<script src="/static/team_pay.js"></script>
+{% endblock %}

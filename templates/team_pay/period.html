@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Team Pay - Payment Period{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="#" id="backLink" class="link" style="font-size:14px;">&larr; Back to Schedule</a>
+        <h1 id="periodTitle">Payment Period</h1>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <span id="periodStatus" class="phase-status"></span>
+        <button class="btn btn-secondary" id="btnFinalize" onclick="finalizePeriod()">Finalize</button>
+        <button class="btn btn-primary" id="btnSave" onclick="saveEntries()">Save</button>
+    </div>
+</div>
+
+<!-- Period Info -->
+<div class="detail-grid" id="periodInfo" style="grid-template-columns:1fr 1fr 1fr 1fr; margin-bottom:16px;"></div>
+
+<!-- Period Notes -->
+<div class="form-group" style="margin-bottom:16px;">
+    <label class="form-label">Period Notes</label>
+    <div class="form-row" style="gap:8px;">
+        <input type="text" id="periodNotes" class="form-input" placeholder="e.g. Draw #3 from GC">
+        <input type="number" id="sourceAmount" class="form-input" style="width:180px;" step="0.01" placeholder="Source Amount">
+        <input type="date" id="paymentDate" class="form-input" style="width:180px;">
+    </div>
+</div>
+
+<!-- G703-Style Distribution Grid -->
+<div class="g703-wrapper">
+    <h3 style="margin-bottom:8px;">Distribution Schedule (G703-Style)</h3>
+    <div class="table-wrapper">
+        <table class="data-table g703-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">#</th>
+                    <th>Team Member</th>
+                    <th style="width:130px;">Scheduled<br>Amount</th>
+                    <th style="width:130px;">Previous<br>Payments</th>
+                    <th style="width:130px;">This<br>Period</th>
+                    <th style="width:130px;">Total<br>Paid</th>
+                    <th style="width:90px;">%<br>Complete</th>
+                    <th style="width:130px;">Balance</th>
+                </tr>
+            </thead>
+            <tbody id="g703Body">
+                <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+            </tbody>
+            <tfoot id="g703Foot"></tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Auto-distribute controls -->
+<div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+    <button class="btn btn-secondary" onclick="distributeEvenly()">Distribute Evenly</button>
+    <button class="btn btn-secondary" onclick="distributeProportional()">Distribute Proportional</button>
+    <span class="text-muted" style="font-size:13px;">Distributes the Source Amount among members</span>
+</div>
+
+<script>window.TP_PAGE = 'period'; window.TP_PERIOD_ID = {{ period_id }};</script>
+<script src="/static/team_pay.js"></script>
+{% endblock %}
