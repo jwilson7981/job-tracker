@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter landscape;
+    margin: 0.5in 0.6in;
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 10px; color: #222; line-height: 1.4; margin: 0; }
+
+/* ─── G702 Page ─── */
+.g702-page { page-break-after: always; }
+.g702-title { text-align: center; font-size: 16px; font-weight: 700; color: #1a5276; margin: 0 0 2px; }
+.g702-subtitle { text-align: center; font-size: 9px; color: #666; margin-bottom: 12px; }
+
+.g702-top-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; border: 1.5px solid #333; margin-bottom: 10px; }
+.g702-top-cell { padding: 6px 8px; border-right: 1px solid #999; border-bottom: 1px solid #999; font-size: 9px; }
+.g702-top-cell:last-child { border-right: none; }
+.g702-top-cell .cell-label { font-size: 8px; color: #666; text-transform: uppercase; margin-bottom: 2px; }
+.g702-top-cell .cell-value { font-weight: 600; font-size: 10px; }
+
+.g702-body-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1.5px solid #333; }
+.g702-left { border-right: 1.5px solid #333; }
+
+.g702-line { display: flex; justify-content: space-between; padding: 4px 10px; border-bottom: 1px solid #ddd; font-size: 10px; }
+.g702-line:last-child { border-bottom: none; }
+.g702-line-label { color: #333; }
+.g702-line-value { font-weight: 600; text-align: right; min-width: 100px; }
+.g702-line.highlight { background: #f0f5fa; font-weight: 700; font-size: 11px; }
+
+.g702-co-section { padding: 8px 10px; }
+.g702-co-title { font-weight: 700; font-size: 9px; color: #1a5276; text-transform: uppercase; margin-bottom: 6px; }
+.g702-co-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+.g702-co-table td { padding: 2px 4px; border-bottom: 1px solid #eee; }
+.g702-co-table td:last-child { text-align: right; font-weight: 600; }
+
+.g702-notary { margin-top: 12px; border: 1.5px solid #333; padding: 10px; font-size: 9px; }
+.g702-notary-title { font-weight: 700; font-size: 10px; margin-bottom: 6px; }
+.sig-row { display: flex; gap: 30px; margin-top: 16px; }
+.sig-block { flex: 1; }
+.sig-line { border-bottom: 1px solid #333; height: 24px; }
+.sig-label { font-size: 8px; color: #666; margin-top: 2px; }
+
+/* ─── G703 Page ─── */
+.g703-title { text-align: center; font-size: 14px; font-weight: 700; color: #1a5276; margin: 0 0 2px; }
+.g703-subtitle { text-align: center; font-size: 9px; color: #666; margin-bottom: 8px; }
+.g703-info { display: flex; justify-content: space-between; font-size: 9px; margin-bottom: 8px; padding: 4px 0; border-bottom: 1px solid #ccc; }
+
+table.g703 { width: 100%; border-collapse: collapse; font-size: 9px; }
+table.g703 th { background: #1a5276; color: #fff; padding: 4px 6px; text-align: center; font-size: 8px; font-weight: 600; text-transform: uppercase; border: 1px solid #1a5276; }
+table.g703 td { padding: 3px 6px; border: 1px solid #ddd; }
+table.g703 td.money { text-align: right; font-variant-numeric: tabular-nums; }
+table.g703 td.pct { text-align: center; }
+table.g703 tr.header-row td { background: #f0f5fa; font-weight: 700; }
+table.g703 tr.total-row td { border-top: 2px solid #1a5276; font-weight: 700; background: #f8f9fa; }
+
+.footer-line { margin-top: 8px; text-align: center; font-size: 8px; color: #999; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ PAGE 1: AIA G702 ═══════════ -->
+<div class="g702-page">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+        <div>
+            <img src="{{ logo_path }}" alt="LGHVAC" style="max-height:50px;">
+        </div>
+        <div style="text-align:right;font-size:9px;color:#444;">
+            <div style="font-size:12px;font-weight:700;color:#1a5276;">LGHVAC Mechanical, LLC</div>
+            3616 Utica Square Dr.<br>Edmond, OK 73034<br>918-351-3092
+        </div>
+    </div>
+
+    <div class="g702-title">APPLICATION AND CERTIFICATE FOR PAYMENT</div>
+    <div class="g702-subtitle">AIA DOCUMENT G702</div>
+
+    <div class="g702-top-grid">
+        <div class="g702-top-cell">
+            <div class="cell-label">To (General Contractor)</div>
+            <div class="cell-value">{{ contract.gc_name or '-' }}</div>
+            <div style="font-size:8px;color:#666;">{{ contract.gc_address or '' }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Project</div>
+            <div class="cell-value">{{ job_name }}</div>
+            <div style="font-size:8px;color:#666;">{{ contract.project_address or '' }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Application No.</div>
+            <div class="cell-value">{{ application.application_number }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">From (Contractor)</div>
+            <div class="cell-value">LGHVAC Mechanical, LLC</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Contract For</div>
+            <div class="cell-value">{{ contract.contract_for or 'HVAC' }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Period To</div>
+            <div class="cell-value">{{ application.period_to or '-' }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Project No.</div>
+            <div class="cell-value">{{ contract.project_no or '-' }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Contract Date</div>
+            <div class="cell-value">{{ contract.contract_date or '-' }}</div>
+        </div>
+        <div class="g702-top-cell">
+            <div class="cell-label">Application Date</div>
+            <div class="cell-value">{{ application.application_date or '-' }}</div>
+        </div>
+    </div>
+
+    <div class="g702-body-grid">
+        <div class="g702-left">
+            <div class="g702-line"><span class="g702-line-label">1. ORIGINAL CONTRACT SUM</span><span class="g702-line-value">{{ fmt(g702.l1) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">2. Net change by Change Orders</span><span class="g702-line-value">{{ fmt(g702.l2) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">3. CONTRACT SUM TO DATE (Line 1 ± 2)</span><span class="g702-line-value">{{ fmt(g702.l3) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">4. TOTAL COMPLETED & STORED TO DATE</span><span class="g702-line-value">{{ fmt(g702.l4) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label" style="padding-left:16px;">5a. {{ contract.retainage_work_pct }}% of Completed Work</span><span class="g702-line-value">{{ fmt(g702.l5a) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label" style="padding-left:16px;">5b. {{ contract.retainage_stored_pct }}% of Stored Material</span><span class="g702-line-value">{{ fmt(g702.l5b) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">Total Retainage (5a + 5b)</span><span class="g702-line-value">{{ fmt(g702.l5) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">6. TOTAL EARNED LESS RETAINAGE</span><span class="g702-line-value">{{ fmt(g702.l6) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">7. LESS PREVIOUS CERTIFICATES FOR PAYMENT</span><span class="g702-line-value">{{ fmt(g702.l7) }}</span></div>
+            <div class="g702-line highlight"><span class="g702-line-label">8. CURRENT PAYMENT DUE</span><span class="g702-line-value">{{ fmt(g702.l8) }}</span></div>
+            <div class="g702-line"><span class="g702-line-label">9. BALANCE TO FINISH, INCL. RETAINAGE</span><span class="g702-line-value">{{ fmt(g702.l9) }}</span></div>
+        </div>
+        <div class="g702-co-section">
+            <div class="g702-co-title">Change Order Summary</div>
+            <table class="g702-co-table">
+                <tr><td>Previous CO Additions</td><td>{{ fmt(g702.co_prev_add) }}</td></tr>
+                <tr><td>This Month Additions</td><td>{{ fmt(application.co_additions or 0) }}</td></tr>
+                <tr><td>Previous CO Deductions</td><td>{{ fmt(g702.co_prev_ded) }}</td></tr>
+                <tr><td>This Month Deductions</td><td>{{ fmt(application.co_deductions or 0) }}</td></tr>
+                <tr><td><strong>Net Changes</strong></td><td><strong>{{ fmt(g702.l2) }}</strong></td></tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- Contractor Certification -->
+    <div class="g702-notary">
+        <div class="g702-notary-title">CONTRACTOR'S CERTIFICATION</div>
+        <p style="font-size:8.5px;line-height:1.4;">The undersigned Contractor certifies that to the best of the Contractor's knowledge, information and belief, the Work covered by this Application for Payment has been completed in accordance with the Contract Documents, that all amounts have been paid by the Contractor for Work for which previous Certificates for Payment were issued, and that current payment shown herein is now due.</p>
+        <div class="sig-row">
+            <div class="sig-block">
+                <div class="sig-line"></div>
+                <div class="sig-label">CONTRACTOR: LGHVAC Mechanical, LLC</div>
+            </div>
+            <div class="sig-block" style="flex:0 0 140px;">
+                <div class="sig-line"></div>
+                <div class="sig-label">Date</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Architect/GC Approval -->
+    <div class="g702-notary" style="margin-top:8px;">
+        <div class="g702-notary-title">CERTIFICATE FOR PAYMENT</div>
+        <p style="font-size:8.5px;line-height:1.4;">In accordance with the Contract Documents, the amount certified is: <strong>{{ fmt(g702.l8) }}</strong></p>
+        <div class="sig-row">
+            <div class="sig-block">
+                <div class="sig-line"></div>
+                <div class="sig-label">Approved By</div>
+            </div>
+            <div class="sig-block" style="flex:0 0 140px;">
+                <div class="sig-line"></div>
+                <div class="sig-label">Date</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════ PAGE 2: AIA G703 ═══════════ -->
+<div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+        <div>
+            <div class="g703-title">CONTINUATION SHEET</div>
+            <div class="g703-subtitle">AIA DOCUMENT G703</div>
+        </div>
+        <div style="text-align:right;font-size:9px;color:#444;">
+            Application No: <strong>{{ application.application_number }}</strong><br>
+            Period To: <strong>{{ application.period_to or '-' }}</strong>
+        </div>
+    </div>
+
+    <div class="g703-info">
+        <span>Project: <strong>{{ job_name }}</strong></span>
+        <span>Contractor: <strong>LGHVAC Mechanical, LLC</strong></span>
+        <span>GC: <strong>{{ contract.gc_name or '-' }}</strong></span>
+    </div>
+
+    <table class="g703">
+        <thead>
+            <tr>
+                <th style="width:30px;">A<br>Item</th>
+                <th style="min-width:120px;">B<br>Description of Work</th>
+                <th style="width:90px;">C<br>Scheduled Value</th>
+                <th style="width:90px;">D<br>Previous Applications</th>
+                <th style="width:90px;">E<br>This Period</th>
+                <th style="width:80px;">F<br>Materials Stored</th>
+                <th style="width:90px;">G<br>Total Completed & Stored</th>
+                <th style="width:35px;">H<br>%</th>
+                <th style="width:90px;">I<br>Balance to Finish</th>
+                <th style="width:75px;">J<br>Retainage</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in lines %}
+            {% if line.is_header %}
+            <tr class="header-row">
+                <td>{{ line.item_number }}</td>
+                <td colspan="9">{{ line.description }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td>{{ line.item_number }}</td>
+                <td>{{ line.description }}</td>
+                <td class="money">{{ fmt(line.scheduled_value) }}</td>
+                <td class="money">{{ fmt(line.from_previous) }}</td>
+                <td class="money">{{ fmt(line.this_period) }}</td>
+                <td class="money">{{ fmt(line.materials_stored) }}</td>
+                <td class="money">{{ fmt(line.total_completed) }}</td>
+                <td class="pct">{{ line.pct_complete|int }}%</td>
+                <td class="money">{{ fmt(line.balance) }}</td>
+                <td class="money">{{ fmt(line.retainage) if line.retainage else '-' }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr class="total-row">
+                <td></td>
+                <td>GRAND TOTALS</td>
+                <td class="money">{{ fmt(totals.scheduled_value) }}</td>
+                <td class="money">{{ fmt(totals.from_previous) }}</td>
+                <td class="money">{{ fmt(totals.this_period) }}</td>
+                <td class="money">{{ fmt(totals.materials_stored) }}</td>
+                <td class="money">{{ fmt(totals.total_completed) }}</td>
+                <td class="pct">{{ (totals.total_completed / totals.scheduled_value * 100)|int if totals.scheduled_value else 0 }}%</td>
+                <td class="money">{{ fmt(totals.balance) }}</td>
+                <td class="money">{{ fmt(totals.retainage) }}</td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <div class="footer-line">
+        Generated by LGHVAC Construction Management System
+    </div>
+</div>
+
+</body>
+</html>

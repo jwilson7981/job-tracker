@@ -882,6 +882,46 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_customers_type ON customers(company_type);
         CREATE INDEX IF NOT EXISTS idx_customer_contacts_customer ON customer_contacts(customer_id);
 
+        /* ─── Vendors ─── */
+
+        CREATE TABLE IF NOT EXISTS vendors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_name TEXT NOT NULL,
+            vendor_type TEXT NOT NULL DEFAULT 'Supplier'
+                CHECK(vendor_type IN ('Supplier','Manufacturer','Distributor','Rental','Subcontractor','Other')),
+            account_number TEXT DEFAULT '',
+            payment_terms TEXT DEFAULT '',
+            primary_contact TEXT DEFAULT '',
+            contact_email TEXT DEFAULT '',
+            contact_phone TEXT DEFAULT '',
+            address TEXT DEFAULT '',
+            city TEXT DEFAULT '',
+            state TEXT DEFAULT '',
+            zip_code TEXT DEFAULT '',
+            website TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS vendor_contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_id INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            title TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_vendors_active ON vendors(is_active);
+        CREATE INDEX IF NOT EXISTS idx_vendors_type ON vendors(vendor_type);
+        CREATE INDEX IF NOT EXISTS idx_vendor_contacts_vendor ON vendor_contacts(vendor_id);
+
         /* ─── Supplier Quotes (Phase 2) ─── */
 
         CREATE TABLE IF NOT EXISTS supplier_quotes (
@@ -1353,6 +1393,53 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_delivery_schedules_job ON delivery_schedules(job_id);
         CREATE INDEX IF NOT EXISTS idx_delivery_schedules_status ON delivery_schedules(status);
+
+        /* ─── Permits ─── */
+
+        CREATE TABLE IF NOT EXISTS permits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            permit_type TEXT NOT NULL DEFAULT 'Mechanical'
+                CHECK(permit_type IN ('Mechanical','Building','Plumbing','Electrical','Fire','Roofing','Demolition','Other')),
+            permit_number TEXT DEFAULT '',
+            issuing_authority TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Not Applied'
+                CHECK(status IN ('Not Applied','Applied','Under Review','Approved','Denied','Expired','N/A')),
+            applied_date TEXT DEFAULT '',
+            approved_date TEXT DEFAULT '',
+            expiration_date TEXT DEFAULT '',
+            cost REAL DEFAULT 0,
+            inspector_name TEXT DEFAULT '',
+            inspector_phone TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS permit_inspections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            permit_id INTEGER NOT NULL,
+            inspection_type TEXT NOT NULL DEFAULT 'Rough-In',
+            status TEXT NOT NULL DEFAULT 'Scheduled'
+                CHECK(status IN ('Scheduled','Passed','Failed','Cancelled','Re-Inspect')),
+            scheduled_date TEXT DEFAULT '',
+            completed_date TEXT DEFAULT '',
+            inspector TEXT DEFAULT '',
+            result_notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (permit_id) REFERENCES permits(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_permits_job ON permits(job_id);
+        CREATE INDEX IF NOT EXISTS idx_permits_status ON permits(status);
+        CREATE INDEX IF NOT EXISTS idx_permit_inspections_permit ON permit_inspections(permit_id);
+        CREATE INDEX IF NOT EXISTS idx_permit_inspections_status ON permit_inspections(status);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -1618,6 +1705,96 @@ def init_db():
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_entries_period ON team_pay_entries(period_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_entries_member ON team_pay_entries(member_id)")
+
+    # Migration: material_requests.phase, material_request_items.line_item_id, material_request_items.order_needed
+    mr_cols = [row[1] for row in conn.execute("PRAGMA table_info(material_requests)").fetchall()]
+    if 'phase' not in mr_cols:
+        conn.execute("ALTER TABLE material_requests ADD COLUMN phase TEXT DEFAULT ''")
+    mri_cols = [row[1] for row in conn.execute("PRAGMA table_info(material_request_items)").fetchall()]
+    if 'line_item_id' not in mri_cols:
+        conn.execute("ALTER TABLE material_request_items ADD COLUMN line_item_id INTEGER")
+    if 'order_needed' not in mri_cols:
+        conn.execute("ALTER TABLE material_request_items ADD COLUMN order_needed INTEGER DEFAULT 0")
+
+    # Migration: add vendor_id to billtrust_config and supplier_quotes
+    bt_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(billtrust_config)").fetchall()]
+    if 'vendor_id' not in bt_cols2:
+        conn.execute("ALTER TABLE billtrust_config ADD COLUMN vendor_id INTEGER")
+    sq_cols = [row[1] for row in conn.execute("PRAGMA table_info(supplier_quotes)").fetchall()]
+    if 'vendor_id' not in sq_cols:
+        conn.execute("ALTER TABLE supplier_quotes ADD COLUMN vendor_id INTEGER")
+
+    # Migration: move customers with company_type='Supplier' into vendors table
+    existing_tables2 = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if 'vendors' in existing_tables2:
+        supplier_custs = conn.execute("SELECT * FROM customers WHERE company_type = 'Supplier'").fetchall()
+        for sc in supplier_custs:
+            # Check if already migrated (by company_name)
+            existing = conn.execute("SELECT id FROM vendors WHERE company_name = ?", (sc['company_name'],)).fetchone()
+            if existing:
+                continue
+            cursor = conn.execute(
+                '''INSERT INTO vendors (company_name, vendor_type, primary_contact, contact_email,
+                   contact_phone, address, city, state, zip_code, website, notes, is_active,
+                   created_by, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (sc['company_name'], 'Supplier', sc['primary_contact'], sc['contact_email'],
+                 sc['contact_phone'], sc['address'], sc['city'], sc['state'],
+                 sc['zip_code'], sc['website'], sc['notes'], sc['is_active'],
+                 sc['created_by'], sc['created_at'], sc['updated_at'])
+            )
+            vid = cursor.lastrowid
+            # Migrate contacts
+            contacts = conn.execute("SELECT * FROM customer_contacts WHERE customer_id = ?", (sc['id'],)).fetchall()
+            for ct in contacts:
+                conn.execute(
+                    'INSERT INTO vendor_contacts (vendor_id, name, title, email, phone, is_primary) VALUES (?,?,?,?,?,?)',
+                    (vid, ct['name'], ct['title'], ct['email'], ct['phone'], ct['is_primary'])
+                )
+            # Link billtrust_config by supplier_name match
+            conn.execute("UPDATE billtrust_config SET vendor_id = ? WHERE supplier_name = ? AND (vendor_id IS NULL OR vendor_id = 0)",
+                         (vid, sc['company_name']))
+            # Link supplier_quotes by supplier_name match
+            conn.execute("UPDATE supplier_quotes SET vendor_id = ? WHERE supplier_name = ? AND (vendor_id IS NULL OR vendor_id = 0)",
+                         (vid, sc['company_name']))
+            # Delete migrated customer row
+            conn.execute("DELETE FROM customer_contacts WHERE customer_id = ?", (sc['id'],))
+            conn.execute("DELETE FROM customers WHERE id = ?", (sc['id'],))
+
+    # Seed default vendors if table is empty
+    vendor_count = conn.execute("SELECT COUNT(*) FROM vendors").fetchone()[0]
+    if vendor_count == 0:
+        conn.execute("INSERT INTO vendors (company_name, vendor_type) VALUES (?, 'Supplier')", ('Locke Supply',))
+        conn.execute("INSERT INTO vendors (company_name, vendor_type) VALUES (?, 'Supplier')", ('Plumb Supply',))
+        # Link billtrust_config to seeded vendors
+        for vname in ('Locke Supply', 'Plumb Supply'):
+            v = conn.execute("SELECT id FROM vendors WHERE company_name = ?", (vname,)).fetchone()
+            if v:
+                conn.execute("UPDATE billtrust_config SET vendor_id = ? WHERE supplier_name = ? AND (vendor_id IS NULL OR vendor_id = 0)",
+                             (v['id'], vname))
+
+    # Migration: renumber pipeline steps — move Permits from step 18 to step 13
+    # Check if any job still has old step 18 named 'Permits & Inspections'
+    old_permit_step = conn.execute(
+        "SELECT id FROM job_pipeline_steps WHERE step_number = 18 AND step_name = 'Permits & Inspections' LIMIT 1"
+    ).fetchone()
+    if old_permit_step:
+        # Get all jobs that have pipeline steps
+        pipeline_jobs = conn.execute("SELECT DISTINCT job_id FROM job_pipeline_steps").fetchall()
+        for pj in pipeline_jobs:
+            jid = pj['job_id']
+            # Move old 18 (Permits) to temp 99
+            conn.execute("UPDATE job_pipeline_steps SET step_number = 99 WHERE job_id = ? AND step_number = 18", (jid,))
+            # Shift 13→14, 14→15, 15→16, 16→17, 17→18 (reverse order to avoid conflicts)
+            for old, new in [(17, 18), (16, 17), (15, 16), (14, 15), (13, 14)]:
+                conn.execute("UPDATE job_pipeline_steps SET step_number = ? WHERE job_id = ? AND step_number = ?", (new, jid, old))
+            # Move temp 99 → 13
+            conn.execute("UPDATE job_pipeline_steps SET step_number = 13, step_category = 'contract', linked_module = 'permits' WHERE job_id = ? AND step_number = 99", (jid,))
+
+    # Migration: add pdf_file column to pay_applications
+    pa_cols = [row[1] for row in conn.execute("PRAGMA table_info(pay_applications)").fetchall()]
+    if 'pdf_file' not in pa_cols:
+        conn.execute("ALTER TABLE pay_applications ADD COLUMN pdf_file TEXT DEFAULT ''")
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]

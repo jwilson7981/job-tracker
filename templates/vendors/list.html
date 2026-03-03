@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Vendors{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Vendors</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Vendors','vendorsBody','Vendors')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Vendors','vendorsBody','Vendors')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddVendor()">+ New Vendor</button>
+    </div>
+</div>
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <input type="text" id="searchInput" class="form-input" placeholder="Search vendors..." oninput="filterVendors()" style="max-width:280px;">
+    <select id="typeFilter" class="form-select" onchange="filterVendors()" style="max-width:200px;">
+        <option value="">All Types</option>
+        <option value="Supplier">Supplier</option>
+        <option value="Manufacturer">Manufacturer</option>
+        <option value="Distributor">Distributor</option>
+        <option value="Rental">Rental</option>
+        <option value="Subcontractor">Subcontractor</option>
+        <option value="Other">Other</option>
+    </select>
+    <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="showInactive" onchange="filterVendors()"> Show Inactive
+    </label>
+    <span id="vendorCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>Company</th><th>Type</th><th>Account #</th><th>Contact</th><th>Phone</th><th>Quotes</th><th>Invoices</th>
+        </tr></thead>
+        <tbody id="vendorsBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Vendor Modal -->
+<div id="vendorModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeVendorModal()">
+    <div class="modal-box" style="max-width:600px;">
+        <div class="modal-header">
+            <h3 id="vendorModalTitle">New Vendor</h3>
+            <button onclick="closeVendorModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editVendorId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="bid-field" style="grid-column:1/-1"><label class="form-label">Company Name *</label>
+                    <input type="text" id="vendorName" class="form-input" required></div>
+                <div class="bid-field"><label class="form-label">Vendor Type</label>
+                    <select id="vendorType" class="form-select">
+                        <option value="Supplier">Supplier</option>
+                        <option value="Manufacturer">Manufacturer</option>
+                        <option value="Distributor">Distributor</option>
+                        <option value="Rental">Rental</option>
+                        <option value="Subcontractor">Subcontractor</option>
+                        <option value="Other">Other</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Account #</label>
+                    <input type="text" id="vendorAccount" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Payment Terms</label>
+                    <input type="text" id="vendorTerms" class="form-input" placeholder="e.g. Net 30"></div>
+                <div class="bid-field"><label class="form-label">Primary Contact</label>
+                    <input type="text" id="vendorContact" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Email</label>
+                    <input type="email" id="vendorEmail" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Phone</label>
+                    <input type="text" id="vendorPhone" class="form-input"></div>
+                <div class="bid-field" style="grid-column:1/-1"><label class="form-label">Address</label>
+                    <input type="text" id="vendorAddress" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">City</label>
+                    <input type="text" id="vendorCity" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">State</label>
+                    <input type="text" id="vendorState" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Zip</label>
+                    <input type="text" id="vendorZip" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Website</label>
+                    <input type="text" id="vendorWebsite" class="form-input"></div>
+                <div class="bid-field" style="grid-column:1/-1"><label class="form-label">Notes</label>
+                    <textarea id="vendorNotes" class="form-textarea" rows="3"></textarea></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeVendorModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveVendor()">Save</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/vendors.js"></script>
+{% endblock %}

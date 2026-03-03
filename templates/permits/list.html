@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Permits{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Permits & Inspections</h1>
+    <button class="btn btn-primary" onclick="showAddPermit()">+ New Permit</button>
+</div>
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <select id="jobFilter" class="form-select" onchange="loadPermits()" style="max-width:250px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="statusFilter" class="form-select" onchange="filterPermits()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Not Applied">Not Applied</option>
+        <option value="Applied">Applied</option>
+        <option value="Under Review">Under Review</option>
+        <option value="Approved">Approved</option>
+        <option value="Denied">Denied</option>
+        <option value="Expired">Expired</option>
+    </select>
+    <span id="permitCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div id="permitsContainer"></div>
+
+<!-- Add/Edit Permit Modal -->
+<div id="permitModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closePermitModal()">
+    <div class="modal-box" style="max-width:600px;">
+        <div class="modal-header">
+            <h3 id="permitModalTitle">New Permit</h3>
+            <button onclick="closePermitModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editPermitId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="bid-field" style="grid-column:1/-1"><label class="form-label">Job *</label>
+                    <select id="permitJob" class="form-select"></select></div>
+                <div class="bid-field"><label class="form-label">Permit Type</label>
+                    <select id="permitType" class="form-select">
+                        <option value="Mechanical">Mechanical</option>
+                        <option value="Building">Building</option>
+                        <option value="Plumbing">Plumbing</option>
+                        <option value="Electrical">Electrical</option>
+                        <option value="Fire">Fire</option>
+                        <option value="Roofing">Roofing</option>
+                        <option value="Demolition">Demolition</option>
+                        <option value="Other">Other</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Status</label>
+                    <select id="permitStatus" class="form-select">
+                        <option value="Not Applied">Not Applied</option>
+                        <option value="Applied">Applied</option>
+                        <option value="Under Review">Under Review</option>
+                        <option value="Approved">Approved</option>
+                        <option value="Denied">Denied</option>
+                        <option value="Expired">Expired</option>
+                        <option value="N/A">N/A</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Permit #</label>
+                    <input type="text" id="permitNumber" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Issuing Authority</label>
+                    <input type="text" id="permitAuthority" class="form-input" placeholder="e.g. City of Edmond"></div>
+                <div class="bid-field"><label class="form-label">Applied Date</label>
+                    <input type="date" id="permitAppliedDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Approved Date</label>
+                    <input type="date" id="permitApprovedDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Expiration Date</label>
+                    <input type="date" id="permitExpDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Cost</label>
+                    <input type="number" id="permitCost" class="form-input" step="0.01" min="0"></div>
+                <div class="bid-field"><label class="form-label">Inspector Name</label>
+                    <input type="text" id="permitInspector" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Inspector Phone</label>
+                    <input type="text" id="permitInspectorPhone" class="form-input"></div>
+                <div class="bid-field" style="grid-column:1/-1"><label class="form-label">Notes</label>
+                    <textarea id="permitNotes" class="form-textarea" rows="3"></textarea></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closePermitModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="savePermit()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Inspection Modal -->
+<div id="inspectionModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeInspectionModal()">
+    <div class="modal-box" style="max-width:450px;">
+        <div class="modal-header">
+            <h3 id="inspectionModalTitle">Add Inspection</h3>
+            <button onclick="closeInspectionModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="inspectionPermitId">
+            <input type="hidden" id="editInspectionId">
+            <div style="display:grid;gap:12px;">
+                <div class="bid-field"><label class="form-label">Inspection Type</label>
+                    <select id="inspectionType" class="form-select">
+                        <option value="Rough-In">Rough-In</option>
+                        <option value="Underground">Underground</option>
+                        <option value="Top Out">Top Out</option>
+                        <option value="Final">Final</option>
+                        <option value="Gas Line">Gas Line</option>
+                        <option value="Duct">Duct</option>
+                        <option value="Pressure Test">Pressure Test</option>
+                        <option value="Start-Up">Start-Up</option>
+                        <option value="Other">Other</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Status</label>
+                    <select id="inspectionStatus" class="form-select">
+                        <option value="Scheduled">Scheduled</option>
+                        <option value="Passed">Passed</option>
+                        <option value="Failed">Failed</option>
+                        <option value="Cancelled">Cancelled</option>
+                        <option value="Re-Inspect">Re-Inspect</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Scheduled Date</label>
+                    <input type="date" id="inspectionSchedDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Completed Date</label>
+                    <input type="date" id="inspectionCompDate" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Inspector</label>
+                    <input type="text" id="inspectionInspector" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Result / Notes</label>
+                    <textarea id="inspectionNotes" class="form-textarea" rows="3"></textarea></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeInspectionModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveInspection()">Save</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/permits.js"></script>
+{% endblock %}

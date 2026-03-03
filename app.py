@@ -1159,12 +1159,12 @@ def delete_invoice(iid):
 # ─── Payroll / Time Entry ───────────────────────────────────────
 
 @app.route('/payroll')
-@role_required('owner')
+@role_required('owner', 'admin')
 def payroll_overview():
     return render_template('payroll/overview.html')
 
 @app.route('/payroll/employee/<int:user_id>')
-@role_required('owner')
+@role_required('owner', 'admin')
 def payroll_employee(user_id):
     conn = get_db()
     user = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
@@ -1182,7 +1182,7 @@ def time_entry():
     return render_template('payroll/time_entry.html', jobs=jobs)
 
 @app.route('/api/payroll/summary')
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_payroll_summary():
     conn = get_db()
     users = conn.execute('SELECT * FROM users WHERE is_active = 1 ORDER BY display_name').fetchall()
@@ -1202,6 +1202,8 @@ def api_payroll_summary():
             'username': u['username'],
             'role': u['role'],
             'hourly_rate': u['hourly_rate'] or 0,
+            'email': u['email'] or '',
+            'phone': u['phone'] or '',
             'total_hours': round(entries['total_hours'], 1),
             'total_pay': round(entries['total_pay'], 2),
             'pending_hours': round(pending, 1),
@@ -1210,7 +1212,7 @@ def api_payroll_summary():
     return jsonify(result)
 
 @app.route('/api/payroll/employee/<int:user_id>')
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_payroll_employee(user_id):
     conn = get_db()
     entries = conn.execute(
@@ -1227,7 +1229,7 @@ def api_payroll_employee(user_id):
 def get_time_entries():
     conn = get_db()
     user_id = session['user_id']
-    if session.get('role') == 'owner':
+    if session.get('role') in ('owner', 'admin'):
         user_id = request.args.get('user_id', user_id, type=int)
     entries = conn.execute(
         '''SELECT te.*, j.name as job_name FROM time_entries te
@@ -1256,7 +1258,7 @@ def create_time_entry():
     return jsonify({'ok': True}), 201
 
 @app.route('/api/time-entries/<int:tid>/approve', methods=['POST'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def approve_time_entry(tid):
     conn = get_db()
     conn.execute('UPDATE time_entries SET approved = 1, approved_by = ? WHERE id = ?',
@@ -1362,7 +1364,7 @@ def api_time_entries_batch():
     return jsonify({'ok': True})
 
 @app.route('/api/payroll/period-summary')
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_payroll_period_summary():
     """Summary by employee for a date range."""
     start = request.args.get('start', '')
@@ -1384,7 +1386,7 @@ def api_payroll_period_summary():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/payroll/approve-period', methods=['POST'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_payroll_approve_period():
     """Bulk approve all entries in a period."""
     data = request.get_json()
@@ -1850,6 +1852,8 @@ def api_create_customer():
     name = (data.get('company_name') or '').strip()
     if not name:
         return jsonify({'error': 'Company name is required'}), 400
+    if data.get('company_type') == 'Supplier':
+        return jsonify({'error': 'Use the Vendors page to manage suppliers'}), 400
     conn = get_db()
     cursor = conn.execute(
         '''INSERT INTO customers (company_name, company_type, primary_contact, contact_email,
@@ -1903,6 +1907,8 @@ def api_customer_detail(cid):
 @api_role_required('owner', 'admin', 'project_manager')
 def api_update_customer(cid):
     data = request.get_json()
+    if data.get('company_type') == 'Supplier':
+        return jsonify({'error': 'Use the Vendors page to manage suppliers'}), 400
     conn = get_db()
     fields = []
     params = []
@@ -1981,6 +1987,186 @@ def api_customers_search():
     conn = get_db()
     results = conn.execute(
         "SELECT id, company_name, company_type, primary_contact FROM customers WHERE is_active = 1 AND company_name LIKE ? ORDER BY company_name LIMIT 15",
+        (f'%{q}%',)
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in results])
+
+# ─── Vendors ─────────────────────────────────────────────────
+
+@app.route('/vendors')
+@role_required('owner', 'admin', 'project_manager')
+def vendors_list():
+    return render_template('vendors/list.html')
+
+@app.route('/vendors/<int:vid>')
+@role_required('owner', 'admin', 'project_manager')
+def vendors_detail(vid):
+    return render_template('vendors/detail.html', vendor_id=vid)
+
+@app.route('/api/vendors')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_vendors():
+    conn = get_db()
+    vendors = conn.execute('SELECT * FROM vendors ORDER BY company_name').fetchall()
+    result = []
+    for v in vendors:
+        quote_count = conn.execute('SELECT COUNT(*) FROM supplier_quotes WHERE vendor_id = ?', (v['id'],)).fetchone()[0]
+        invoice_count = conn.execute(
+            '''SELECT COUNT(*) FROM supplier_invoices si
+               JOIN billtrust_config bc ON si.supplier_config_id = bc.id
+               WHERE bc.vendor_id = ?''', (v['id'],)
+        ).fetchone()[0]
+        d = dict(v)
+        d['quote_count'] = quote_count
+        d['invoice_count'] = invoice_count
+        result.append(d)
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/vendors', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_create_vendor():
+    data = request.get_json()
+    name = (data.get('company_name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Company name is required'}), 400
+    conn = get_db()
+    cursor = conn.execute(
+        '''INSERT INTO vendors (company_name, vendor_type, account_number, payment_terms,
+           primary_contact, contact_email, contact_phone, address, city, state, zip_code,
+           website, notes, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (name, data.get('vendor_type', 'Supplier'),
+         data.get('account_number', ''), data.get('payment_terms', ''),
+         data.get('primary_contact', ''), data.get('contact_email', ''),
+         data.get('contact_phone', ''), data.get('address', ''),
+         data.get('city', ''), data.get('state', ''),
+         data.get('zip_code', ''), data.get('website', ''),
+         data.get('notes', ''), session.get('user_id'))
+    )
+    vid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': vid}), 201
+
+@app.route('/api/vendors/<int:vid>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_vendor_detail(vid):
+    conn = get_db()
+    v = conn.execute('SELECT * FROM vendors WHERE id = ?', (vid,)).fetchone()
+    if not v:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    contacts = conn.execute('SELECT * FROM vendor_contacts WHERE vendor_id = ? ORDER BY is_primary DESC, name', (vid,)).fetchall()
+    quotes = conn.execute(
+        '''SELECT sq.id, sq.quote_number, sq.supplier_name, sq.status, sq.total, sq.quote_date, j.name as job_name
+           FROM supplier_quotes sq LEFT JOIN jobs j ON sq.job_id = j.id
+           WHERE sq.vendor_id = ? ORDER BY sq.quote_date DESC''', (vid,)
+    ).fetchall()
+    invoices = conn.execute(
+        '''SELECT si.id, si.invoice_number, si.invoice_date, si.status, si.total, si.balance_due, j.name as job_name
+           FROM supplier_invoices si
+           JOIN billtrust_config bc ON si.supplier_config_id = bc.id
+           LEFT JOIN jobs j ON si.job_id = j.id
+           WHERE bc.vendor_id = ? ORDER BY si.invoice_date DESC''', (vid,)
+    ).fetchall()
+    total_quoted = sum(q['total'] or 0 for q in quotes)
+    total_invoiced = sum(i['total'] or 0 for i in invoices)
+    open_balance = sum(i['balance_due'] or 0 for i in invoices)
+    conn.close()
+    result = dict(v)
+    result['contacts'] = [dict(ct) for ct in contacts]
+    result['quotes'] = [dict(q) for q in quotes]
+    result['invoices'] = [dict(i) for i in invoices]
+    result['total_quoted'] = total_quoted
+    result['total_invoiced'] = total_invoiced
+    result['open_balance'] = open_balance
+    return jsonify(result)
+
+@app.route('/api/vendors/<int:vid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_vendor(vid):
+    data = request.get_json()
+    conn = get_db()
+    fields = []
+    params = []
+    for col in ('company_name', 'vendor_type', 'account_number', 'payment_terms',
+                'primary_contact', 'contact_email', 'contact_phone',
+                'address', 'city', 'state', 'zip_code', 'website', 'notes'):
+        if col in data:
+            fields.append(f'{col} = ?')
+            params.append(data[col])
+    if 'is_active' in data:
+        fields.append('is_active = ?')
+        params.append(int(data['is_active']))
+    if fields:
+        fields.append("updated_at = datetime('now','localtime')")
+        params.append(vid)
+        conn.execute(f"UPDATE vendors SET {', '.join(fields)} WHERE id = ?", params)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/vendors/<int:vid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_deactivate_vendor(vid):
+    conn = get_db()
+    conn.execute("UPDATE vendors SET is_active = 0, updated_at = datetime('now','localtime') WHERE id = ?", (vid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/vendors/<int:vid>/contacts', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_add_vendor_contact(vid):
+    data = request.get_json()
+    conn = get_db()
+    if data.get('is_primary'):
+        conn.execute('UPDATE vendor_contacts SET is_primary = 0 WHERE vendor_id = ?', (vid,))
+    cursor = conn.execute(
+        'INSERT INTO vendor_contacts (vendor_id, name, title, email, phone, is_primary) VALUES (?,?,?,?,?,?)',
+        (vid, data.get('name', ''), data.get('title', ''), data.get('email', ''),
+         data.get('phone', ''), 1 if data.get('is_primary') else 0)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': cursor.lastrowid}), 201
+
+@app.route('/api/vendors/<int:vid>/contacts/<int:ctid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_vendor_contact(vid, ctid):
+    data = request.get_json()
+    conn = get_db()
+    if data.get('is_primary'):
+        conn.execute('UPDATE vendor_contacts SET is_primary = 0 WHERE vendor_id = ?', (vid,))
+    conn.execute(
+        'UPDATE vendor_contacts SET name=?, title=?, email=?, phone=?, is_primary=? WHERE id=? AND vendor_id=?',
+        (data.get('name', ''), data.get('title', ''), data.get('email', ''),
+         data.get('phone', ''), 1 if data.get('is_primary') else 0, ctid, vid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/vendors/<int:vid>/contacts/<int:ctid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_vendor_contact(vid, ctid):
+    conn = get_db()
+    conn.execute('DELETE FROM vendor_contacts WHERE id = ? AND vendor_id = ?', (ctid, vid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/vendors/search')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_vendors_search():
+    q = request.args.get('q', '').strip()
+    if len(q) < 1:
+        return jsonify([])
+    conn = get_db()
+    results = conn.execute(
+        "SELECT id, company_name, vendor_type, primary_contact FROM vendors WHERE is_active = 1 AND company_name LIKE ? ORDER BY company_name LIMIT 15",
         (f'%{q}%',)
     ).fetchall()
     conn.close()
@@ -2090,7 +2276,7 @@ def admin_users():
     return render_template('admin/users.html')
 
 @app.route('/api/admin/users')
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_admin_users():
     conn = get_db()
     users = conn.execute('SELECT id, username, display_name, role, email, phone, hourly_rate, is_active, created_at FROM users ORDER BY display_name').fetchall()
@@ -2098,7 +2284,7 @@ def api_admin_users():
     return jsonify([dict(u) for u in users])
 
 @app.route('/api/admin/users', methods=['POST'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_create_user():
     data = request.get_json()
     username = (data.get('username') or '').strip()
@@ -2124,7 +2310,7 @@ def api_create_user():
     return jsonify({'ok': True}), 201
 
 @app.route('/api/admin/users/<int:uid>', methods=['PUT'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_update_user(uid):
     data = request.get_json()
     conn = get_db()
@@ -2146,7 +2332,7 @@ def api_update_user(uid):
     return jsonify({'ok': True})
 
 @app.route('/api/admin/users/<int:uid>', methods=['DELETE'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_delete_user(uid):
     if uid == session.get('user_id'):
         return jsonify({'error': 'Cannot delete your own account'}), 400
@@ -3050,6 +3236,197 @@ def api_send_chat_message(sid):
     return jsonify({'ok': True, 'response': bot_response})
 
 
+# ─── Permits ─────────────────────────────────────────────────────
+
+@app.route('/permits')
+@role_required('owner', 'admin', 'project_manager')
+def permits_page():
+    return render_template('permits/list.html')
+
+@app.route('/api/permits')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_permits():
+    job_id = request.args.get('job_id', '')
+    status = request.args.get('status', '')
+    conn = get_db()
+    query = '''SELECT p.*, j.name as job_name FROM permits p
+               LEFT JOIN jobs j ON p.job_id = j.id WHERE 1=1'''
+    params = []
+    if job_id:
+        query += ' AND p.job_id = ?'
+        params.append(job_id)
+    if status:
+        query += ' AND p.status = ?'
+        params.append(status)
+    query += ' ORDER BY p.updated_at DESC'
+    permits = conn.execute(query, params).fetchall()
+    result = []
+    for p in permits:
+        d = dict(p)
+        inspections = conn.execute('SELECT * FROM permit_inspections WHERE permit_id = ? ORDER BY scheduled_date', (p['id'],)).fetchall()
+        d['inspections'] = [dict(i) for i in inspections]
+        d['inspection_count'] = len(inspections)
+        d['passed_count'] = sum(1 for i in inspections if i['status'] == 'Passed')
+        result.append(d)
+    # Check for permit notifications
+    _check_permit_notifications(result, conn)
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/permits', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_create_permit():
+    data = request.get_json()
+    job_id = data.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'Job is required'}), 400
+    conn = get_db()
+    cursor = conn.execute(
+        '''INSERT INTO permits (job_id, permit_type, permit_number, issuing_authority,
+           status, applied_date, approved_date, expiration_date, cost,
+           inspector_name, inspector_phone, notes, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (job_id, data.get('permit_type', 'Mechanical'),
+         data.get('permit_number', ''), data.get('issuing_authority', ''),
+         data.get('status', 'Not Applied'), data.get('applied_date', ''),
+         data.get('approved_date', ''), data.get('expiration_date', ''),
+         float(data.get('cost', 0)), data.get('inspector_name', ''),
+         data.get('inspector_phone', ''), data.get('notes', ''),
+         session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': cursor.lastrowid}), 201
+
+@app.route('/api/permits/<int:pid>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_permit_detail(pid):
+    conn = get_db()
+    p = conn.execute(
+        '''SELECT p.*, j.name as job_name FROM permits p
+           LEFT JOIN jobs j ON p.job_id = j.id WHERE p.id = ?''', (pid,)
+    ).fetchone()
+    if not p:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    inspections = conn.execute('SELECT * FROM permit_inspections WHERE permit_id = ? ORDER BY scheduled_date', (pid,)).fetchall()
+    conn.close()
+    result = dict(p)
+    result['inspections'] = [dict(i) for i in inspections]
+    return jsonify(result)
+
+@app.route('/api/permits/<int:pid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_permit(pid):
+    data = request.get_json()
+    conn = get_db()
+    fields = []
+    params = []
+    for col in ('permit_type', 'permit_number', 'issuing_authority', 'status',
+                'applied_date', 'approved_date', 'expiration_date', 'cost',
+                'inspector_name', 'inspector_phone', 'notes'):
+        if col in data:
+            fields.append(f'{col} = ?')
+            params.append(data[col] if col != 'cost' else float(data[col] or 0))
+    if fields:
+        fields.append("updated_at = datetime('now','localtime')")
+        params.append(pid)
+        conn.execute(f"UPDATE permits SET {', '.join(fields)} WHERE id = ?", params)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/permits/<int:pid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_permit(pid):
+    conn = get_db()
+    conn.execute('DELETE FROM permits WHERE id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/permits/<int:pid>/inspections', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_add_inspection(pid):
+    data = request.get_json()
+    conn = get_db()
+    cursor = conn.execute(
+        '''INSERT INTO permit_inspections (permit_id, inspection_type, status,
+           scheduled_date, completed_date, inspector, result_notes, created_by)
+           VALUES (?,?,?,?,?,?,?,?)''',
+        (pid, data.get('inspection_type', 'Rough-In'),
+         data.get('status', 'Scheduled'), data.get('scheduled_date', ''),
+         data.get('completed_date', ''), data.get('inspector', ''),
+         data.get('result_notes', ''), session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': cursor.lastrowid}), 201
+
+@app.route('/api/permits/<int:pid>/inspections/<int:iid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_inspection(pid, iid):
+    data = request.get_json()
+    conn = get_db()
+    fields = []
+    params = []
+    for col in ('inspection_type', 'status', 'scheduled_date', 'completed_date',
+                'inspector', 'result_notes'):
+        if col in data:
+            fields.append(f'{col} = ?')
+            params.append(data[col])
+    if fields:
+        params.extend([iid, pid])
+        conn.execute(f"UPDATE permit_inspections SET {', '.join(fields)} WHERE id = ? AND permit_id = ?", params)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/permits/<int:pid>/inspections/<int:iid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_inspection(pid, iid):
+    conn = get_db()
+    conn.execute('DELETE FROM permit_inspections WHERE id = ? AND permit_id = ?', (iid, pid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+def _check_permit_notifications(permits, conn):
+    """Send weekly notifications for permits not yet approved."""
+    from datetime import timedelta
+    now = datetime.now()
+    week_ago = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    owners = conn.execute("SELECT id FROM users WHERE role IN ('owner','admin','project_manager') AND is_active = 1").fetchall()
+    for p in permits:
+        if p.get('status') in ('Approved', 'N/A'):
+            continue
+        job_name = p.get('job_name', 'Unknown')
+        for owner in owners:
+            existing = conn.execute(
+                "SELECT id FROM notifications WHERE user_id = ? AND type = 'permit' AND message LIKE ? AND created_at >= ?",
+                (owner['id'], f'%permit #{p["id"]}%', week_ago)
+            ).fetchone()
+            if not existing:
+                status_msg = p['status']
+                if p['status'] == 'Not Applied':
+                    status_msg = 'needs to be applied for'
+                elif p['status'] == 'Applied':
+                    status_msg = 'applied — awaiting approval'
+                elif p['status'] == 'Under Review':
+                    status_msg = 'under review'
+                elif p['status'] == 'Denied':
+                    status_msg = 'DENIED — action needed'
+                elif p['status'] == 'Expired':
+                    status_msg = 'EXPIRED — renewal needed'
+                conn.execute(
+                    'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                    (owner['id'], 'permit',
+                     f'Permit: {p["permit_type"]} — {job_name}',
+                     f'{p["permit_type"]} permit for {job_name} {status_msg} (permit #{p["id"]})',
+                     '/permits')
+                )
+    conn.commit()
+
 # ─── Pay Applications (AIA G702/G703) ────────────────────────────
 
 @app.route('/payapps')
@@ -3374,6 +3751,195 @@ def api_payapps_app_delete(aid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+
+@app.route('/api/payapps/applications/<int:aid>/generate-pdf', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_generate_pdf(aid):
+    """Generate G702/G703 PDF for a pay application."""
+    import subprocess, tempfile
+
+    # Re-use the detail logic to get all data
+    conn = get_db()
+    app_row = conn.execute('SELECT * FROM pay_applications WHERE id = ?', (aid,)).fetchone()
+    if not app_row:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+
+    contract = conn.execute('SELECT * FROM pay_app_contracts WHERE id = ?', (app_row['contract_id'],)).fetchone()
+    job = conn.execute('SELECT name FROM jobs WHERE id = ?', (contract['job_id'],)).fetchone()
+    job_name = job['name'] if job else ''
+
+    sov_items = conn.execute(
+        'SELECT * FROM pay_app_sov_items WHERE contract_id = ? ORDER BY sort_order, id',
+        (contract['id'],)
+    ).fetchall()
+
+    current_entries = {}
+    for entry in conn.execute('SELECT * FROM pay_app_line_entries WHERE pay_app_id = ?', (aid,)).fetchall():
+        current_entries[entry['sov_item_id']] = dict(entry)
+
+    prior_apps = conn.execute(
+        'SELECT id FROM pay_applications WHERE contract_id = ? AND application_number < ? ORDER BY application_number',
+        (contract['id'], app_row['application_number'])
+    ).fetchall()
+    prior_ids = [p['id'] for p in prior_apps]
+
+    from_previous = {}
+    if prior_ids:
+        placeholders = ','.join('?' * len(prior_ids))
+        for row in conn.execute(
+            f'SELECT sov_item_id, SUM(work_this_period) as total_prev FROM pay_app_line_entries WHERE pay_app_id IN ({placeholders}) GROUP BY sov_item_id',
+            prior_ids
+        ).fetchall():
+            from_previous[row['sov_item_id']] = row['total_prev'] or 0
+
+    prior_co_add = 0
+    prior_co_ded = 0
+    if prior_ids:
+        placeholders = ','.join('?' * len(prior_ids))
+        co = conn.execute(
+            f'SELECT SUM(co_additions) as a, SUM(co_deductions) as d FROM pay_applications WHERE id IN ({placeholders})', prior_ids
+        ).fetchone()
+        prior_co_add = co['a'] or 0
+        prior_co_ded = co['d'] or 0
+
+    prev_line_6 = 0
+    if prior_ids:
+        prev_line_6 = _calc_earned_less_retainage(conn, contract, app_row['application_number'] - 1)
+
+    lines = []
+    t = dict(scheduled_value=0, from_previous=0, this_period=0, materials_stored=0, total_completed=0, balance=0, retainage=0)
+
+    for item in sov_items:
+        entry = current_entries.get(item['id'], {})
+        prev = from_previous.get(item['id'], 0)
+        this_p = entry.get('work_this_period', 0) or 0
+        mats = entry.get('materials_stored', 0) or 0
+        sv = item['scheduled_value'] or 0
+
+        completed = prev + this_p + mats
+        pct = (completed / sv * 100) if sv else 0
+        bal = sv - completed
+
+        ret = 0
+        if not item['is_header'] and not item['retainage_exempt'] and sv > 0:
+            ret = (contract['retainage_work_pct'] / 100) * (prev + this_p)
+            ret += (contract['retainage_stored_pct'] / 100) * mats
+            ret = round(ret, 2)
+
+        lines.append({
+            'sov_item_id': item['id'], 'item_number': item['item_number'],
+            'description': item['description'], 'scheduled_value': sv,
+            'is_header': item['is_header'], 'retainage_exempt': item['retainage_exempt'],
+            'from_previous': prev, 'this_period': this_p, 'materials_stored': mats,
+            'total_completed': completed, 'pct_complete': round(pct, 0),
+            'balance': bal, 'retainage': ret,
+        })
+
+        if not item['is_header']:
+            t['scheduled_value'] += sv
+            t['from_previous'] += prev
+            t['this_period'] += this_p
+            t['materials_stored'] += mats
+            t['total_completed'] += completed
+            t['balance'] += bal
+            t['retainage'] += ret
+
+    t['retainage'] = round(t['retainage'], 2)
+
+    # Calculate G702 values
+    co_add = app_row['co_additions'] or 0
+    co_ded = app_row['co_deductions'] or 0
+    net_co = (prior_co_add + co_add) - (prior_co_ded + co_ded)
+
+    l1 = contract['original_contract_sum'] or 0
+    l2 = net_co
+    l3 = l1 + l2
+    l4 = t['total_completed']
+    l5 = t['retainage']
+    l6 = l4 - l5
+    l7 = prev_line_6
+    l8 = l6 - l7
+    l9 = l3 - l6
+
+    ret_work = 0
+    ret_stored = 0
+    for line in lines:
+        if not line['is_header'] and not line['retainage_exempt']:
+            ret_work += (contract['retainage_work_pct'] / 100) * (line['from_previous'] + line['this_period'])
+        if not line['is_header']:
+            ret_stored += (contract['retainage_stored_pct'] / 100) * (line['materials_stored'] or 0)
+
+    g702 = {
+        'l1': l1, 'l2': l2, 'l3': l3, 'l4': l4, 'l5': l5, 'l5a': ret_work, 'l5b': ret_stored,
+        'l6': l6, 'l7': l7, 'l8': l8, 'l9': l9,
+        'co_prev_add': prior_co_add, 'co_prev_ded': prior_co_ded,
+    }
+
+    def fmt_money(n):
+        return '${:,.2f}'.format(n or 0)
+
+    logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
+
+    html = render_template('payapps/payapp_pdf.html',
+        application=dict(app_row), contract=dict(contract), job_name=job_name,
+        lines=lines, totals=t, g702=g702,
+        fmt=fmt_money, logo_path='file://' + logo_path
+    )
+
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    os.makedirs(proposals_dir, exist_ok=True)
+
+    safe_name = ''.join(c if c.isalnum() or c in ' -_' else '' for c in job_name).strip()
+    filename = f"PayApp_{safe_name}_App{app_row['application_number']}.pdf"
+    filepath = os.path.join(proposals_dir, filename)
+
+    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
+        tmp.write(html)
+        tmp_path = tmp.name
+
+    try:
+        chrome_paths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ]
+        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
+        if not chrome:
+            conn.close()
+            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
+
+        result = subprocess.run([
+            chrome, '--headless', '--disable-gpu', '--no-sandbox',
+            '--disable-software-rasterizer', f'--print-to-pdf={filepath}',
+            '--no-pdf-header-footer', f'file://{tmp_path}',
+        ], capture_output=True, text=True, timeout=30)
+
+        if not os.path.exists(filepath):
+            conn.close()
+            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
+    finally:
+        os.unlink(tmp_path)
+
+    # Save filename to DB
+    conn.execute('UPDATE pay_applications SET pdf_file = ? WHERE id = ?', (filename, aid))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'ok': True, 'filename': filename, 'path': f'/api/payapps/applications/{aid}/pdf/{filename}'})
+
+
+@app.route('/api/payapps/applications/<int:aid>/pdf/<filename>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_download_pdf(aid, filename):
+    """View or download a generated pay app PDF."""
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    filepath = os.path.join(proposals_dir, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    if request.args.get('download'):
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    return send_file(filepath, mimetype='application/pdf')
 
 
 def _calc_earned_less_retainage(conn, contract, up_to_app_number):
@@ -10338,6 +10904,59 @@ def invoice_detail_page(iid):
 
 # ─── Phase 6: Material Requests ──────────────────────────────────
 
+@app.route('/api/jobs/<int:job_id>/line-items-for-request')
+@api_login_required
+def api_line_items_for_request(job_id):
+    phase = request.args.get('phase', '')
+    conn = get_db()
+    line_items = conn.execute('''
+        SELECT id, line_number, sku, description, qty_ordered, stock_ns
+        FROM line_items WHERE job_id = ? ORDER BY line_number
+    ''', (job_id,)).fetchall()
+    results = []
+    for li in line_items:
+        sku = (li['sku'] or '').strip()
+        # Cross-reference against inventory by SKU
+        inv = None
+        if sku:
+            inv = conn.execute('''
+                SELECT id, quantity_on_hand FROM inventory_items WHERE sku = ?
+            ''', (sku,)).fetchone()
+        stock_on_hand = inv['quantity_on_hand'] if inv else 0
+        inventory_item_id = inv['id'] if inv else None
+        # Calculate qty already requested from non-cancelled requests
+        already_requested = conn.execute('''
+            SELECT COALESCE(SUM(mri.quantity_requested), 0) as total
+            FROM material_request_items mri
+            JOIN material_requests mr ON mri.request_id = mr.id
+            WHERE mri.line_item_id = ? AND mr.status != 'Cancelled'
+        ''', (li['id'],)).fetchone()['total']
+        qty_still_needed = max(0, (li['qty_ordered'] or 0) - already_requested)
+        # Check if item has shipment assignments for the selected phase
+        has_phase_shipment = False
+        if phase:
+            ps = conn.execute('''
+                SELECT COUNT(*) as cnt FROM material_shipment_items msi
+                JOIN material_shipments ms ON msi.shipment_id = ms.id
+                WHERE msi.line_item_id = ? AND ms.phase = ?
+            ''', (li['id'], phase)).fetchone()
+            has_phase_shipment = ps['cnt'] > 0
+        in_stock = stock_on_hand >= qty_still_needed and qty_still_needed > 0
+        results.append({
+            'line_item_id': li['id'],
+            'line_number': li['line_number'],
+            'sku': sku,
+            'description': li['description'] or '',
+            'qty_ordered': li['qty_ordered'] or 0,
+            'qty_still_needed': qty_still_needed,
+            'stock_on_hand': stock_on_hand,
+            'in_stock': in_stock,
+            'inventory_item_id': inventory_item_id,
+            'has_phase_shipment': has_phase_shipment
+        })
+    conn.close()
+    return jsonify(results)
+
 @app.route('/material-requests')
 @login_required
 def material_requests_page():
@@ -10378,18 +10997,21 @@ def api_create_material_request():
         return jsonify({'error': 'job_id required'}), 400
     conn = get_db()
     cursor = conn.execute('''
-        INSERT INTO material_requests (job_id, requested_by, priority, needed_by, notes, status)
-        VALUES (?, ?, ?, ?, ?, 'Pending')
+        INSERT INTO material_requests (job_id, requested_by, priority, needed_by, notes, status, phase)
+        VALUES (?, ?, ?, ?, ?, 'Pending', ?)
     ''', (job_id, session.get('user_id'), data.get('priority', 'Normal'),
-          data.get('needed_by', ''), data.get('notes', '')))
+          data.get('needed_by', ''), data.get('notes', ''), data.get('phase', '')))
     rid = cursor.lastrowid
     items = data.get('items', [])
     for item in items:
         conn.execute('''
-            INSERT INTO material_request_items (request_id, sku, description, quantity_requested, unit)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO material_request_items (request_id, sku, description, quantity_requested, unit,
+                line_item_id, order_needed, inventory_item_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (rid, item.get('sku', ''), item.get('description', ''),
-              float(item.get('quantity_requested', 0)), item.get('unit', 'each')))
+              float(item.get('quantity_requested', 0)), item.get('unit', 'each'),
+              item.get('line_item_id'), int(item.get('order_needed', 0)),
+              item.get('inventory_item_id')))
     conn.commit()
     # Notify PMs and owners
     job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
@@ -10859,12 +11481,33 @@ def api_feedback_update(fid):
         conn.close()
         return jsonify({'error': 'Unauthorized'}), 403
 
+    old_status = fb['status']
+
     conn.execute(
         '''UPDATE feedback_requests SET title=?, description=?, category=?, priority=?,
            status=?, owner_response=?, updated_at=datetime('now','localtime') WHERE id=?''',
         (title, description, category, priority, status, owner_response, fid)
     )
     conn.commit()
+
+    # Send notification to submitter when status changes
+    if status != old_status and fb['submitted_by'] != user_id:
+        submitter_id = fb['submitted_by']
+        if status == 'Completed':
+            create_notification(
+                submitter_id, 'feedback',
+                'Feedback Completed',
+                f'Your feedback "{fb["title"]}" has been marked as completed.',
+                '/feedback'
+            )
+        else:
+            create_notification(
+                submitter_id, 'feedback',
+                'Feedback Status Updated',
+                f'Your feedback "{fb["title"]}" status changed to {status}.',
+                '/feedback'
+            )
+
     conn.close()
     return jsonify({'ok': True})
 
@@ -10913,12 +11556,12 @@ PIPELINE_STEPS = [
     (10, 'Bonds & Insurance (COI)', 'contract', 'coi'),
     (11, 'Notice to Proceed', 'contract', 'contracts'),
     (12, 'Set Up Pay App / SOV', 'contract', 'payapps'),
-    (13, 'Assign Project Manager', 'contract', 'projects'),
-    (14, 'Submittal Preparation', 'preconstruction', 'submittals'),
-    (15, 'Submittal Submission', 'preconstruction', 'submittals'),
-    (16, 'Submittal Approval', 'preconstruction', 'submittals'),
-    (17, 'Pre-Construction Meeting', 'preconstruction', 'precon'),
-    (18, 'Permits & Inspections', 'preconstruction', 'projects'),
+    (13, 'Permits & Inspections', 'contract', 'permits'),
+    (14, 'Assign Project Manager', 'contract', 'projects'),
+    (15, 'Submittal Preparation', 'preconstruction', 'submittals'),
+    (16, 'Submittal Submission', 'preconstruction', 'submittals'),
+    (17, 'Submittal Approval', 'preconstruction', 'submittals'),
+    (18, 'Pre-Construction Meeting', 'preconstruction', 'precon'),
     (19, 'RFI Resolution', 'preconstruction', 'rfis'),
     (20, 'Material Ordering / Delivery Schedule', 'materials', 'materials'),
     (21, 'Material Receiving', 'materials', 'receiving'),
@@ -10939,7 +11582,8 @@ MODULE_LINKS = {
     'bids': '/bids', 'plans': '/plans', 'supplier_quotes': '/supplier-quotes',
     'bid_followups': '/bids', 'contracts': '/contracts', 'coi': '/coi',
     'payapps': '/payapps', 'projects': '/projects/{job_id}',
-    'submittals': '/submittals', 'precon': '/projects/{job_id}',
+    'permits': '/permits', 'submittals': '/submittals',
+    'precon': '/projects/{job_id}',
     'rfis': '/rfis', 'materials': '/materials/job/{job_id}',
     'receiving': '/receiving', 'inventory': '/inventory',
     'invoices': '/invoices', 'shipments': '/material-shipments',
@@ -11008,26 +11652,31 @@ def auto_detect_pipeline(conn, job_id):
     if pac:
         updates[12] = 'complete'
 
-    # Step 13: PM assigned
-    job = conn.execute('SELECT project_manager_id FROM jobs WHERE id = ?', (job_id,)).fetchone()
-    if job and job['project_manager_id']:
+    # Step 13: permits — all permits approved or N/A
+    permits = conn.execute('SELECT status FROM permits WHERE job_id = ?', (job_id,)).fetchall()
+    if permits and all(p['status'] in ('Approved', 'N/A') for p in permits):
         updates[13] = 'complete'
 
-    # Steps 14-16: submittals
+    # Step 14: PM assigned
+    job = conn.execute('SELECT project_manager_id FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if job and job['project_manager_id']:
+        updates[14] = 'complete'
+
+    # Steps 15-17: submittals
     sub_submitted = conn.execute("SELECT id FROM submittals WHERE job_id = ? AND status IN ('Submitted','Approved','Approved as Noted')", (job_id,)).fetchone()
     sub_approved = conn.execute("SELECT id FROM submittals WHERE job_id = ? AND status IN ('Approved','Approved as Noted')", (job_id,)).fetchone()
     sub_any = conn.execute("SELECT id FROM submittals WHERE job_id = ?", (job_id,)).fetchone()
     if sub_any:
-        updates[14] = 'complete'
-    if sub_submitted:
         updates[15] = 'complete'
-    if sub_approved:
+    if sub_submitted:
         updates[16] = 'complete'
+    if sub_approved:
+        updates[17] = 'complete'
 
-    # Step 17: precon meeting
+    # Step 18: precon meeting
     precon = conn.execute("SELECT id FROM precon_meetings WHERE job_id = ? AND status = 'Completed'", (job_id,)).fetchone()
     if precon:
-        updates[17] = 'complete'
+        updates[18] = 'complete'
 
     # Step 19: RFIs
     rfi_closed = conn.execute("SELECT id FROM rfis WHERE job_id = ? AND status = 'Closed'", (job_id,)).fetchone()
@@ -11963,22 +12612,22 @@ def api_quick_add_job():
 # ─── Team Pay (Internal Progress Payroll) ─────────────────────────
 
 @app.route('/team-pay')
-@role_required('owner')
+@role_required('owner', 'admin')
 def team_pay_list_page():
     return render_template('team_pay/list.html')
 
 @app.route('/team-pay/job/<int:schedule_id>')
-@role_required('owner')
+@role_required('owner', 'admin')
 def team_pay_job_page(schedule_id):
     return render_template('team_pay/job.html', schedule_id=schedule_id)
 
 @app.route('/team-pay/period/<int:period_id>')
-@role_required('owner')
+@role_required('owner', 'admin')
 def team_pay_period_page(period_id):
     return render_template('team_pay/period.html', period_id=period_id)
 
 @app.route('/api/team-pay/schedules', methods=['GET'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_schedules_list():
     conn = get_db()
     rows = conn.execute('''
@@ -11997,7 +12646,7 @@ def api_team_pay_schedules_list():
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules', methods=['POST'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_schedules_create():
     data = request.get_json()
     job_id = data.get('job_id')
@@ -12018,7 +12667,7 @@ def api_team_pay_schedules_create():
     return jsonify({'ok': True, 'id': schedule_id}), 201
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['GET'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_schedule_detail(sid):
     conn = get_db()
     row = conn.execute('''
@@ -12033,7 +12682,7 @@ def api_team_pay_schedule_detail(sid):
     return jsonify(dict(row))
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['PUT'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_schedule_update(sid):
     data = request.get_json()
     conn = get_db()
@@ -12046,7 +12695,7 @@ def api_team_pay_schedule_update(sid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['DELETE'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_schedule_delete(sid):
     conn = get_db()
     conn.execute('DELETE FROM team_pay_schedules WHERE id = ?', (sid,))
@@ -12057,7 +12706,7 @@ def api_team_pay_schedule_delete(sid):
 # --- Team Pay Members ---
 
 @app.route('/api/team-pay/schedules/<int:sid>/members', methods=['GET'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_members_list(sid):
     conn = get_db()
     rows = conn.execute('''
@@ -12074,7 +12723,7 @@ def api_team_pay_members_list(sid):
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules/<int:sid>/members', methods=['POST'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_member_add(sid):
     data = request.get_json()
     user_id = data.get('user_id')
@@ -12095,7 +12744,7 @@ def api_team_pay_member_add(sid):
     return jsonify({'ok': True}), 201
 
 @app.route('/api/team-pay/members/<int:mid>', methods=['PUT'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_member_update(mid):
     data = request.get_json()
     conn = get_db()
@@ -12114,7 +12763,7 @@ def api_team_pay_member_update(mid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/members/<int:mid>', methods=['DELETE'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_member_delete(mid):
     conn = get_db()
     conn.execute('DELETE FROM team_pay_members WHERE id = ?', (mid,))
@@ -12125,7 +12774,7 @@ def api_team_pay_member_delete(mid):
 # --- Team Pay Periods ---
 
 @app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['GET'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_periods_list(sid):
     conn = get_db()
     rows = conn.execute('''
@@ -12139,7 +12788,7 @@ def api_team_pay_periods_list(sid):
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['POST'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_period_create(sid):
     conn = get_db()
     max_num = conn.execute('SELECT COALESCE(MAX(period_number), 0) FROM team_pay_periods WHERE schedule_id = ?', (sid,)).fetchone()[0]
@@ -12157,7 +12806,7 @@ def api_team_pay_period_create(sid):
     return jsonify({'ok': True, 'id': period_id}), 201
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['GET'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_period_detail(pid):
     """Main G703 endpoint — returns members with calculated previous/total/balance."""
     conn = get_db()
@@ -12218,7 +12867,7 @@ def api_team_pay_period_detail(pid):
     return jsonify(result)
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['PUT'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_period_update(pid):
     data = request.get_json()
     conn = get_db()
@@ -12260,7 +12909,7 @@ def api_team_pay_period_update(pid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['DELETE'])
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_period_delete(pid):
     conn = get_db()
     period = conn.execute('SELECT status FROM team_pay_periods WHERE id = ?', (pid,)).fetchone()
@@ -12273,7 +12922,7 @@ def api_team_pay_period_delete(pid):
     return jsonify({'ok': True})
 
 @app.route('/api/team-pay/dashboard')
-@api_role_required('owner')
+@api_role_required('owner', 'admin')
 def api_team_pay_dashboard():
     """Cross-job summary per member."""
     conn = get_db()

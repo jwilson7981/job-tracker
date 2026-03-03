@@ -11,12 +11,15 @@ if (window.JOB_ID) {
     loadProjectDetail();
 }
 
+var _allProjects = [];
+
 async function loadProjects() {
     const res = await fetch('/api/projects');
-    const projects = await res.json();
+    _allProjects = await res.json();
     const tbody = document.getElementById('projectsBody');
-    if (!projects.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No projects.</td></tr>'; return; }
-    tbody.innerHTML = projects.map(p => `<tr>
+    if (!_allProjects.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No projects.</td></tr>'; return; }
+    const canDelete = typeof USER_ROLE !== 'undefined' && (USER_ROLE === 'owner' || USER_ROLE === 'admin');
+    tbody.innerHTML = _allProjects.map(p => `<tr>
         <td><a href="/projects/${p.id}" class="link">${p.name}</a></td>
         <td><span class="status-badge status-${p.status.toLowerCase().replace(/ /g,'-')}">${p.status}</span></td>
         <td>${p.location}</td>
@@ -25,8 +28,70 @@ async function loadProjects() {
         <td class="cell-computed">${p.open_service_calls > 0 ? '<span style="color:#D97706;font-weight:600;">'+p.open_service_calls+'</span>' : '0'}</td>
         <td class="cell-computed">${p.warranty_items}</td>
         <td>${(p.updated_at || '').substring(0, 10)}</td>
-        <td><a href="/projects/${p.id}" class="btn btn-small btn-secondary">View</a></td>
+        <td style="white-space:nowrap;">
+            <a href="/projects/${p.id}" class="btn btn-small btn-secondary">View</a>
+            <button class="btn btn-small btn-secondary" onclick="event.stopPropagation();editProject(${p.id})">Edit</button>
+            ${canDelete ? `<button class="btn btn-small btn-secondary" style="color:#EF4444;" onclick="event.stopPropagation();deleteProject(${p.id})">Del</button>` : ''}
+        </td>
     </tr>`).join('');
+}
+
+function editProject(id) {
+    const p = _allProjects.find(x => x.id === id);
+    if (!p) return;
+    // Need to fetch full job data for address fields
+    fetch('/api/job/' + id).then(r => r.json()).then(data => {
+        document.getElementById('editJobId').value = id;
+        document.getElementById('editJobName').value = data.name || '';
+        document.getElementById('editJobStatus').value = data.status || 'Needs Bid';
+        document.getElementById('editJobAddress').value = data.address || '';
+        document.getElementById('editJobCity').value = data.city || '';
+        document.getElementById('editJobState').value = data.state || '';
+        document.getElementById('editJobZip').value = data.zip_code || '';
+        document.getElementById('editJobTaxRate').value = data.tax_rate || '';
+        document.getElementById('editJobModal').style.display = 'flex';
+    });
+}
+
+function hideEditJobModal() {
+    document.getElementById('editJobModal').style.display = 'none';
+}
+
+async function updateProject(e) {
+    e.preventDefault();
+    const id = document.getElementById('editJobId').value;
+    const payload = {
+        name: document.getElementById('editJobName').value.trim(),
+        status: document.getElementById('editJobStatus').value,
+        address: document.getElementById('editJobAddress').value.trim(),
+        city: document.getElementById('editJobCity').value.trim(),
+        state: document.getElementById('editJobState').value.trim(),
+        zip_code: document.getElementById('editJobZip').value.trim(),
+    };
+    const taxVal = document.getElementById('editJobTaxRate').value;
+    if (taxVal !== '') payload.tax_rate = parseFloat(taxVal) || 0;
+    const res = await fetch('/api/job/' + id, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+        hideEditJobModal();
+        loadProjects();
+    } else {
+        alert('Failed to update job.');
+    }
+}
+
+async function deleteProject(id) {
+    const p = _allProjects.find(x => x.id === id);
+    if (!confirm(`Delete project "${p ? p.name : id}"? This will permanently remove the project and all associated data.`)) return;
+    const res = await fetch('/api/job/' + id, { method: 'DELETE' });
+    if (res.ok) {
+        loadProjects();
+    } else {
+        alert('Failed to delete project.');
+    }
 }
 
 async function loadProjectDetail() {

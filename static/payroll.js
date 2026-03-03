@@ -6,20 +6,99 @@ if (document.getElementById('payrollBody') && !window.EMPLOYEE_ID) {
     loadPayroll();
 }
 
+let payrollUsers = [];
+
 async function loadPayroll() {
     const res = await fetch('/api/payroll/summary');
-    const users = await res.json();
+    payrollUsers = await res.json();
     const tbody = document.getElementById('payrollBody');
-    if (!users.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No employees.</td></tr>'; return; }
-    tbody.innerHTML = users.map(u => `<tr>
+    if (!payrollUsers.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No employees.</td></tr>'; return; }
+    tbody.innerHTML = payrollUsers.map(u => `<tr>
         <td><a href="/payroll/employee/${u.id}" class="link">${u.display_name}</a></td>
         <td><span class="badge">${u.role.replace('_',' ')}</span></td>
         <td class="cell-computed">${fmt(u.hourly_rate)}/hr</td>
         <td class="cell-computed">${u.total_hours}h</td>
         <td class="cell-computed">${u.pending_hours > 0 ? '<span style="color:#D97706;font-weight:600;">'+u.pending_hours+'h</span>' : '0h'}</td>
         <td class="cell-computed" style="font-weight:700;">${fmt(u.total_pay)}</td>
-        <td><a href="/payroll/employee/${u.id}" class="btn btn-small btn-secondary">View</a></td>
+        <td style="white-space:nowrap;">
+            <a href="/payroll/employee/${u.id}" class="btn btn-small btn-secondary">View</a>
+            <button class="btn btn-small btn-secondary" onclick="editEmployee(${u.id})">Edit</button>
+            <button class="btn btn-small btn-secondary" onclick="deleteEmployee(${u.id})" style="color:#EF4444;">Del</button>
+        </td>
     </tr>`).join('');
+}
+
+function showAddEmployee() {
+    document.getElementById('editEmpId').value = '';
+    document.getElementById('empModalTitle').textContent = 'Add Employee';
+    document.getElementById('empName').value = '';
+    document.getElementById('empUsername').value = '';
+    document.getElementById('empPassword').value = '';
+    document.getElementById('empPasswordGroup').style.display = '';
+    document.getElementById('empRole').value = 'employee';
+    document.getElementById('empRate').value = '0';
+    document.getElementById('empEmail').value = '';
+    document.getElementById('empPhone').value = '';
+    document.getElementById('empUsername').readOnly = false;
+    document.getElementById('addEmployeeModal').style.display = 'flex';
+}
+
+function editEmployee(id) {
+    const u = payrollUsers.find(x => x.id === id);
+    if (!u) return;
+    document.getElementById('editEmpId').value = u.id;
+    document.getElementById('empModalTitle').textContent = 'Edit Employee';
+    document.getElementById('empName').value = u.display_name || '';
+    document.getElementById('empUsername').value = u.username || '';
+    document.getElementById('empUsername').readOnly = true;
+    document.getElementById('empPassword').value = '';
+    document.getElementById('empPasswordGroup').style.display = 'none';
+    document.getElementById('empRole').value = u.role || 'employee';
+    document.getElementById('empRate').value = u.hourly_rate || 0;
+    document.getElementById('empEmail').value = u.email || '';
+    document.getElementById('empPhone').value = u.phone || '';
+    document.getElementById('addEmployeeModal').style.display = 'flex';
+}
+
+function closeAddEmployee() { document.getElementById('addEmployeeModal').style.display = 'none'; }
+
+async function saveEmployee() {
+    const id = document.getElementById('editEmpId').value;
+    const data = {
+        display_name: document.getElementById('empName').value.trim(),
+        role: document.getElementById('empRole').value,
+        hourly_rate: parseFloat(document.getElementById('empRate').value) || 0,
+        email: document.getElementById('empEmail').value.trim(),
+        phone: document.getElementById('empPhone').value.trim(),
+    };
+
+    if (id) {
+        // Update existing
+        const res = await fetch('/api/admin/users/' + id, {
+            method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+        });
+        if (res.ok) { closeAddEmployee(); loadPayroll(); }
+        else { const err = await res.json(); alert(err.error || 'Failed to update'); }
+    } else {
+        // Create new
+        data.username = document.getElementById('empUsername').value.trim();
+        data.password = document.getElementById('empPassword').value;
+        if (!data.username || !data.password) return alert('Username and password are required');
+        if (!data.display_name) return alert('Display name is required');
+        const res = await fetch('/api/admin/users', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+        });
+        if (res.ok) { closeAddEmployee(); loadPayroll(); }
+        else { const err = await res.json(); alert(err.error || 'Failed to create employee'); }
+    }
+}
+
+async function deleteEmployee(id) {
+    const u = payrollUsers.find(x => x.id === id);
+    if (!confirm(`Delete employee "${u ? u.display_name : id}"? This will remove their account and cannot be undone.`)) return;
+    const res = await fetch('/api/admin/users/' + id, { method: 'DELETE' });
+    if (res.ok) { loadPayroll(); }
+    else { const err = await res.json(); alert(err.error || 'Failed to delete'); }
 }
 
 // Employee detail

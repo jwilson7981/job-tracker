@@ -413,3 +413,50 @@ async function updateAppStatus(status) {
         body: JSON.stringify({ status })
     });
 }
+
+function cancelApplication() {
+    if (appData && appData.contract) {
+        window.location.href = '/payapps/contract/' + appData.contract.id;
+    } else {
+        window.location.href = '/payapps';
+    }
+}
+
+async function generatePayAppPDF() {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Generating...';
+    btn.disabled = true;
+    try {
+        // Save entries first
+        const entries = appData.lines.filter(l => !l.is_header).map(l => ({
+            sov_item_id: l.sov_item_id,
+            work_this_period: l.this_period || 0,
+            materials_stored: l.materials_stored || 0,
+        }));
+        await fetch('/api/payapps/applications/' + PA_APP_ID, {
+            method: 'PUT', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                entries,
+                period_to: document.getElementById('periodTo').value,
+                co_additions: parseFloat(document.getElementById('coAdd').value) || 0,
+                co_deductions: parseFloat(document.getElementById('coDed').value) || 0,
+            })
+        });
+        // Generate PDF
+        const res = await fetch('/api/payapps/applications/' + PA_APP_ID + '/generate-pdf', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok && data.path) {
+            window.open(data.path, '_blank');
+            btn.textContent = 'PDF Ready!';
+        } else {
+            alert(data.error || 'Failed to generate PDF');
+            btn.textContent = orig;
+        }
+    } catch (e) {
+        alert('Error generating PDF');
+        btn.textContent = orig;
+    }
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = orig; }, 3000);
+}
