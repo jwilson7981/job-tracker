@@ -6,7 +6,7 @@ services:
     container_name: construction-mgmt
     restart: unless-stopped
     ports:
-      - "5001:5001"
+      - "8080:5001"
     volumes:
       - ./data:/app/data
     env_file:
