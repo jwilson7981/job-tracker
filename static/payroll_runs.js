@@ -128,15 +128,38 @@ function createRun() {
     xhr.send(JSON.stringify({ period_start: start, period_end: end, check_date: checkDate, notes: notes, employee_ids: empIds }));
 }
 
+var _deleteRunId = null;
+var _deleteFromDetail = false;
+
 function deleteRun(id) {
-    var pw = prompt('Enter your password to confirm deletion of this payroll run:');
-    if (!pw) return;
+    _deleteRunId = id;
+    _deleteFromDetail = false;
+    document.getElementById('deleteRunPassword').value = '';
+    document.getElementById('deleteRunModal').style.display = 'flex';
+}
+
+function closeDeleteRunModal() {
+    document.getElementById('deleteRunModal').style.display = 'none';
+    _deleteRunId = null;
+}
+
+function confirmDeleteRun() {
+    var pw = document.getElementById('deleteRunPassword').value;
+    if (!pw) { alert('Password is required'); return; }
+    var id = _deleteRunId;
+    if (!id && typeof RUN_ID !== 'undefined') id = RUN_ID;
     var xhr = new XMLHttpRequest();
     xhr.open('DELETE', '/api/payroll/runs/' + id, true);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300) { loadRuns(); }
-        else { try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); } catch(e) { alert('Failed to delete'); } }
+        if (xhr.status >= 200 && xhr.status < 300) {
+            closeDeleteRunModal();
+            if (_deleteFromDetail) { window.location.href = '/payroll'; }
+            else { loadRuns(); }
+        } else {
+            try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); }
+            catch(e) { alert('Failed to delete'); }
+        }
     };
     xhr.onerror = function() { alert('Network error deleting run.'); };
     xhr.send(JSON.stringify({ password: pw }));
@@ -500,15 +523,8 @@ function reopenRun() {
 }
 
 function deleteRunDetail() {
-    var pw = prompt('Enter your password to confirm deletion of this payroll run:');
-    if (!pw) return;
-    var xhr = new XMLHttpRequest();
-    xhr.open('DELETE', '/api/payroll/runs/' + RUN_ID, true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300) window.location.href = '/payroll';
-        else { try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); } catch(e) { alert('Failed to delete'); } }
-    };
-    xhr.onerror = function() { alert('Network error deleting run.'); };
-    xhr.send(JSON.stringify({ password: pw }));
+    _deleteRunId = RUN_ID;
+    _deleteFromDetail = true;
+    document.getElementById('deleteRunPassword').value = '';
+    document.getElementById('deleteRunModal').style.display = 'flex';
 }

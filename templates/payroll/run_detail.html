@@ -24,8 +24,29 @@
     <p class="loading" style="text-align:center;padding:40px;">Loading timesheet...</p>
 </div>
 
+<!-- Delete Confirmation Modal -->
+<div id="deleteRunModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeDeleteRunModal()">
+    <div class="modal-box" style="max-width:400px;">
+        <div class="modal-header">
+            <h3>Confirm Delete</h3>
+            <button onclick="closeDeleteRunModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin:0 0 12px;color:var(--gray-600);">Enter your password to permanently delete this payroll run.</p>
+            <div class="bid-field">
+                <label class="form-label">Password</label>
+                <input type="password" id="deleteRunPassword" class="form-input" placeholder="Enter your password">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeDeleteRunModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" style="background:#EF4444;" onclick="confirmDeleteRun()">Delete</button>
+        </div>
+    </div>
+</div>
+
 <script>
-const RUN_ID = {{ run.id }};
+var RUN_ID = {{ run.id }};
 </script>
 <script src="/static/payroll_runs.js"></script>
 {% endblock %}
