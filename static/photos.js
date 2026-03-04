@@ -15,6 +15,7 @@ function loadJobs() {
             });
             document.getElementById('photoJobFilter').innerHTML = opts;
             document.getElementById('uploadJob').innerHTML = opts2;
+            document.getElementById('cameraJob').innerHTML = opts2;
         });
 }
 
@@ -71,6 +72,29 @@ function uploadPhotos(e) {
         .then(function(data) {
             if (data.ok) {
                 document.getElementById('uploadModal').style.display = 'none';
+                loadPhotos();
+            }
+        });
+}
+
+function showCameraModal() {
+    document.getElementById('cameraFile').value = '';
+    document.getElementById('cameraCaption').value = '';
+    document.getElementById('cameraModal').style.display = 'flex';
+}
+
+function takePhoto(e) {
+    e.preventDefault();
+    var formData = new FormData();
+    formData.append('job_id', document.getElementById('cameraJob').value);
+    formData.append('category', document.getElementById('cameraCategory').value);
+    formData.append('caption', document.getElementById('cameraCaption').value);
+    formData.append('files', document.getElementById('cameraFile').files[0]);
+    fetch('/api/photos', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                document.getElementById('cameraModal').style.display = 'none';
                 loadPhotos();
             }
         });
