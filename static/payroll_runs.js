@@ -202,19 +202,17 @@ function renderRunHeader() {
 }
 
 function recalcKpis() {
-    const emps = _runData.employees;
-    let totalHours = 0, totalPay = 0;
+    var emps = _runData.employees;
+    var totalHours = 0, totalPay = 0;
     if (_runData.run.status === 'Finalized') {
-        emps.forEach(e => { totalHours += e.total_hours || 0; totalPay += e.gross_pay || 0; });
+        emps.forEach(function(e) { totalHours += e.total_hours || 0; totalPay += e.gross_pay || 0; });
     } else {
-        document.querySelectorAll('.ts-input').forEach(inp => {
-            totalHours += parseFloat(inp.value) || 0;
-        });
-        emps.forEach(e => {
-            let empHours = 0;
-            document.querySelectorAll(`.ts-input[data-uid="${e.user_id}"]`).forEach(inp => {
+        emps.forEach(function(e) {
+            var empHours = 0;
+            document.querySelectorAll('.ts-cell-entries[data-uid="' + e.user_id + '"] .ts-hrs-cell').forEach(function(inp) {
                 empHours += parseFloat(inp.value) || 0;
             });
+            totalHours += empHours;
             totalPay += empHours * (e.hourly_rate || 0);
         });
     }
@@ -225,209 +223,197 @@ function recalcKpis() {
 
 function buildJobDatalistHTML() {
     return '<datalist id="jobList">' +
-        _runData.available_jobs.map(j => `<option value="${j.name}">`).join('') +
+        _runData.available_jobs.map(function(j) { return '<option value="' + j.name + '">'; }).join('') +
         '</datalist>';
 }
 
 function buildTimesheetGrid() {
-    const { run, employees, entries, dates, available_jobs } = _runData;
-    const isReadOnly = run.status === 'Finalized';
-    const container = document.getElementById('timesheetContainer');
+    var run = _runData.run, employees = _runData.employees, entries = _runData.entries,
+        dates = _runData.dates, available_jobs = _runData.available_jobs;
+    var isReadOnly = run.status === 'Finalized';
+    var container = document.getElementById('timesheetContainer');
 
-    // Group entries by user_id -> { job_id -> { date -> hours, job_name } }
-    const entryMap = {};
-    entries.forEach(e => {
+    // Group entries by user_id -> date -> [{job_id, job_name, hours}]
+    var entryMap = {};
+    entries.forEach(function(e) {
         if (!entryMap[e.user_id]) entryMap[e.user_id] = {};
-        if (!entryMap[e.user_id][e.job_id]) entryMap[e.user_id][e.job_id] = {};
-        entryMap[e.user_id][e.job_id][e.work_date] = e.hours || 0;
-        entryMap[e.user_id][e.job_id]._job_name = e.job_name || '';
+        if (!entryMap[e.user_id][e.work_date]) entryMap[e.user_id][e.work_date] = [];
+        var jobName = e.job_name || '';
+        if (!jobName && e.job_id) {
+            var found = available_jobs.find(function(j) { return j.id === e.job_id; });
+            if (found) jobName = found.name;
+        }
+        if (e.hours > 0 || jobName) {
+            entryMap[e.user_id][e.work_date].push({ job_id: e.job_id, job_name: jobName, hours: e.hours || 0 });
+        }
     });
 
     // Format date headers
-    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    const dateHeaders = dates.map(d => {
-        const dt = new Date(d + 'T00:00:00');
-        return dayNames[dt.getDay()] + ' ' + (dt.getMonth()+1) + '/' + dt.getDate();
+    var dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var dateHeaders = dates.map(function(d) {
+        var dt = new Date(d + 'T00:00:00');
+        return dayNames[dt.getDay()] + '<br>' + (dt.getMonth()+1) + '/' + dt.getDate();
     });
 
-    let html = buildJobDatalistHTML();
-    html += `<table class="data-table ts-grid" style="min-width:${200 + dates.length * 70}px;">
-        <thead><tr>
-            <th style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:2;min-width:180px;">Employee</th>
-            <th style="min-width:160px;">Project</th>`;
-    dateHeaders.forEach(dh => { html += `<th style="min-width:60px;text-align:center;font-size:12px;">${dh}</th>`; });
-    html += `<th style="min-width:70px;text-align:right;">Total</th></tr></thead><tbody>`;
+    var html = buildJobDatalistHTML();
+    html += '<style>' +
+        '.ts-cell { padding:4px !important; vertical-align:top; }' +
+        '.ts-entry { display:flex; gap:3px; align-items:center; margin-bottom:3px; }' +
+        '.ts-entry:last-child { margin-bottom:0; }' +
+        '.ts-job-cell { width:100px; font-size:11px; padding:3px 4px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; }' +
+        '.ts-hrs-cell { width:48px; font-size:12px; padding:3px 4px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; text-align:center; }' +
+        '.ts-add-btn { font-size:10px; color:var(--primary,#2563EB); cursor:pointer; border:none; background:none; padding:2px 0; }' +
+        '.ts-add-btn:hover { text-decoration:underline; }' +
+        '.ts-remove-entry { font-size:11px; color:#EF4444; cursor:pointer; border:none; background:none; padding:0 2px; line-height:1; }' +
+        '.ts-readonly-entry { font-size:11px; margin-bottom:2px; }' +
+        '.ts-readonly-entry span { color:var(--gray-500); }' +
+        '</style>';
 
-    employees.forEach(emp => {
-        const uid = emp.user_id;
-        const userEntries = entryMap[uid] || {};
-        const jobIds = Object.keys(userEntries).map(Number);
-        if (jobIds.length === 0) jobIds.push(0);
+    html += '<table class="data-table ts-grid" style="min-width:' + (180 + dates.length * 165) + 'px;">' +
+        '<thead><tr>' +
+        '<th style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:2;min-width:160px;">Employee</th>';
+    dateHeaders.forEach(function(dh) {
+        html += '<th style="min-width:155px;text-align:center;font-size:12px;">' + dh + '</th>';
+    });
+    html += '<th style="min-width:80px;text-align:right;">Total</th></tr></thead><tbody>';
 
-        jobIds.forEach((jid, idx) => {
-            const isFirst = idx === 0;
-            const jobEntries = userEntries[jid] || {};
-            const jobName = jobEntries._job_name || (available_jobs.find(j => j.id === jid) || {}).name || '';
-            html += `<tr class="ts-row" data-uid="${uid}">`;
-            if (isFirst) {
-                html += `<td style="position:sticky;left:0;background:#fff;z-index:1;font-weight:600;vertical-align:top;" rowspan="__ROWSPAN_${uid}__">
-                    ${emp.display_name}<br>
-                    <span style="font-size:11px;color:var(--gray-400);font-weight:400;">${fmtMoney(emp.hourly_rate)}/hr</span>
-                    <div class="ts-emp-subtotal" id="subtotal-${uid}" style="margin-top:6px;font-size:13px;color:var(--primary,#2563EB);"></div>
-                </td>`;
-            }
-            html += `<td>`;
+    employees.forEach(function(emp) {
+        var uid = emp.user_id;
+        var userEntries = entryMap[uid] || {};
+        html += '<tr data-uid="' + uid + '">';
+        html += '<td style="position:sticky;left:0;background:#fff;z-index:1;font-weight:600;vertical-align:top;">' +
+            emp.display_name + '<br>' +
+            '<span style="font-size:11px;color:var(--gray-400);font-weight:400;">' + fmtMoney(emp.hourly_rate) + '/hr</span>' +
+            '<div class="ts-emp-subtotal" id="subtotal-' + uid + '" style="margin-top:6px;font-size:13px;color:var(--primary,#2563EB);"></div>' +
+            '</td>';
+
+        dates.forEach(function(d) {
+            var dayEntries = userEntries[d] || [];
+            html += '<td class="ts-cell">';
             if (isReadOnly) {
-                html += jobName || (jid ? 'Job #' + jid : '-');
-            } else {
-                html += `<input type="text" class="form-input ts-job" data-uid="${uid}" list="jobList"
-                    value="${jobName}" placeholder="Type or select project..."
-                    style="font-size:12px;padding:4px;width:150px;">`;
-            }
-            html += `</td>`;
-            dates.forEach(d => {
-                const val = jobEntries[d] || '';
-                if (isReadOnly) {
-                    html += `<td style="text-align:center;">${val || ''}</td>`;
-                } else {
-                    html += `<td><input type="number" class="form-input ts-input" data-uid="${uid}" data-date="${d}"
-                        step="any" min="0" max="24" value="${val}"
-                        style="width:55px;text-align:center;padding:4px;font-size:13px;"
-                        oninput="recalcTotals()"></td>`;
+                if (dayEntries.length) {
+                    dayEntries.forEach(function(de) {
+                        html += '<div class="ts-readonly-entry"><strong>' + de.hours + 'h</strong> <span>' + (de.job_name || '-') + '</span></div>';
+                    });
                 }
-            });
-            html += `<td style="text-align:right;font-weight:600;" class="ts-row-total" data-uid="${uid}">0</td>`;
-            html += `</tr>`;
+            } else {
+                html += '<div class="ts-cell-entries" data-uid="' + uid + '" data-date="' + d + '">';
+                if (dayEntries.length) {
+                    dayEntries.forEach(function(de) {
+                        html += buildEntryRow(uid, d, de.job_name, de.hours);
+                    });
+                } else {
+                    html += buildEntryRow(uid, d, '', '');
+                }
+                html += '<button type="button" class="ts-add-btn" onclick="addCellEntry(this)">+ add</button>';
+                html += '</div>';
+            }
+            html += '</td>';
         });
 
-        if (!isReadOnly) {
-            html += `<tr class="ts-add-row" data-uid="${uid}">
-                <td></td>
-                <td colspan="${dates.length + 1}" style="padding:4px;">
-                    <button class="btn btn-small btn-secondary" onclick="addJobRow(${uid})">+ Add Project</button>
-                </td>
-            </tr>`;
-        }
-
-        const rowCount = jobIds.length;
-        html = html.replace(`__ROWSPAN_${uid}__`, isReadOnly ? rowCount : rowCount + 1);
+        html += '<td style="text-align:right;font-weight:600;vertical-align:top;" class="ts-emp-total" data-uid="' + uid + '">0</td>';
+        html += '</tr>';
     });
 
     // Day totals row
-    html += `<tr style="background:var(--gray-50,#f8fafc);font-weight:700;border-top:2px solid var(--gray-300,#cbd5e1);">
-        <td style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:1;">Totals</td>
-        <td></td>`;
-    dates.forEach(d => {
-        html += `<td style="text-align:center;" class="ts-day-total" data-date="${d}">0</td>`;
+    html += '<tr style="background:var(--gray-50,#f8fafc);font-weight:700;border-top:2px solid var(--gray-300,#cbd5e1);">' +
+        '<td style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:1;">Totals</td>';
+    dates.forEach(function(d) {
+        html += '<td style="text-align:center;" class="ts-day-total" data-date="' + d + '">0</td>';
     });
-    html += `<td style="text-align:right;" id="grandTotal">0</td></tr>`;
+    html += '<td style="text-align:right;" id="grandTotal">0</td></tr>';
 
     html += '</tbody></table>';
     container.innerHTML = html;
-
     recalcTotals();
 }
 
-function addJobRow(uid) {
-    const addRow = document.querySelector(`.ts-add-row[data-uid="${uid}"]`);
-    if (!addRow) return;
-    const dates = _runData.dates;
-
-    const newRow = document.createElement('tr');
-    newRow.className = 'ts-row';
-    newRow.dataset.uid = uid;
-    let cells = `<td>
-        <input type="text" class="form-input ts-job" data-uid="${uid}" list="jobList"
-            value="" placeholder="Type or select project..."
-            style="font-size:12px;padding:4px;width:130px;">
-        <button class="btn btn-small" onclick="this.closest('tr').remove();recalcTotals();fixRowspans(${uid});" style="color:#EF4444;padding:2px 6px;font-size:11px;margin-left:2px;">X</button>
-    </td>`;
-    dates.forEach(d => {
-        cells += `<td><input type="number" class="form-input ts-input" data-uid="${uid}" data-date="${d}"
-            step="any" min="0" max="24" value=""
-            style="width:55px;text-align:center;padding:4px;font-size:13px;"
-            oninput="recalcTotals()"></td>`;
-    });
-    cells += `<td style="text-align:right;font-weight:600;" class="ts-row-total" data-uid="${uid}">0</td>`;
-    newRow.innerHTML = cells;
-    addRow.parentNode.insertBefore(newRow, addRow);
-    fixRowspans(uid);
+function buildEntryRow(uid, date, jobName, hours) {
+    return '<div class="ts-entry">' +
+        '<input type="text" class="ts-job-cell" list="jobList" value="' + (jobName || '') + '" placeholder="Project">' +
+        '<input type="number" class="ts-hrs-cell" step="any" min="0" max="24" value="' + (hours || '') + '" placeholder="hrs" oninput="recalcTotals()">' +
+        '<button type="button" class="ts-remove-entry" onclick="removeCellEntry(this)">&times;</button>' +
+        '</div>';
 }
 
-function fixRowspans(uid) {
-    const rows = document.querySelectorAll(`.ts-row[data-uid="${uid}"]`);
-    const addRow = document.querySelector(`.ts-add-row[data-uid="${uid}"]`);
-    const totalRows = rows.length + (addRow ? 1 : 0);
-    const firstRow = rows[0];
-    if (firstRow) {
-        const nameCell = firstRow.querySelector('td[rowspan]');
-        if (nameCell) nameCell.rowSpan = totalRows;
+function addCellEntry(btn) {
+    var container = btn.parentNode;
+    var uid = container.dataset.uid;
+    var date = container.dataset.date;
+    var entryHtml = buildEntryRow(uid, date, '', '');
+    var temp = document.createElement('div');
+    temp.innerHTML = entryHtml;
+    container.insertBefore(temp.firstChild, btn);
+}
+
+function removeCellEntry(btn) {
+    var entry = btn.parentNode;
+    var container = entry.parentNode;
+    var entryCount = container.querySelectorAll('.ts-entry').length;
+    if (entryCount <= 1) {
+        // Don't remove last entry, just clear it
+        entry.querySelector('.ts-job-cell').value = '';
+        entry.querySelector('.ts-hrs-cell').value = '';
+    } else {
+        entry.remove();
     }
+    recalcTotals();
 }
 
 function recalcTotals() {
-    const dates = _runData.dates;
-    const employees = _runData.employees;
-    let grandTotal = 0;
+    var dates = _runData.dates;
+    var employees = _runData.employees;
+    var grandTotal = 0;
 
-    employees.forEach(emp => {
-        let empTotal = 0;
-        document.querySelectorAll(`.ts-input[data-uid="${emp.user_id}"]`).forEach(inp => {
+    employees.forEach(function(emp) {
+        var empTotal = 0;
+        document.querySelectorAll('.ts-cell-entries[data-uid="' + emp.user_id + '"] .ts-hrs-cell').forEach(function(inp) {
             empTotal += parseFloat(inp.value) || 0;
         });
-        const sub = document.getElementById('subtotal-' + emp.user_id);
+        var sub = document.getElementById('subtotal-' + emp.user_id);
         if (sub) sub.textContent = empTotal.toFixed(1) + 'h = ' + fmtMoney(empTotal * (emp.hourly_rate || 0));
-        const rows = document.querySelectorAll(`.ts-row[data-uid="${emp.user_id}"]`);
-        rows.forEach(row => {
-            let rowTotal = 0;
-            row.querySelectorAll('.ts-input').forEach(inp => { rowTotal += parseFloat(inp.value) || 0; });
-            const rtCell = row.querySelector('.ts-row-total');
-            if (rtCell) rtCell.textContent = rowTotal.toFixed(1);
-        });
+        var totalCell = document.querySelector('.ts-emp-total[data-uid="' + emp.user_id + '"]');
+        if (totalCell) totalCell.textContent = empTotal.toFixed(1);
         grandTotal += empTotal;
     });
 
-    dates.forEach(d => {
-        let dayTotal = 0;
-        document.querySelectorAll(`.ts-input[data-date="${d}"]`).forEach(inp => {
+    dates.forEach(function(d) {
+        var dayTotal = 0;
+        document.querySelectorAll('.ts-cell-entries[data-date="' + d + '"] .ts-hrs-cell').forEach(function(inp) {
             dayTotal += parseFloat(inp.value) || 0;
         });
-        const cell = document.querySelector(`.ts-day-total[data-date="${d}"]`);
+        var cell = document.querySelector('.ts-day-total[data-date="' + d + '"]');
         if (cell) cell.textContent = dayTotal.toFixed(1);
     });
 
-    const gt = document.getElementById('grandTotal');
+    var gt = document.getElementById('grandTotal');
     if (gt) gt.textContent = grandTotal.toFixed(1);
 
     recalcKpis();
 }
 
 function saveTimesheet(callback) {
-    // Collect entries — resolve job names to IDs or pass name for new jobs
+    // Collect entries from per-day cells
     var entries = [];
-    var rows = document.querySelectorAll('.ts-row');
     var missingProject = false;
-    rows.forEach(function(row) {
-        var uid = parseInt(row.dataset.uid);
-        var jobInput = row.querySelector('.ts-job');
-        var jobName = jobInput ? jobInput.value.trim() : '';
-        var hasHours = false;
-        row.querySelectorAll('.ts-input').forEach(function(inp) {
-            if (parseFloat(inp.value) > 0) hasHours = true;
-        });
-        if (!jobName && hasHours) { missingProject = true; return; }
-        if (!jobName) return;
-        var jobId = _jobNameMap[jobName] || 0;
-        row.querySelectorAll('.ts-input').forEach(function(inp) {
-            var hours = parseFloat(inp.value) || 0;
-            var date = inp.dataset.date;
+    var cellContainers = document.querySelectorAll('.ts-cell-entries');
+    cellContainers.forEach(function(container) {
+        var uid = parseInt(container.dataset.uid);
+        var date = container.dataset.date;
+        var entryDivs = container.querySelectorAll('.ts-entry');
+        entryDivs.forEach(function(div) {
+            var jobName = div.querySelector('.ts-job-cell').value.trim();
+            var hours = parseFloat(div.querySelector('.ts-hrs-cell').value) || 0;
+            if (hours > 0 && !jobName) { missingProject = true; return; }
+            if (!jobName && !hours) return;
+            var jobId = _jobNameMap[jobName] || 0;
             var entry = { user_id: uid, work_date: date, hours: hours };
             if (jobId) { entry.job_id = jobId; }
             else { entry.job_name = jobName; }
             entries.push(entry);
         });
     });
-    if (missingProject) { alert('Some rows have hours but no project assigned. Please enter a project name for all rows with hours.'); return; }
+    if (missingProject) { alert('Some entries have hours but no project. Please assign a project to all entries with hours.'); return; }
     var xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/timesheet', true);
     xhr.setRequestHeader('Content-Type', 'application/json');
