@@ -5240,17 +5240,17 @@ def api_codebook_import_sections():
 # ─── Job Schedule ────────────────────────────────────────────────
 
 @app.route('/schedule')
-@role_required('owner', 'admin', 'project_manager')
+@login_required
 def schedule_page():
     return render_template('schedule/list.html')
 
 @app.route('/schedule/job/<int:job_id>')
-@role_required('owner', 'admin', 'project_manager')
+@login_required
 def schedule_job_page(job_id):
     return render_template('schedule/job.html', job_id=job_id)
 
 @app.route('/api/schedule/events')
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_schedule_events():
     job_id = request.args.get('job_id', '')
     conn = get_db()
@@ -5644,7 +5644,7 @@ def api_geocode():
 
 
 @app.route('/api/schedule/backwards-plan', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_schedule_backwards_plan():
     """Smart backwards planning: bid-driven, weather-aware, crew calculator."""
     import math, urllib.request, urllib.error, urllib.parse
@@ -5655,6 +5655,7 @@ def api_schedule_backwards_plan():
     crew_override = data.get('crew_override')  # None = auto, int = fixed crew
     project_type = data.get('project_type', 'apartment')  # apartment | commercial
     commercial = data.get('commercial', {})
+    apartment_details = data.get('apartment_details', {})  # { units, buildings }
 
     if not job_id or not deadline_date:
         return jsonify({'error': 'job_id and deadline_date required'}), 400
@@ -5763,6 +5764,9 @@ def api_schedule_backwards_plan():
     }
     if project_type != 'commercial':
         total_systems = bid.get('total_systems', 0) if bid else 0
+        # Allow apartment_details.units to override when provided
+        if apartment_details.get('units'):
+            total_systems = apartment_details['units']
 
     # 3. Calculate remaining hours per phase using bid data + pct_complete
     for p in phases:
@@ -6497,6 +6501,7 @@ def api_schedule_backwards_plan():
             'total_systems': total_systems,
             'project_type': project_type,
             'commercial': commercial if project_type == 'commercial' else None,
+            'apartment_details': apartment_details if project_type == 'apartment' and apartment_details else None,
         },
         'crew_recommendation': crew_recommendation,
         'override_impact': override_impact,
@@ -6506,7 +6511,7 @@ def api_schedule_backwards_plan():
 
 
 @app.route('/api/schedule/backwards-plan/save', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_schedule_save_plan():
     """Save a backwards plan snapshot."""
     data = request.get_json(force=True)
@@ -6520,11 +6525,12 @@ def api_schedule_save_plan():
     conn = get_db()
     cursor = conn.execute(
         '''INSERT INTO schedule_plans (job_id, plan_name, deadline_date, hours_per_day, crew_override,
-           plan_data, summary_data, weather_data, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?)''',
+           plan_data, summary_data, weather_data, benchmarks_data, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?)''',
         (job_id, plan_name, data.get('deadline_date', ''), data.get('hours_per_day', 10),
          data.get('crew_override'), json.dumps(data.get('plan', [])),
          json.dumps(data.get('summary', {})), json.dumps(data.get('weather', [])),
+         json.dumps(data.get('benchmarks', [])),
          session.get('user_id'))
     )
     conn.commit()
@@ -6534,7 +6540,7 @@ def api_schedule_save_plan():
 
 
 @app.route('/api/schedule/plans')
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_schedule_list_plans():
     """List saved backwards plans for a job."""
     job_id = request.args.get('job_id')
@@ -6554,6 +6560,7 @@ def api_schedule_list_plans():
         d['plan_data'] = json.loads(d['plan_data']) if d['plan_data'] else []
         d['summary_data'] = json.loads(d['summary_data']) if d['summary_data'] else {}
         d['weather_data'] = json.loads(d['weather_data']) if d['weather_data'] else []
+        d['benchmarks_data'] = json.loads(d['benchmarks_data']) if d.get('benchmarks_data') else []
         result.append(d)
     return jsonify(result)
 
@@ -6574,7 +6581,7 @@ def api_schedule_delete_plan(plan_id):
 
 
 @app.route('/api/schedule/backwards-plan/generate-pdf', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_schedule_plan_pdf():
     """Generate a PDF of a backwards plan."""
     import subprocess, tempfile
@@ -6640,7 +6647,7 @@ def api_schedule_plan_pdf():
 
 
 @app.route('/api/schedule/plan-pdf/<filename>')
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_download_schedule_plan_pdf(filename):
     """Download a generated schedule plan PDF."""
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
@@ -6653,7 +6660,7 @@ def api_download_schedule_plan_pdf(filename):
 
 
 @app.route('/api/schedule/backwards-plan/email', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_login_required
 def api_schedule_plan_email():
     """Email a schedule plan PDF to recipients."""
     data = request.get_json(force=True)
@@ -7138,6 +7145,19 @@ def api_change_orders_list():
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+@app.route('/api/change-orders/<int:coid>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_get_change_order(coid):
+    conn = get_db()
+    co = conn.execute(
+        'SELECT co.*, j.name as job_name FROM change_orders co LEFT JOIN jobs j ON co.job_id = j.id WHERE co.id = ?',
+        (coid,)
+    ).fetchone()
+    conn.close()
+    if not co:
+        return jsonify({'error': 'Change order not found'}), 404
+    return jsonify(dict(co))
 
 @app.route('/api/change-orders', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')

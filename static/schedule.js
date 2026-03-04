@@ -311,9 +311,22 @@ async function showBackwardsPlan() {
         bidLaborCache = await res.json();
     } catch { bidLaborCache = { found: false }; }
 
+    // Pre-populate apartment unit count from bid data
+    const unitInput = document.getElementById('bpUnitCount');
+    if (unitInput) unitInput.value = '';
+    const buildInput = document.getElementById('bpBuildingCount');
+    if (buildInput) buildInput.value = '';
+
+    // Set initial visibility for apartment/commercial sections
+    toggleCommercialQuestions();
+
     if (bidLaborCache && bidLaborCache.found) {
         document.getElementById('bpBidSection').style.display = '';
         document.getElementById('bpNoBid').style.display = 'none';
+        // Pre-fill apartment units from bid total_systems
+        if (unitInput && bidLaborCache.total_systems) {
+            unitInput.value = bidLaborCache.total_systems;
+        }
 
         const sys = bidLaborCache.total_systems;
         const mhps = bidLaborCache.man_hours_per_system;
@@ -362,7 +375,9 @@ async function showBackwardsPlan() {
 function toggleCommercialQuestions() {
     const pt = document.getElementById('bpProjectType').value;
     const cq = document.getElementById('bpCommercialQuestions');
+    const aq = document.getElementById('bpApartmentDetails');
     cq.style.display = pt === 'commercial' ? '' : 'none';
+    if (aq) aq.style.display = pt === 'apartment' ? '' : 'none';
 }
 
 async function runBackwardsPlan(e) {
@@ -381,6 +396,15 @@ async function runBackwardsPlan(e) {
         crew_override: crewOverride,
         project_type: projectType,
     };
+
+    // Apartment project details
+    if (projectType === 'apartment') {
+        const units = parseInt(document.getElementById('bpUnitCount').value) || 0;
+        const buildings = parseInt(document.getElementById('bpBuildingCount').value) || 0;
+        if (units > 0 || buildings > 0) {
+            payload.apartment_details = { units, buildings };
+        }
+    }
 
     // Commercial project details
     if (projectType === 'commercial') {
@@ -824,6 +848,7 @@ async function savePlan() {
                 plan: lastPlanData.plan,
                 summary: { ...lastPlanData.summary, crew_recommendation: lastPlanData.crew_recommendation, override_impact: lastPlanData.override_impact },
                 weather: lastPlanData.weather,
+                benchmarks: lastPlanData.benchmarks || [],
             })
         });
         const data = await res.json();
@@ -1048,6 +1073,7 @@ async function restoreSavedPlan(planId) {
             plan: plan.plan_data,
             summary: plan.summary_data,
             weather: plan.weather_data,
+            benchmarks: plan.benchmarks_data || [],
             crew_recommendation: plan.summary_data.crew_recommendation || `Saved plan (${plan.hours_per_day}hr days)`,
             override_impact: plan.summary_data.override_impact || null,
         };

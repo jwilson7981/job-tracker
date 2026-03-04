@@ -1909,6 +1909,11 @@ def init_db():
         if col not in pac_cols:
             conn.execute(f"ALTER TABLE pay_app_contracts ADD COLUMN {col} {typedef}")
 
+    # Migration: add benchmarks_data to schedule_plans
+    sp_cols = [row[1] for row in conn.execute("PRAGMA table_info(schedule_plans)").fetchall()]
+    if 'benchmarks_data' not in sp_cols:
+        conn.execute("ALTER TABLE schedule_plans ADD COLUMN benchmarks_data TEXT NOT NULL DEFAULT '[]'")
+
     # Migration: add signed_file to pay_applications (for uploaded signed/notarized copies)
     pa_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(pay_applications)").fetchall()]
     if 'signed_file' not in pa_cols2:
