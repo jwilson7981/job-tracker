@@ -3,19 +3,51 @@
 {% block content %}
 <div class="page-header">
     <h1>Payroll & Labor</h1>
-    <div style="display:inline-flex;gap:6px;">
+    <div style="display:inline-flex;gap:6px;" id="employeesActions">
         <button class="btn btn-secondary btn-small" onclick="exportToExcel('Payroll','payrollBody','Payroll')">Excel</button>
         <button class="btn btn-secondary btn-small" onclick="exportToPDF('Payroll','payrollBody','Payroll')">PDF</button>
         <button class="btn btn-primary" onclick="showAddEmployee()">+ Add Employee</button>
     </div>
+    <div id="runsActions" style="display:none;">
+        <button class="btn btn-primary" onclick="showNewRunModal()">+ New Payroll Run</button>
+    </div>
 </div>
-<div class="module-table-wrapper">
-    <table class="data-table">
-        <thead><tr>
-            <th>Employee</th><th>Role</th><th>Hourly Rate</th><th>Total Hours</th><th>Pending Hours</th><th>Total Pay</th><th></th>
-        </tr></thead>
-        <tbody id="payrollBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
-    </table>
+
+<!-- Tab Bar -->
+<div class="tab-bar" style="display:flex;gap:0;border-bottom:2px solid var(--gray-200,#e2e8f0);margin-bottom:20px;">
+    <button class="tab-btn active" data-tab="employees" onclick="switchPayrollTab('employees',this)">Employees</button>
+    <button class="tab-btn" data-tab="runs" onclick="switchPayrollTab('runs',this)">Payroll Runs</button>
+</div>
+
+<style>
+.tab-btn { padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:500;color:var(--gray-500,#64748b);border-bottom:2px solid transparent;margin-bottom:-2px; }
+.tab-btn.active { color:var(--primary,#2563EB);border-bottom-color:var(--primary,#2563EB); }
+.tab-panel { display:none; }
+.tab-panel.active { display:block; }
+</style>
+
+<!-- Employees Tab -->
+<div id="tab-employees" class="tab-panel active">
+    <div class="module-table-wrapper">
+        <table class="data-table">
+            <thead><tr>
+                <th>Employee</th><th>Role</th><th>Hourly Rate</th><th>Total Hours</th><th>Pending Hours</th><th>Total Pay</th><th></th>
+            </tr></thead>
+            <tbody id="payrollBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Payroll Runs Tab -->
+<div id="tab-runs" class="tab-panel">
+    <div class="module-table-wrapper">
+        <table class="data-table">
+            <thead><tr>
+                <th>Run #</th><th>Pay Period</th><th>Check Date</th><th>Employees</th><th>Total Hours</th><th>Gross Pay</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody id="runsBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
 </div>
 
 <!-- Add Employee Modal -->
@@ -56,5 +88,56 @@
     </div>
 </div>
 
+<!-- New Payroll Run Modal -->
+<div id="newRunModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeNewRunModal()">
+    <div class="modal-box" style="max-width:600px;">
+        <div class="modal-header">
+            <h3>New Payroll Run</h3>
+            <button onclick="closeNewRunModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+                <div class="bid-field"><label class="form-label">Period Start *</label>
+                    <input type="date" id="runStart" class="form-input" onchange="autoFillEndDate()"></div>
+                <div class="bid-field"><label class="form-label">Period End *</label>
+                    <input type="date" id="runEnd" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Check Date</label>
+                    <input type="date" id="runCheckDate" class="form-input"></div>
+            </div>
+            <div class="bid-field" style="margin-bottom:12px;">
+                <label class="form-label">Notes</label>
+                <textarea id="runNotes" class="form-input" rows="2" placeholder="Optional notes..."></textarea>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Employees</label>
+                <div style="margin-bottom:8px;">
+                    <label style="cursor:pointer;font-size:13px;font-weight:600;">
+                        <input type="checkbox" id="selectAllEmps" checked onchange="toggleAllEmps(this.checked)"> Select All
+                    </label>
+                </div>
+                <div id="empChecklist" style="max-height:250px;overflow-y:auto;border:1px solid var(--gray-200,#e2e8f0);border-radius:8px;padding:8px;">
+                    <p class="text-muted" style="text-align:center;padding:12px;">Loading employees...</p>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeNewRunModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="createRun()">Create Run</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function switchPayrollTab(tab, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    btn.classList.add('active');
+    document.getElementById('employeesActions').style.display = tab === 'employees' ? 'inline-flex' : 'none';
+    document.getElementById('runsActions').style.display = tab === 'runs' ? 'inline-flex' : 'none';
+    if (tab === 'runs' && !window._runsLoaded) { loadRuns(); window._runsLoaded = true; }
+}
+</script>
 <script src="/static/payroll.js"></script>
+<script src="/static/payroll_runs.js"></script>
 {% endblock %}

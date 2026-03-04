@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Payroll {{ run.period_start }} to {{ run.period_end }} - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/payroll" class="link" style="font-size:13px;">&larr; Back to Payroll</a>
+        <h1 style="margin-top:4px;"><span id="runTitle">{{ run.period_start }} - {{ run.period_end }}</span>
+            <span id="statusBadge" class="status-badge" style="font-size:14px;vertical-align:middle;"></span>
+        </h1>
+        <div id="runDates" style="color:var(--gray-500);font-size:13px;"></div>
+    </div>
+    <div style="display:inline-flex;gap:6px;" id="runActions"></div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-row" id="runKpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;">
+    <div class="kpi-card"><div class="kpi-value" id="kpiEmployees">-</div><div class="kpi-label">Employees</div></div>
+    <div class="kpi-card"><div class="kpi-value" id="kpiHours">-</div><div class="kpi-label">Total Hours</div></div>
+    <div class="kpi-card"><div class="kpi-value" id="kpiPay">-</div><div class="kpi-label">Total Gross Pay</div></div>
+</div>
+
+<!-- Mass Timesheet Grid -->
+<div id="timesheetContainer" style="overflow-x:auto;">
+    <p class="loading" style="text-align:center;padding:40px;">Loading timesheet...</p>
+</div>
+
+<script>
+const RUN_ID = {{ run.id }};
+</script>
+<script src="/static/payroll_runs.js"></script>
+{% endblock %}

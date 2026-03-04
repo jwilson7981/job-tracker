@@ -765,6 +765,45 @@ def init_db():
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
 
+        /* ─── Payroll Runs ─── */
+
+        CREATE TABLE IF NOT EXISTS payroll_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_number INTEGER NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            check_date TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft','Finalized')),
+            notes TEXT DEFAULT '',
+            total_hours REAL DEFAULT 0,
+            total_gross_pay REAL DEFAULT 0,
+            created_by INTEGER,
+            finalized_by INTEGER,
+            finalized_at TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            FOREIGN KEY (finalized_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS payroll_run_employees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            payroll_run_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            hourly_rate REAL DEFAULT 0,
+            regular_hours REAL DEFAULT 0,
+            overtime_hours REAL DEFAULT 0,
+            total_hours REAL DEFAULT 0,
+            gross_pay REAL DEFAULT 0,
+            check_number TEXT DEFAULT '',
+            check_date TEXT DEFAULT '',
+            check_printed INTEGER DEFAULT 0,
+            notes TEXT DEFAULT '',
+            FOREIGN KEY (payroll_run_id) REFERENCES payroll_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            UNIQUE(payroll_run_id, user_id)
+        );
+
         /* ─── Indexes ─── */
         CREATE INDEX IF NOT EXISTS idx_line_items_job ON line_items(job_id);
         CREATE INDEX IF NOT EXISTS idx_received_line ON received_entries(line_item_id);
@@ -817,6 +856,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_invoice_flags_invoice ON invoice_review_flags(invoice_id);
         CREATE INDEX IF NOT EXISTS idx_invoice_flags_job ON invoice_review_flags(job_id);
         CREATE INDEX IF NOT EXISTS idx_invoice_flags_resolved ON invoice_review_flags(resolved);
+        CREATE INDEX IF NOT EXISTS idx_payroll_runs_status ON payroll_runs(status);
+        CREATE INDEX IF NOT EXISTS idx_payroll_run_employees_run ON payroll_run_employees(payroll_run_id);
+        CREATE INDEX IF NOT EXISTS idx_payroll_run_employees_user ON payroll_run_employees(user_id);
 
         /* ─── Plans ─── */
 
@@ -2041,6 +2083,12 @@ def init_db():
     pa_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(pay_applications)").fetchall()]
     if 'signed_file' not in pa_cols2:
         conn.execute("ALTER TABLE pay_applications ADD COLUMN signed_file TEXT DEFAULT ''")
+
+    # Migration: add payroll_run_id to time_entries
+    te_cols = [row[1] for row in conn.execute("PRAGMA table_info(time_entries)").fetchall()]
+    if 'payroll_run_id' not in te_cols:
+        conn.execute("ALTER TABLE time_entries ADD COLUMN payroll_run_id INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_time_entries_payroll_run ON time_entries(payroll_run_id)")
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]

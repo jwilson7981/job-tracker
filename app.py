@@ -31,7 +31,7 @@ def login_required(f):
         if 'user_id' not in session:
             return redirect(url_for('login'))
         if session.get('must_change_password') and request.path != '/change-password':
-            return redirect('/change-password')
+            return redirect('/change-password', code=303)
         return f(*args, **kwargs)
     return decorated
 
@@ -177,7 +177,7 @@ def login():
             session['must_change_password'] = bool(user['must_change_password'])
             log_activity(user['id'], 'login', 'session', None, f"{user['display_name'] or user['username']} logged in")
             if user['must_change_password']:
-                return redirect('/change-password')
+                return redirect('/change-password', code=303)
             return redirect(url_for('index'))
         return render_template('login.html', error='Invalid username or password')
     return render_template('login.html')
@@ -193,7 +193,7 @@ def logout():
 @app.route('/change-password', methods=['GET', 'POST'])
 @login_required
 def change_password():
-    if request.method == 'POST':
+    if request.method == 'POST' and 'new_password' in request.form:
         new_pw = request.form.get('new_password', '')
         confirm_pw = request.form.get('confirm_password', '')
         if not new_pw or len(new_pw) < 6:
@@ -1549,6 +1549,332 @@ def api_payroll_approve_period():
         '''UPDATE time_entries SET approved = 1, approved_by = ?
            WHERE work_date BETWEEN ? AND ? AND approved = 0''',
         (session.get('user_id'), start, end)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Payroll Runs ──────────────────────────────────────────────
+
+@app.route('/payroll/runs/<int:run_id>')
+@role_required('owner', 'admin')
+def payroll_run_detail(run_id):
+    conn = get_db()
+    run = conn.execute('SELECT * FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    conn.close()
+    if not run:
+        return 'Payroll run not found', 404
+    return render_template('payroll/run_detail.html', run=run)
+
+@app.route('/api/payroll/runs', methods=['GET'])
+@api_role_required('owner', 'admin')
+def api_payroll_runs_list():
+    conn = get_db()
+    runs = conn.execute(
+        '''SELECT pr.*, u.display_name as created_by_name,
+                  (SELECT COUNT(*) FROM payroll_run_employees WHERE payroll_run_id = pr.id) as employee_count
+           FROM payroll_runs pr
+           LEFT JOIN users u ON pr.created_by = u.id
+           ORDER BY pr.created_at DESC'''
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in runs])
+
+@app.route('/api/payroll/runs', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_payroll_runs_create():
+    data = request.get_json(force=True)
+    period_start = data.get('period_start', '')
+    period_end = data.get('period_end', '')
+    check_date = data.get('check_date', '')
+    notes = data.get('notes', '')
+    employee_ids = data.get('employee_ids', [])
+    if not period_start or not period_end:
+        return jsonify({'error': 'Period start and end dates are required'}), 400
+    if not employee_ids:
+        return jsonify({'error': 'At least one employee must be selected'}), 400
+    conn = get_db()
+    # Auto-increment run_number
+    last = conn.execute('SELECT MAX(run_number) as mx FROM payroll_runs').fetchone()
+    run_number = (last['mx'] or 0) + 1
+    cur = conn.execute(
+        '''INSERT INTO payroll_runs (run_number, period_start, period_end, check_date, notes, created_by)
+           VALUES (?,?,?,?,?,?)''',
+        (run_number, period_start, period_end, check_date, notes, session.get('user_id'))
+    )
+    run_id = cur.lastrowid
+    # Add employees with their current hourly rate
+    for uid in employee_ids:
+        user = conn.execute('SELECT hourly_rate FROM users WHERE id = ?', (uid,)).fetchone()
+        rate = user['hourly_rate'] if user else 0
+        conn.execute(
+            '''INSERT INTO payroll_run_employees (payroll_run_id, user_id, hourly_rate)
+               VALUES (?,?,?)''',
+            (run_id, uid, rate)
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': run_id}), 201
+
+@app.route('/api/payroll/runs/<int:run_id>', methods=['GET'])
+@api_role_required('owner', 'admin')
+def api_payroll_run_detail(run_id):
+    conn = get_db()
+    run = conn.execute('SELECT * FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    # Get employees in this run
+    employees = conn.execute(
+        '''SELECT pre.*, u.display_name, u.role FROM payroll_run_employees pre
+           JOIN users u ON pre.user_id = u.id
+           WHERE pre.payroll_run_id = ? ORDER BY u.display_name''',
+        (run_id,)
+    ).fetchall()
+    # Get all time entries for these employees in the pay period
+    emp_ids = [e['user_id'] for e in employees]
+    entries = []
+    if emp_ids:
+        placeholders = ','.join('?' * len(emp_ids))
+        entries = conn.execute(
+            f'''SELECT te.*, j.name as job_name FROM time_entries te
+                LEFT JOIN jobs j ON te.job_id = j.id
+                WHERE te.user_id IN ({placeholders})
+                AND te.work_date BETWEEN ? AND ?
+                ORDER BY te.user_id, te.work_date''',
+            emp_ids + [run['period_start'], run['period_end']]
+        ).fetchall()
+    # Build dates array for the period
+    from datetime import datetime as dt, timedelta
+    start = dt.strptime(run['period_start'], '%Y-%m-%d')
+    end = dt.strptime(run['period_end'], '%Y-%m-%d')
+    dates = []
+    current = start
+    while current <= end:
+        dates.append(current.strftime('%Y-%m-%d'))
+        current += timedelta(days=1)
+    # Available jobs
+    jobs = conn.execute("SELECT id, name FROM jobs ORDER BY name").fetchall()
+    conn.close()
+    return jsonify({
+        'run': dict(run),
+        'employees': [dict(e) for e in employees],
+        'entries': [dict(e) for e in entries],
+        'dates': dates,
+        'available_jobs': [{'id': j['id'], 'name': j['name']} for j in jobs],
+    })
+
+@app.route('/api/payroll/runs/<int:run_id>', methods=['PUT'])
+@api_role_required('owner', 'admin')
+def api_payroll_run_update(run_id):
+    conn = get_db()
+    run = conn.execute('SELECT * FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if run['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Cannot edit a finalized run'}), 400
+    data = request.get_json(force=True)
+    # Update basic fields
+    for field in ('period_start', 'period_end', 'check_date', 'notes'):
+        if field in data:
+            conn.execute(f"UPDATE payroll_runs SET {field} = ? WHERE id = ?", (data[field], run_id))
+    # Add/remove employees
+    if 'add_employee_ids' in data:
+        for uid in data['add_employee_ids']:
+            user = conn.execute('SELECT hourly_rate FROM users WHERE id = ?', (uid,)).fetchone()
+            rate = user['hourly_rate'] if user else 0
+            conn.execute(
+                'INSERT OR IGNORE INTO payroll_run_employees (payroll_run_id, user_id, hourly_rate) VALUES (?,?,?)',
+                (run_id, uid, rate)
+            )
+    if 'remove_employee_ids' in data:
+        for uid in data['remove_employee_ids']:
+            conn.execute(
+                'DELETE FROM payroll_run_employees WHERE payroll_run_id = ? AND user_id = ?',
+                (run_id, uid)
+            )
+    conn.execute("UPDATE payroll_runs SET updated_at = datetime('now','localtime') WHERE id = ?", (run_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/payroll/runs/<int:run_id>', methods=['DELETE'])
+@api_role_required('owner', 'admin')
+def api_payroll_run_delete(run_id):
+    conn = get_db()
+    run = conn.execute('SELECT status FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if run['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Cannot delete a finalized run'}), 400
+    # Unlink any time entries
+    conn.execute('UPDATE time_entries SET payroll_run_id = NULL WHERE payroll_run_id = ?', (run_id,))
+    conn.execute('DELETE FROM payroll_run_employees WHERE payroll_run_id = ?', (run_id,))
+    conn.execute('DELETE FROM payroll_runs WHERE id = ?', (run_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/payroll/runs/<int:run_id>/timesheet', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_payroll_run_timesheet(run_id):
+    """Mass save all employees' time entries for a payroll run."""
+    conn = get_db()
+    run = conn.execute('SELECT * FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if run['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Cannot edit a finalized run'}), 400
+    data = request.get_json(force=True)
+    entries = data.get('entries', [])
+    # entries: [{user_id, job_id OR job_name, work_date, hours}, ...]
+    # Get employees in this run for rate lookup
+    emp_rows = conn.execute(
+        'SELECT user_id, hourly_rate FROM payroll_run_employees WHERE payroll_run_id = ?', (run_id,)
+    ).fetchall()
+    emp_rates = {e['user_id']: e['hourly_rate'] for e in emp_rows}
+    # Cache for resolving job names → IDs (and auto-creating new jobs)
+    job_name_cache = {}
+    for j in conn.execute('SELECT id, name FROM jobs').fetchall():
+        job_name_cache[j['name'].strip().lower()] = j['id']
+    new_jobs = []  # track newly created jobs to return to frontend
+    for entry in entries:
+        uid = int(entry.get('user_id', 0))
+        work_date = entry.get('work_date', '')
+        hours = float(entry.get('hours', 0) or 0)
+        # Resolve job_id from either job_id or job_name
+        job_id = int(entry.get('job_id', 0) or 0)
+        job_name = entry.get('job_name', '').strip()
+        if not job_id and job_name:
+            key = job_name.lower()
+            if key in job_name_cache:
+                job_id = job_name_cache[key]
+            else:
+                # Auto-create job
+                cur = conn.execute(
+                    "INSERT INTO jobs (name, status) VALUES (?, 'In Progress')",
+                    (job_name,)
+                )
+                job_id = cur.lastrowid
+                job_name_cache[key] = job_id
+                new_jobs.append({'id': job_id, 'name': job_name})
+        if not uid or not job_id or not work_date:
+            continue
+        rate = emp_rates.get(uid, 0)
+        if hours <= 0:
+            conn.execute(
+                '''DELETE FROM time_entries
+                   WHERE user_id = ? AND job_id = ? AND work_date = ?
+                   AND (payroll_run_id = ? OR payroll_run_id IS NULL)''',
+                (uid, job_id, work_date, run_id)
+            )
+        else:
+            existing = conn.execute(
+                '''SELECT id FROM time_entries
+                   WHERE user_id = ? AND job_id = ? AND work_date = ?''',
+                (uid, job_id, work_date)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    '''UPDATE time_entries SET hours = ?, hourly_rate = ?, payroll_run_id = ?
+                       WHERE id = ?''',
+                    (hours, rate, run_id, existing['id'])
+                )
+            else:
+                conn.execute(
+                    '''INSERT INTO time_entries (user_id, job_id, hours, hourly_rate, work_date, payroll_run_id)
+                       VALUES (?,?,?,?,?,?)''',
+                    (uid, job_id, hours, rate, work_date, run_id)
+                )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'new_jobs': new_jobs})
+
+@app.route('/api/payroll/runs/<int:run_id>/finalize', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_payroll_run_finalize(run_id):
+    conn = get_db()
+    run = conn.execute('SELECT * FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if run['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Already finalized'}), 400
+    # Snapshot totals per employee
+    employees = conn.execute(
+        'SELECT * FROM payroll_run_employees WHERE payroll_run_id = ?', (run_id,)
+    ).fetchall()
+    grand_hours = 0
+    grand_pay = 0
+    for emp in employees:
+        entries = conn.execute(
+            '''SELECT COALESCE(SUM(hours), 0) as total_hours
+               FROM time_entries
+               WHERE user_id = ? AND work_date BETWEEN ? AND ?''',
+            (emp['user_id'], run['period_start'], run['period_end'])
+        ).fetchone()
+        total_hours = entries['total_hours']
+        # Calculate OT: anything over 40 per week would need weekly breakdown
+        # For now, simple: all hours at regular rate
+        reg_hours = total_hours
+        ot_hours = 0
+        gross = total_hours * emp['hourly_rate']
+        conn.execute(
+            '''UPDATE payroll_run_employees
+               SET regular_hours = ?, overtime_hours = ?, total_hours = ?, gross_pay = ?
+               WHERE id = ?''',
+            (reg_hours, ot_hours, total_hours, gross, emp['id'])
+        )
+        grand_hours += total_hours
+        grand_pay += gross
+    # Stamp time entries with payroll_run_id and approve
+    emp_ids = [e['user_id'] for e in employees]
+    if emp_ids:
+        placeholders = ','.join('?' * len(emp_ids))
+        conn.execute(
+            f'''UPDATE time_entries SET payroll_run_id = ?, approved = 1, approved_by = ?
+                WHERE user_id IN ({placeholders})
+                AND work_date BETWEEN ? AND ?
+                AND (payroll_run_id IS NULL OR payroll_run_id = ?)''',
+            [run_id, session.get('user_id')] + emp_ids + [run['period_start'], run['period_end'], run_id]
+        )
+    # Update run totals and status
+    conn.execute(
+        '''UPDATE payroll_runs
+           SET status = 'Finalized', total_hours = ?, total_gross_pay = ?,
+               finalized_by = ?, finalized_at = datetime('now','localtime'),
+               updated_at = datetime('now','localtime')
+           WHERE id = ?''',
+        (grand_hours, grand_pay, session.get('user_id'), run_id)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/payroll/runs/<int:run_id>/reopen', methods=['POST'])
+@api_role_required('owner')
+def api_payroll_run_reopen(run_id):
+    conn = get_db()
+    run = conn.execute('SELECT status FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if run['status'] != 'Finalized':
+        conn.close()
+        return jsonify({'error': 'Run is not finalized'}), 400
+    conn.execute(
+        '''UPDATE payroll_runs
+           SET status = 'Draft', finalized_by = NULL, finalized_at = '',
+               updated_at = datetime('now','localtime')
+           WHERE id = ?''',
+        (run_id,)
     )
     conn.commit()
     conn.close()

@@ -168,7 +168,7 @@
                 <a href="/employees" class="sidebar-link {% if '/employees' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128101;</span> Employees
                 </a>
-                <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/employee' in request.path %}active{% endif %}">
+                <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#9636;</span> Payroll
                 </a>
                 {% endif %}

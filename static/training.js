@@ -565,15 +565,20 @@ const TRAINING_MODULES = [
             {
                 key: 'fi-payroll',
                 title: 'Payroll',
-                summary: 'Processing payroll based on time entries.',
+                summary: 'Manage employees and process payroll runs with mass timesheet entry.',
                 steps: [
                     'Navigate to <strong>Payroll</strong> in the "Finance" sidebar group.',
-                    'Payroll pulls from <strong>time entries</strong> submitted by employees.',
-                    'Select a <strong>pay period</strong> to view all employee hours for that range.',
-                    'Review <strong>regular hours, overtime, and total pay</strong> for each employee.',
-                    'Hours are calculated based on <strong>time entries</strong> and multiplied by each employee\'s hourly rate.',
-                    'Export payroll data to <strong>Excel</strong> for processing through your payroll provider.',
-                    'Review individual employee payroll history by clicking on their name.'
+                    'The <strong>Employees tab</strong> shows all employees with roles, hourly rates, and total hours/pay.',
+                    'Click <strong>+ Add Employee</strong> to create new employees with name, username, role, and hourly rate.',
+                    'Click the <strong>Payroll Runs tab</strong> to manage biweekly payroll processing.',
+                    'Click <strong>+ New Payroll Run</strong> to create a run: set period start (end auto-fills 13 days later for biweekly), check date, and select employees.',
+                    'The <strong>Mass Timesheet</strong> grid shows all selected employees as rows with 14 day columns.',
+                    'Enter hours for each employee/job/day. Click <strong>+ Add Job</strong> to add more job rows per employee.',
+                    'Totals update live — row totals, employee subtotals (with pay), day column totals, and grand total.',
+                    'Click <strong>Save All</strong> to save all entries at once across all employees.',
+                    'Click <strong>Finalize</strong> to lock the run — this approves all entries and snapshots totals.',
+                    'Finalized runs show as green in the runs list. Only owners can <strong>Reopen</strong> a finalized run.',
+                    'Existing time entries that employees self-entered will <strong>pre-populate</strong> in the grid.'
                 ]
             },
             {
