@@ -18,3 +18,7 @@ data/plans/
 data/proposals/
 data/submittals/
 data/supplier_quotes/
+data/shared_files/
+
+# Deploy script (contains credentials)
+deploy.sh
