@@ -31,7 +31,7 @@ function loadRuns() {
                 '<td><span class="status-badge ' + statusClass + '">' + r.status + '</span></td>' +
                 '<td style="white-space:nowrap;">' +
                     '<a href="/payroll/runs/' + r.id + '" class="btn btn-small btn-secondary">Open</a>' +
-                    (r.status === 'Draft' ? ' <button class="btn btn-small btn-secondary" onclick="deleteRun(' + r.id + ')" style="color:#EF4444;">Del</button>' : '') +
+                    ' <button class="btn btn-small btn-secondary" onclick="deleteRun(' + r.id + ')" style="color:#EF4444;">Del</button>' +
                 '</td>' +
             '</tr>';
         }).join('');
@@ -129,15 +129,17 @@ function createRun() {
 }
 
 function deleteRun(id) {
-    if (!confirm('Delete this payroll run? This cannot be undone.')) return;
+    var pw = prompt('Enter your password to confirm deletion of this payroll run:');
+    if (!pw) return;
     var xhr = new XMLHttpRequest();
     xhr.open('DELETE', '/api/payroll/runs/' + id, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300) { loadRuns(); }
         else { try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); } catch(e) { alert('Failed to delete'); } }
     };
     xhr.onerror = function() { alert('Network error deleting run.'); };
-    xhr.send();
+    xhr.send(JSON.stringify({ password: pw }));
 }
 
 // ─── Mass Timesheet (Detail Page) ───────────────────────────────
@@ -186,17 +188,14 @@ function renderRunHeader() {
         (run.check_date ? ' | Check Date: ' + run.check_date : '');
 
     // Actions
-    const actions = document.getElementById('runActions');
+    var actions = document.getElementById('runActions');
     if (run.status === 'Draft') {
-        actions.innerHTML = `
-            <button class="btn btn-primary" onclick="saveTimesheet()">Save All</button>
-            <button class="btn btn-secondary" onclick="finalizeRun()" style="background:#059669;color:#fff;">Finalize</button>
-            <button class="btn btn-secondary" onclick="deleteRunDetail()" style="color:#EF4444;">Delete Run</button>
-        `;
+        actions.innerHTML = '<button class="btn btn-primary" onclick="saveTimesheet()">Save All</button>' +
+            '<button class="btn btn-secondary" onclick="finalizeRun()" style="background:#059669;color:#fff;">Finalize</button>' +
+            '<button class="btn btn-secondary" onclick="deleteRunDetail()" style="color:#EF4444;">Delete Run</button>';
     } else {
-        actions.innerHTML = `
-            <button class="btn btn-secondary" onclick="reopenRun()">Reopen (Owner)</button>
-        `;
+        actions.innerHTML = '<button class="btn btn-secondary" onclick="reopenRun()">Reopen (Owner)</button>' +
+            '<button class="btn btn-secondary" onclick="deleteRunDetail()" style="color:#EF4444;">Delete Run</button>';
     }
     recalcKpis();
 }
@@ -258,24 +257,25 @@ function buildTimesheetGrid() {
     var html = buildJobDatalistHTML();
     html += '<style>' +
         '.ts-cell { padding:4px !important; vertical-align:top; }' +
-        '.ts-entry { display:flex; gap:3px; align-items:center; margin-bottom:3px; }' +
+        '.ts-entry { margin-bottom:6px; padding:4px; background:var(--gray-50,#f8fafc); border-radius:6px; border:1px solid var(--gray-200,#e2e8f0); position:relative; }' +
         '.ts-entry:last-child { margin-bottom:0; }' +
-        '.ts-job-cell { width:100px; font-size:11px; padding:3px 4px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; }' +
-        '.ts-hrs-cell { width:48px; font-size:12px; padding:3px 4px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; text-align:center; }' +
-        '.ts-add-btn { font-size:10px; color:var(--primary,#2563EB); cursor:pointer; border:none; background:none; padding:2px 0; }' +
+        '.ts-job-cell { width:100%; font-size:11px; padding:4px 6px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; margin-bottom:4px; display:block; box-sizing:border-box; background:#fff; }' +
+        '.ts-hrs-cell { width:100%; font-size:14px; padding:4px 6px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; text-align:center; display:block; box-sizing:border-box; background:#fff; font-weight:600; }' +
+        '.ts-add-btn { font-size:11px; color:var(--primary,#2563EB); cursor:pointer; border:none; background:none; padding:3px 0; display:block; }' +
         '.ts-add-btn:hover { text-decoration:underline; }' +
-        '.ts-remove-entry { font-size:11px; color:#EF4444; cursor:pointer; border:none; background:none; padding:0 2px; line-height:1; }' +
-        '.ts-readonly-entry { font-size:11px; margin-bottom:2px; }' +
-        '.ts-readonly-entry span { color:var(--gray-500); }' +
+        '.ts-remove-entry { position:absolute; top:2px; right:4px; font-size:13px; color:#EF4444; cursor:pointer; border:none; background:none; padding:0 2px; line-height:1; }' +
+        '.ts-readonly-entry { font-size:12px; margin-bottom:3px; padding:3px 6px; background:var(--gray-50,#f8fafc); border-radius:4px; }' +
+        '.ts-readonly-entry .ts-ro-job { color:var(--gray-500); font-size:11px; display:block; }' +
+        '.ts-readonly-entry .ts-ro-hrs { font-weight:600; }' +
         '</style>';
 
-    html += '<table class="data-table ts-grid" style="min-width:' + (180 + dates.length * 165) + 'px;">' +
+    html += '<table class="data-table ts-grid" style="min-width:' + (180 + dates.length * 140) + 'px;">' +
         '<thead><tr>' +
-        '<th style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:2;min-width:160px;">Employee</th>';
+        '<th style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:2;min-width:150px;">Employee</th>';
     dateHeaders.forEach(function(dh) {
-        html += '<th style="min-width:155px;text-align:center;font-size:12px;">' + dh + '</th>';
+        html += '<th style="min-width:130px;text-align:center;font-size:12px;">' + dh + '</th>';
     });
-    html += '<th style="min-width:80px;text-align:right;">Total</th></tr></thead><tbody>';
+    html += '<th style="min-width:70px;text-align:right;">Total</th></tr></thead><tbody>';
 
     employees.forEach(function(emp) {
         var uid = emp.user_id;
@@ -293,7 +293,7 @@ function buildTimesheetGrid() {
             if (isReadOnly) {
                 if (dayEntries.length) {
                     dayEntries.forEach(function(de) {
-                        html += '<div class="ts-readonly-entry"><strong>' + de.hours + 'h</strong> <span>' + (de.job_name || '-') + '</span></div>';
+                        html += '<div class="ts-readonly-entry"><span class="ts-ro-job">' + (de.job_name || '-') + '</span><span class="ts-ro-hrs">' + de.hours + 'h</span></div>';
                     });
                 }
             } else {
@@ -330,9 +330,14 @@ function buildTimesheetGrid() {
 
 function buildEntryRow(uid, date, jobName, hours) {
     return '<div class="ts-entry">' +
-        '<input type="text" class="ts-job-cell" list="jobList" value="' + (jobName || '') + '" placeholder="Project">' +
-        '<input type="number" class="ts-hrs-cell" step="any" min="0" max="24" value="' + (hours || '') + '" placeholder="hrs" oninput="recalcTotals()">' +
         '<button type="button" class="ts-remove-entry" onclick="removeCellEntry(this)">&times;</button>' +
+        '<select class="ts-job-cell" style="display:' + (jobName && !_jobNameMap[jobName] ? 'none' : 'block') + ';" onchange="if(this.value===\'__type__\'){this.style.display=\'none\';this.nextElementSibling.style.display=\'block\';this.nextElementSibling.focus();}">' +
+            '<option value="">-- Project --</option>' +
+            _runData.available_jobs.map(function(j) { return '<option value="' + j.name + '"' + (j.name === jobName ? ' selected' : '') + '>' + j.name + '</option>'; }).join('') +
+            '<option value="__type__">Type custom...</option>' +
+        '</select>' +
+        '<input type="text" class="ts-job-cell ts-job-custom" value="' + (jobName && !_jobNameMap[jobName] ? jobName : '') + '" placeholder="Type project name..." style="display:' + (jobName && !_jobNameMap[jobName] ? 'block' : 'none') + ';">' +
+        '<input type="number" class="ts-hrs-cell" step="any" min="0" max="24" value="' + (hours || '') + '" placeholder="0" oninput="recalcTotals()">' +
         '</div>';
 }
 
@@ -402,7 +407,14 @@ function saveTimesheet(callback) {
         var date = container.dataset.date;
         var entryDivs = container.querySelectorAll('.ts-entry');
         entryDivs.forEach(function(div) {
-            var jobName = div.querySelector('.ts-job-cell').value.trim();
+            var sel = div.querySelector('select.ts-job-cell');
+            var customInput = div.querySelector('.ts-job-custom');
+            var jobName = '';
+            if (sel && sel.value && sel.value !== '__type__') {
+                jobName = sel.value.trim();
+            } else if (customInput && customInput.value.trim()) {
+                jobName = customInput.value.trim();
+            }
             var hours = parseFloat(div.querySelector('.ts-hrs-cell').value) || 0;
             if (hours > 0 && !jobName) { missingProject = true; return; }
             if (!jobName && !hours) return;
@@ -488,13 +500,15 @@ function reopenRun() {
 }
 
 function deleteRunDetail() {
-    if (!confirm('Delete this payroll run? This cannot be undone.')) return;
+    var pw = prompt('Enter your password to confirm deletion of this payroll run:');
+    if (!pw) return;
     var xhr = new XMLHttpRequest();
     xhr.open('DELETE', '/api/payroll/runs/' + RUN_ID, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300) window.location.href = '/payroll';
         else { try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); } catch(e) { alert('Failed to delete'); } }
     };
     xhr.onerror = function() { alert('Network error deleting run.'); };
-    xhr.send();
+    xhr.send(JSON.stringify({ password: pw }));
 }

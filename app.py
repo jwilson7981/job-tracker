@@ -1706,14 +1706,20 @@ def api_payroll_run_update(run_id):
 @app.route('/api/payroll/runs/<int:run_id>', methods=['DELETE'])
 @api_role_required('owner', 'admin')
 def api_payroll_run_delete(run_id):
+    data = request.get_json(force=True) if request.data else {}
+    password = data.get('password', '')
+    if not password:
+        return jsonify({'error': 'Password is required to delete a payroll run'}), 400
+    # Verify password
     conn = get_db()
+    user = conn.execute('SELECT password_hash FROM users WHERE id = ?', (session.get('user_id'),)).fetchone()
+    if not user or not check_password_hash(user['password_hash'], password):
+        conn.close()
+        return jsonify({'error': 'Incorrect password'}), 403
     run = conn.execute('SELECT status FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
     if not run:
         conn.close()
         return jsonify({'error': 'Not found'}), 404
-    if run['status'] != 'Draft':
-        conn.close()
-        return jsonify({'error': 'Cannot delete a finalized run'}), 400
     # Unlink any time entries
     conn.execute('UPDATE time_entries SET payroll_run_id = NULL WHERE payroll_run_id = ?', (run_id,))
     conn.execute('DELETE FROM payroll_run_employees WHERE payroll_run_id = ?', (run_id,))
