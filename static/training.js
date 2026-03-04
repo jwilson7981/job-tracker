@@ -749,6 +749,24 @@ const TRAINING_MODULES = [
                     'Track <strong>renewal costs</strong> and total cost of all license renewals.',
                     'Never miss a renewal — expired licenses can <strong>stop you from working</strong>.'
                 ]
+            },
+            {
+                key: 'res-shared-files',
+                title: 'Shared Files',
+                summary: 'Upload, organize, and share files with the entire team — replaces Dropbox.',
+                steps: [
+                    'Navigate to <strong>Shared Files</strong> in the "Resources" sidebar group. All roles can access this feature.',
+                    'The main view shows a <strong>file table</strong> with columns for icon, name, size, uploaded by, date, and actions.',
+                    '<strong>Breadcrumb navigation</strong> at the top shows your current location. Click any breadcrumb segment to jump back to that folder.',
+                    'Click <strong>"+ New Folder"</strong> to create a folder in the current location. Duplicate folder names in the same location are not allowed.',
+                    'Click <strong>"Upload Files"</strong> or <strong>drag and drop</strong> files anywhere on the page to upload to the current folder.',
+                    'Click a <strong>folder name</strong> to navigate into it. The page title and breadcrumbs update automatically.',
+                    'Use the <strong>View</strong> button to preview a file in a new tab — works great for PDFs and images.',
+                    'Use the <strong>download button</strong> (arrow icon) to save a file to your computer.',
+                    'Click <strong>Rename</strong> on any file or folder to change its name.',
+                    'Click <strong>Delete</strong> to remove a file or folder. Deleting a folder removes <strong>all contents inside it</strong>, so use with caution.',
+                    'Think of Shared Files as the team\'s <strong>shared drive</strong> — use folders to organize by project, category, or however works best for the team.'
+                ]
             }
         ]
     },

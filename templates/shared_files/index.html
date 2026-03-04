@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Shared Files - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 id="folderTitle">Shared Files</h1>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="showNewFolderModal()">+ New Folder</button>
+        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">Upload Files</button>
+        <input type="file" id="fileInput" multiple style="display:none;" onchange="uploadFiles(this.files)">
+    </div>
+</div>
+
+<!-- Breadcrumbs -->
+<div id="breadcrumbs" style="display:flex;align-items:center;gap:4px;margin-bottom:16px;font-size:14px;flex-wrap:wrap;">
+    <span class="breadcrumb-item active">Shared Files</span>
+</div>
+
+<!-- Drag-and-Drop Zone -->
+<div id="dropZone" class="drop-zone" style="display:none;">
+    <div class="drop-zone-content">
+        <span style="font-size:48px;">&#128228;</span>
+        <p style="margin:8px 0 0;font-size:16px;font-weight:600;">Drop files here to upload</p>
+    </div>
+</div>
+
+<!-- Files Table -->
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:40px;"></th>
+                <th>Name</th>
+                <th style="width:100px;">Size</th>
+                <th style="width:140px;">Uploaded By</th>
+                <th style="width:140px;">Date</th>
+                <th style="width:180px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody id="filesBody">
+            <tr><td colspan="6" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- New Folder Modal -->
+<div id="folderModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>New Folder</h2>
+            <button class="modal-close" onclick="document.getElementById('folderModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="createFolder(event)">
+            <div class="form-group">
+                <label class="form-label">Folder Name *</label>
+                <input type="text" id="folderName" class="form-input" required placeholder="Enter folder name">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('folderModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Folder</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Rename Modal -->
+<div id="renameModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Rename</h2>
+            <button class="modal-close" onclick="document.getElementById('renameModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="renameItem(event)">
+            <input type="hidden" id="renameId">
+            <div class="form-group">
+                <label class="form-label">New Name *</label>
+                <input type="text" id="renameName" class="form-input" required>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('renameModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Rename</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.breadcrumb-item {
+    color: var(--primary);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+.breadcrumb-item:hover { text-decoration: underline; }
+.breadcrumb-item.active {
+    color: var(--gray-700);
+    cursor: default;
+    font-weight: 600;
+}
+.breadcrumb-item.active:hover { text-decoration: none; }
+.breadcrumb-sep { color: var(--gray-400); margin: 0 2px; }
+.drop-zone {
+    position: fixed;
+    inset: 0;
+    background: rgba(59,130,246,0.15);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 3px dashed var(--primary);
+}
+.drop-zone-content {
+    text-align: center;
+    color: var(--primary);
+}
+.file-icon { font-size: 20px; text-align: center; }
+.folder-link {
+    color: var(--primary);
+    cursor: pointer;
+    font-weight: 500;
+}
+.folder-link:hover { text-decoration: underline; }
+</style>
+
+<script src="/static/shared_files.js"></script>
+{% endblock %}

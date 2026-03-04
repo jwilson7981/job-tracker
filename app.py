@@ -14801,6 +14801,181 @@ def api_delete_reminder(rid):
     conn.close()
     return jsonify({'ok': True})
 
+# ─── Shared Files (Dropbox Replacement) ──────────────────────────
+
+SHARED_FILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'shared_files')
+os.makedirs(SHARED_FILES_DIR, exist_ok=True)
+
+@app.route('/shared-files')
+@login_required
+def shared_files_page():
+    return render_template('shared_files/index.html')
+
+@app.route('/api/shared-files')
+@api_login_required
+def api_shared_files_list():
+    parent_id = request.args.get('parent_id')
+    conn = get_db()
+    if parent_id:
+        rows = conn.execute(
+            '''SELECT sf.*, u.display_name as uploader_name
+               FROM shared_files sf LEFT JOIN users u ON sf.uploaded_by = u.id
+               WHERE sf.parent_id = ?
+               ORDER BY sf.is_folder DESC, LOWER(sf.name) ASC''', (parent_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            '''SELECT sf.*, u.display_name as uploader_name
+               FROM shared_files sf LEFT JOIN users u ON sf.uploaded_by = u.id
+               WHERE sf.parent_id IS NULL
+               ORDER BY sf.is_folder DESC, LOWER(sf.name) ASC'''
+        ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/shared-files/<int:fid>/breadcrumbs')
+@api_login_required
+def api_shared_files_breadcrumbs(fid):
+    conn = get_db()
+    path = []
+    current = fid
+    while current:
+        row = conn.execute('SELECT id, name, parent_id FROM shared_files WHERE id = ?', (current,)).fetchone()
+        if not row:
+            break
+        path.append({'id': row['id'], 'name': row['name']})
+        current = row['parent_id']
+    conn.close()
+    path.reverse()
+    return jsonify(path)
+
+@app.route('/api/shared-files/folder', methods=['POST'])
+@api_login_required
+def api_shared_files_create_folder():
+    data = request.get_json(force=True)
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Folder name is required'}), 400
+    parent_id = data.get('parent_id')
+    conn = get_db()
+    # Check duplicate name in same parent
+    if parent_id:
+        dup = conn.execute(
+            'SELECT id FROM shared_files WHERE parent_id = ? AND name = ? AND is_folder = 1',
+            (parent_id, name)
+        ).fetchone()
+    else:
+        dup = conn.execute(
+            'SELECT id FROM shared_files WHERE parent_id IS NULL AND name = ? AND is_folder = 1',
+            (name,)
+        ).fetchone()
+    if dup:
+        conn.close()
+        return jsonify({'error': 'A folder with that name already exists here'}), 400
+    conn.execute(
+        'INSERT INTO shared_files (parent_id, name, is_folder, uploaded_by) VALUES (?, ?, 1, ?)',
+        (parent_id, name, session['user_id'])
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/shared-files/upload', methods=['POST'])
+@api_login_required
+def api_shared_files_upload():
+    from werkzeug.utils import secure_filename
+    import mimetypes
+    parent_id = request.form.get('parent_id') or None
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'error': 'No files provided'}), 400
+    conn = get_db()
+    for f in files:
+        if not f.filename:
+            continue
+        fname = secure_filename(f.filename)
+        ts_fname = f"{int(datetime.now().timestamp())}_{fname}"
+        fpath = os.path.join(SHARED_FILES_DIR, ts_fname)
+        f.save(fpath)
+        fsize = os.path.getsize(fpath)
+        mime = mimetypes.guess_type(fname)[0] or 'application/octet-stream'
+        conn.execute(
+            '''INSERT INTO shared_files (parent_id, name, is_folder, file_path, file_size, mime_type, uploaded_by)
+               VALUES (?, ?, 0, ?, ?, ?, ?)''',
+            (parent_id, fname, ts_fname, fsize, mime, session['user_id'])
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/shared-files/<int:fid>/rename', methods=['PUT'])
+@api_login_required
+def api_shared_files_rename(fid):
+    data = request.get_json(force=True)
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Name is required'}), 400
+    conn = get_db()
+    conn.execute(
+        "UPDATE shared_files SET name = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+        (name, fid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/shared-files/<int:fid>', methods=['DELETE'])
+@api_login_required
+def api_shared_files_delete(fid):
+    conn = get_db()
+    row = conn.execute('SELECT * FROM shared_files WHERE id = ?', (fid,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+
+    # Recursively collect all file_paths in subtree
+    def collect_files(item_id):
+        paths = []
+        item = conn.execute('SELECT file_path, is_folder FROM shared_files WHERE id = ?', (item_id,)).fetchone()
+        if not item:
+            return paths
+        if item['is_folder']:
+            children = conn.execute('SELECT id FROM shared_files WHERE parent_id = ?', (item_id,)).fetchall()
+            for child in children:
+                paths.extend(collect_files(child['id']))
+        else:
+            if item['file_path']:
+                paths.append(item['file_path'])
+        return paths
+
+    file_paths = collect_files(fid)
+    # Delete physical files
+    for fp in file_paths:
+        full = os.path.join(SHARED_FILES_DIR, fp)
+        if os.path.exists(full):
+            os.remove(full)
+
+    # Delete DB row (cascade handles children)
+    conn.execute('DELETE FROM shared_files WHERE id = ?', (fid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/shared-files/<int:fid>/download')
+@api_login_required
+def api_shared_files_download(fid):
+    conn = get_db()
+    row = conn.execute('SELECT * FROM shared_files WHERE id = ?', (fid,)).fetchone()
+    conn.close()
+    if not row or row['is_folder'] or not row['file_path']:
+        return 'Not found', 404
+    fpath = os.path.join(SHARED_FILES_DIR, row['file_path'])
+    if not os.path.exists(fpath):
+        return 'File not found', 404
+    as_attachment = request.args.get('download') == '1'
+    return send_file(fpath, mimetype=row['mime_type'] or 'application/octet-stream',
+                     as_attachment=as_attachment, download_name=row['name'])
+
 # ─── Startup ────────────────────────────────────────────────────
 
 def get_local_ip():

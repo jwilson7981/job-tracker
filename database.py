@@ -1585,6 +1585,24 @@ def init_db():
             UNIQUE(user_id, lesson_key)
         );
         CREATE INDEX IF NOT EXISTS idx_training_progress_user ON training_progress(user_id);
+
+        /* ─── Shared Files (Dropbox Replacement) ─── */
+
+        CREATE TABLE IF NOT EXISTS shared_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id INTEGER DEFAULT NULL,
+            name TEXT NOT NULL,
+            is_folder INTEGER NOT NULL DEFAULT 0,
+            file_path TEXT DEFAULT '',
+            file_size INTEGER DEFAULT 0,
+            mime_type TEXT DEFAULT '',
+            uploaded_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (parent_id) REFERENCES shared_files(id) ON DELETE CASCADE,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_shared_files_parent ON shared_files(parent_id);
     ''')
 
     # Migration: add total_net_price column if missing
