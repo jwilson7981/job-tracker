@@ -3091,7 +3091,7 @@ _BID_COST_KEYS = {
     'trim_out_hours', 'startup_hours', 'man_hours_per_system', 'total_man_hours',
     'crew_size', 'hours_per_day', 'duration_days', 'num_weeks',
     'suggested_apartment_bid', 'suggested_clubhouse_bid', 'price_per_ton',
-    'profit_mode', 'profit_per_system', 'actual_bid_override',
+    'profit_mode', 'profit_per_system', 'actual_bid_override', 'bid_type',
 }
 
 def _strip_bid_costs(bid_dict):
@@ -3169,7 +3169,7 @@ def _bid_fields(data, calcs):
         s('bid_workup_date'), s('bid_due_date'), s('bid_submitted_date'), s('lead_name'),
         s('inclusions'), s('exclusions'), s('bid_description'), s('notes'),
         s('profit_mode', 'percentage'), f('profit_per_system'),
-        f('actual_bid_override'),
+        f('actual_bid_override'), s('bid_type'),
     )
 
 _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
@@ -3191,7 +3191,7 @@ _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
     contracting_gc, gc_attention, bid_number, bid_date,
     bid_workup_date, bid_due_date, bid_submitted_date, lead_name,
     inclusions, exclusions, bid_description, notes,
-    profit_mode, profit_per_system, actual_bid_override'''
+    profit_mode, profit_per_system, actual_bid_override, bid_type'''
 
 def _next_bid_number(conn):
     """Get next bid number starting from 2600."""

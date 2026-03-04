@@ -279,6 +279,19 @@
                 <span class="cost-label" style="font-weight:700;">Actual Bid Override</span>
                 <span class="cost-value"><input type="number" id="bidOverride" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()" style="width:140px;text-align:right;font-weight:600;"></span>
             </div>
+            <div class="cost-row" style="align-items:center;">
+                <span class="cost-label">Bid Type</span>
+                <span class="cost-value">
+                    <select id="bidType" class="form-select" style="width:160px;">
+                        <option value="">--</option>
+                        <option value="Budgetary">Budgetary</option>
+                        <option value="Final Bid">Final Bid</option>
+                        <option value="Not To Exceed">Not To Exceed</option>
+                        <option value="Design Build">Design Build</option>
+                        <option value="Unit Price">Unit Price</option>
+                    </select>
+                </span>
+            </div>
             <div id="overrideInfo" style="display:none;padding:4px 0;font-size:12px;color:var(--gray-500);">
                 Profit recalculated from override: <strong>Actual Bid</strong> &minus; <strong>Cost to Build</strong>
             </div>

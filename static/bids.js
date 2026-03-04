@@ -304,6 +304,7 @@ async function loadBid() {
         if ($('bidProfitMode')) $('bidProfitMode').value = bid.profit_mode || 'percentage';
         if ($('bidProfitPerSystem')) $('bidProfitPerSystem').value = bid.profit_per_system || 0;
         if ($('bidOverride')) $('bidOverride').value = bid.actual_bid_override || 0;
+        if ($('bidType')) $('bidType').value = bid.bid_type || '';
         toggleProfitMode();
 
         bidPartners = bid.partners || [];
@@ -482,6 +483,7 @@ async function saveBid() {
             profit_mode: $('bidProfitMode') ? $('bidProfitMode').value : 'percentage',
             profit_per_system: val('bidProfitPerSystem'),
             actual_bid_override: val('bidOverride'),
+            bid_type: $('bidType') ? $('bidType').value : '',
         });
     }
 
