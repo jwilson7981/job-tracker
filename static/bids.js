@@ -137,8 +137,16 @@ function recalculate() {
     // Admin costs
     const adminCosts = val('bidAdminCosts');
 
+    // Housing (monthly rate × months derived from bid duration)
+    const housingRate = val('bidHousingRate');
+    const numWeeks = parseFloat($('bidWeeks').value) || 0;
+    const housingMonths = numWeeks > 0 ? Math.round((numWeeks / 4.33) * 100) / 100 : 0;
+    const housingTotal = housingRate * housingMonths;
+    if ($('bidHousingMonths')) $('bidHousingMonths').value = housingMonths.toFixed(2);
+    if ($('bidHousingTotal')) $('bidHousingTotal').value = fmt(housingTotal);
+
     // Totals
-    const totalCostToBuild = materialCost + laborCost + insurance + permits + mgmtFee + perDiemTotal + adminCosts;
+    const totalCostToBuild = materialCost + laborCost + insurance + permits + mgmtFee + perDiemTotal + adminCosts + housingTotal;
     const profitMode = $('bidProfitMode') ? $('bidProfitMode').value : 'percentage';
     let companyProfit;
     if (profitMode === 'per_system') {
@@ -199,6 +207,7 @@ function recalculate() {
     $('sumMgmt').textContent = fmt(mgmtFee);
     $('sumPerDiem').textContent = fmt(perDiemTotal);
     if ($('sumAdmin')) $('sumAdmin').textContent = fmt(adminCosts);
+    if ($('sumHousing')) $('sumHousing').textContent = fmt(housingTotal);
     $('sumCostToBuild').textContent = fmt(totalCostToBuild);
     $('sumProfit').textContent = fmt(companyProfit);
     $('sumTotal').textContent = fmt(suggestedBid);
@@ -212,6 +221,10 @@ function recalculate() {
     $('sumCostPerSys').textContent = fmt(costPerSys);
     $('sumLaborPerApt').textContent = fmt(laborPerApt);
     $('sumLaborPerSys').textContent = fmt(laborPerSys);
+    const bidPerApt = numApt > 0 ? actualBid / numApt : 0;
+    const bidPerSys = totalSystems > 0 ? actualBid / totalSystems : 0;
+    if ($('sumBidPerApt')) $('sumBidPerApt').textContent = fmt(bidPerApt);
+    if ($('sumBidPerSys')) $('sumBidPerSys').textContent = fmt(bidPerSys);
 
     // Recalc partner profit amounts — uses actual profit
     recalcPartners(actualProfit);
@@ -322,6 +335,7 @@ async function loadBid() {
         if ($('bidLaborOverride')) $('bidLaborOverride').value = bid.labor_cost_override || 0;
         if ($('bidAdminCosts')) $('bidAdminCosts').value = bid.admin_costs || 0;
         if ($('bidAdminNotes')) $('bidAdminNotes').value = bid.admin_costs_notes || '';
+        if ($('bidHousingRate')) $('bidHousingRate').value = bid.housing_rate || 0;
         toggleProfitMode();
 
         bidPartners = bid.partners || [];
@@ -504,6 +518,7 @@ async function saveBid() {
             labor_cost_override: val('bidLaborOverride'),
             admin_costs: val('bidAdminCosts'),
             admin_costs_notes: $('bidAdminNotes') ? $('bidAdminNotes').value : '',
+            housing_rate: val('bidHousingRate'),
         });
     }
 
@@ -560,7 +575,12 @@ async function saveBid() {
     $('pageTitle').textContent = $('bidName').value || 'Edit Bid';
 }
 
-// ─── Proposal PDF ──────────────────────────────────────────
+// ─── Proposal Preview + PDF ────────────────────────────────
+function previewProposal() {
+    if (!window.BID_ID || window.BID_ID <= 0) return alert('Save the bid first.');
+    window.open(`/api/bids/${window.BID_ID}/preview-proposal`, '_blank');
+}
+
 async function generateProposal() {
     if (!window.BID_ID || window.BID_ID <= 0) return alert('Save the bid first.');
     const btn = $('btnGenerate');

@@ -3034,8 +3034,13 @@ def calculate_bid(data):
     # Admin costs
     admin_costs = float(data.get('admin_costs', 0) or 0)
 
+    # Housing (monthly rate × duration in months from bid timeline)
+    housing_rate = float(data.get('housing_rate', 0) or 0)
+    housing_months = round(num_weeks / 4.33, 2) if num_weeks > 0 else 0
+    housing_total = round(housing_rate * housing_months, 2)
+
     # Totals
-    total_cost_to_build = round(material_cost + labor_cost + insurance_cost + permit_cost + management_fee + per_diem_total + admin_costs, 2)
+    total_cost_to_build = round(material_cost + labor_cost + insurance_cost + permit_cost + management_fee + per_diem_total + admin_costs + housing_total, 2)
     subtotal = total_cost_to_build
     profit_pct = float(data.get('company_profit_pct', 0) or 0)
     profit_mode = data.get('profit_mode', 'percentage') or 'percentage'
@@ -3083,6 +3088,8 @@ def calculate_bid(data):
         'labor_cost_per_system': labor_cost_per_sys,
         'suggested_apartment_bid': suggested_apartment_bid,
         'suggested_clubhouse_bid': suggested_clubhouse_bid,
+        'housing_months': housing_months,
+        'housing_total': housing_total,
     }
 
 # ─── Bid Cost Stripping (non-owner) ──────────────────────────
@@ -3099,6 +3106,7 @@ _BID_COST_KEYS = {
     'suggested_apartment_bid', 'suggested_clubhouse_bid', 'price_per_ton',
     'profit_mode', 'profit_per_system', 'actual_bid_override', 'bid_type',
     'labor_cost_override', 'admin_costs', 'admin_costs_notes',
+    'housing_rate', 'housing_months', 'housing_total',
 }
 
 def _strip_bid_costs(bid_dict):
@@ -3178,6 +3186,7 @@ def _bid_fields(data, calcs):
         s('profit_mode', 'percentage'), f('profit_per_system'),
         f('actual_bid_override'), s('bid_type'),
         f('labor_cost_override'), f('admin_costs'), s('admin_costs_notes'),
+        f('housing_rate'), calcs['housing_months'], calcs['housing_total'],
     )
 
 _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
@@ -3200,7 +3209,8 @@ _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
     bid_workup_date, bid_due_date, bid_submitted_date, lead_name,
     inclusions, exclusions, bid_description, notes,
     profit_mode, profit_per_system, actual_bid_override, bid_type,
-    labor_cost_override, admin_costs, admin_costs_notes'''
+    labor_cost_override, admin_costs, admin_costs_notes,
+    housing_rate, housing_months, housing_total'''
 
 def _next_bid_number(conn):
     """Get next bid number starting from 2600."""
@@ -3352,6 +3362,24 @@ def api_delete_bid_personnel(bid_id, pid):
     return jsonify({'ok': True})
 
 # ─── Proposals (PDF + Email) ─────────────────────────────────
+
+@app.route('/api/bids/<int:bid_id>/preview-proposal')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_preview_proposal(bid_id):
+    """Preview the proposal HTML before generating PDF."""
+    conn = get_db()
+    bid = conn.execute(
+        'SELECT b.*, j.name as job_name FROM bids b LEFT JOIN jobs j ON b.job_id = j.id WHERE b.id = ?',
+        (bid_id,)
+    ).fetchone()
+    conn.close()
+    if not bid:
+        return jsonify({'error': 'Bid not found'}), 404
+    bid = dict(bid)
+    today = datetime.now().strftime('%B %d, %Y')
+    logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
+    html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path)
+    return html
 
 @app.route('/api/bids/<int:bid_id>/generate-proposal', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')

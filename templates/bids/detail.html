@@ -6,6 +6,7 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="saveBid()">Save Bid</button>
         {% if bid_id %}
+        <button class="btn btn-secondary" onclick="previewProposal()" id="btnPreviewProposal">View Proposal</button>
         <button class="btn btn-secondary" onclick="generateProposal()" id="btnGenerate">Generate Proposal</button>
         <a id="btnPreview" href="#" class="btn btn-secondary" style="display:none;" target="_blank">Preview PDF</a>
         <a id="btnDownload" href="#" class="btn btn-secondary" style="display:none;" download>Download PDF</a>
@@ -172,8 +173,8 @@
         </div>
     </div>
 
-    <!-- Per Diem + Overhead -->
-    <div class="bid-row-2col">
+    <!-- Per Diem + Housing + Overhead -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
         <div class="bid-section">
             <h3>Per Diem</h3>
             <div class="bid-form-grid">
@@ -184,7 +185,18 @@
                 <div class="bid-field"><label class="form-label">Per Diem Total</label>
                     <input type="text" id="bidPerDiemTotal" class="form-input calc-field" value="$0.00" readonly></div>
             </div>
-            <p class="text-muted" style="font-size:12px;margin-top:6px;">Auto-rates: 0-100mi = $0, 101-249mi = $60, 250+mi = $75 (rate × days × crew)</p>
+            <p class="text-muted" style="font-size:12px;margin-top:6px;">Auto: 0-100mi=$0, 101-249mi=$60, 250+mi=$75</p>
+        </div>
+        <div class="bid-section">
+            <h3>Housing</h3>
+            <div class="bid-form-grid">
+                <div class="bid-field"><label class="form-label">Monthly Rate ($)</label>
+                    <input type="number" id="bidHousingRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+                <div class="bid-field"><label class="form-label"># of Months <small>(from bid duration)</small></label>
+                    <input type="text" id="bidHousingMonths" class="form-input calc-field" value="0" readonly></div>
+                <div class="bid-field"><label class="form-label">Housing Total</label>
+                    <input type="text" id="bidHousingTotal" class="form-input calc-field" value="$0.00" readonly></div>
+            </div>
         </div>
         <div class="bid-section">
             <h3>Overhead</h3>
@@ -310,6 +322,7 @@
             <div class="cost-row"><span class="cost-label">Management Fee</span><span class="cost-value" id="sumMgmt">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Per Diem</span><span class="cost-value" id="sumPerDiem">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Admin Costs</span><span class="cost-value" id="sumAdmin">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Housing</span><span class="cost-value" id="sumHousing">$0.00</span></div>
             <div class="cost-row cost-row-total"><span class="cost-label">Total Cost to Build</span><span class="cost-value" id="sumCostToBuild">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Company Profit</span><span class="cost-value" id="sumProfit">$0.00</span></div>
             <div class="cost-row cost-row-total" style="font-size:18px;"><span class="cost-label">SUGGESTED BID</span><span class="cost-value" id="sumTotal" style="color:var(--blue-primary);">$0.00</span></div>
@@ -326,6 +339,9 @@
             <div class="cost-row"><span class="cost-label">Cost / System</span><span class="cost-value" id="sumCostPerSys">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Labor Cost / Apartment</span><span class="cost-value" id="sumLaborPerApt">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Labor Cost / System</span><span class="cost-value" id="sumLaborPerSys">$0.00</span></div>
+            <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px;"></div>
+            <div class="cost-row"><span class="cost-label">Bid Price / Apartment</span><span class="cost-value" id="sumBidPerApt">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Bid Price / System</span><span class="cost-value" id="sumBidPerSys">$0.00</span></div>
         </div>
     </div>
     {% endif %}
