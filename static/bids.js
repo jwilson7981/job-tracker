@@ -7,6 +7,7 @@ if (window.BID_ID !== undefined) {
     loadJobs();
     if (isOwner) loadUsers();
     if (window.BID_ID > 0) loadBid();
+    else loadNextBidNumber();
 }
 
 const $ = id => document.getElementById(id);
@@ -199,6 +200,14 @@ function recalcPartners(companyProfit) {
             amtCell.textContent = fmt(companyProfit * (pct / 100));
         }
     });
+}
+
+async function loadNextBidNumber() {
+    const res = await fetch('/api/bids/next-number');
+    const data = await res.json();
+    if (data.bid_number && !$('bidNumber').value) {
+        $('bidNumber').value = data.bid_number;
+    }
 }
 
 // ─── Data Loading ──────────────────────────────────────────

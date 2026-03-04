@@ -3192,14 +3192,31 @@ _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
     inclusions, exclusions, bid_description, notes,
     profit_mode, profit_per_system'''
 
+def _next_bid_number(conn):
+    """Get next bid number starting from 2600."""
+    row = conn.execute("SELECT MAX(CAST(bid_number AS INTEGER)) FROM bids WHERE bid_number GLOB '[0-9]*'").fetchone()
+    max_num = row[0] or 0
+    return str(max(max_num + 1, 2600))
+
+@app.route('/api/bids/next-number')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_next_bid_number():
+    conn = get_db()
+    num = _next_bid_number(conn)
+    conn.close()
+    return jsonify({'bid_number': num})
+
 @app.route('/api/bids', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
 def api_create_bid():
     data = request.get_json()
+    conn = get_db()
+    # Auto-assign bid number if not provided
+    if not data.get('bid_number', '').strip():
+        data['bid_number'] = _next_bid_number(conn)
     calcs = calculate_bid(data)
     fields = _bid_fields(data, calcs)
     placeholders = ','.join(['?'] * (len(fields) + 2))  # +2 for created_by, customer_id
-    conn = get_db()
     customer_id = data.get('customer_id') or None
     cursor = conn.execute(
         f'INSERT INTO bids ({_BID_INSERT_COLS}, created_by, customer_id) VALUES ({placeholders})',
