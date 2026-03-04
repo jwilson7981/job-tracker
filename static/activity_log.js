@@ -94,35 +94,60 @@ async function loadUserStats() {
             grid.innerHTML = '<p style="color:var(--gray-400);">No users found</p>';
             return;
         }
+        const roleBadge = (role) => {
+            const colors = {
+                owner: 'background:#EEF2FF;color:#3730A3;',
+                admin: 'background:#DBEAFE;color:#1E40AF;',
+                project_manager: 'background:#FEF9C3;color:#92400E;',
+                warehouse: 'background:#E0E7FF;color:#3730A3;',
+                employee: 'background:#F3F4F6;color:#374151;',
+            };
+            return `<span style="${colors[role] || colors.employee}padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;text-transform:capitalize;">${role.replace('_', ' ')}</span>`;
+        };
+        const activeIndicator = (last) => {
+            if (!last) return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gray-300);"></span>';
+            const diff = (Date.now() - new Date(last.replace(' ','T')).getTime()) / 60000;
+            if (diff < 5) return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px rgba(34,197,94,0.2);"></span>';
+            if (diff < 60) return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#F59E0B;"></span>';
+            return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gray-300);"></span>';
+        };
+        const initials = (name) => name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
         grid.innerHTML = data.map(u => `
-            <div style="background:var(--gray-800);border:1px solid var(--gray-700);border-radius:8px;padding:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <div>
-                        <strong style="font-size:16px;">${u.display_name || u.username}</strong>
-                        <div style="font-size:12px;color:var(--gray-400);">${u.role.replace('_', ' ')}</div>
-                    </div>
-                    <div style="font-size:12px;color:var(--gray-400);">${u.last_active ? 'Last: ' + formatTime(u.last_active) : 'Never active'}</div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <div style="background:var(--gray-900);padding:8px 12px;border-radius:6px;">
-                        <div style="font-size:11px;color:var(--gray-400);text-transform:uppercase;">Actions Today</div>
-                        <div style="font-size:20px;font-weight:600;">${u.today_actions}</div>
-                    </div>
-                    <div style="background:var(--gray-900);padding:8px 12px;border-radius:6px;">
-                        <div style="font-size:11px;color:var(--gray-400);text-transform:uppercase;">Time Today</div>
-                        <div style="font-size:20px;font-weight:600;">${formatMinutes(u.time_today_min)}</div>
-                    </div>
-                    <div style="background:var(--gray-900);padding:8px 12px;border-radius:6px;">
-                        <div style="font-size:11px;color:var(--gray-400);text-transform:uppercase;">Actions This Week</div>
-                        <div style="font-size:20px;font-weight:600;">${u.week_actions}</div>
-                    </div>
-                    <div style="background:var(--gray-900);padding:8px 12px;border-radius:6px;">
-                        <div style="font-size:11px;color:var(--gray-400);text-transform:uppercase;">Time This Week</div>
-                        <div style="font-size:20px;font-weight:600;">${formatMinutes(u.time_week_min)}</div>
+            <div class="user-stat-card" style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                    <div style="width:42px;height:42px;border-radius:50%;background:var(--blue-primary);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0;">${initials(u.display_name || u.username)}</div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${activeIndicator(u.last_active)}
+                            <strong style="font-size:15px;color:var(--gray-900);">${u.display_name || u.username}</strong>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                            ${roleBadge(u.role)}
+                            <span style="font-size:12px;color:var(--gray-500);">${u.last_active ? formatTime(u.last_active) : 'Never active'}</span>
+                        </div>
                     </div>
                 </div>
-                <div style="margin-top:8px;font-size:12px;color:var(--gray-400);text-align:right;">
-                    Total: ${u.total_actions} actions
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div style="background:var(--gray-50);border:1px solid var(--gray-100);padding:12px;border-radius:6px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:var(--blue-primary);line-height:1.1;">${u.today_actions}</div>
+                        <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-top:4px;text-transform:uppercase;">Actions Today</div>
+                    </div>
+                    <div style="background:var(--gray-50);border:1px solid var(--gray-100);padding:12px;border-radius:6px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:var(--gray-900);line-height:1.1;">${formatMinutes(u.time_today_min)}</div>
+                        <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-top:4px;text-transform:uppercase;">Time Today</div>
+                    </div>
+                    <div style="background:var(--gray-50);border:1px solid var(--gray-100);padding:12px;border-radius:6px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:var(--blue-primary);line-height:1.1;">${u.week_actions}</div>
+                        <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-top:4px;text-transform:uppercase;">Actions This Week</div>
+                    </div>
+                    <div style="background:var(--gray-50);border:1px solid var(--gray-100);padding:12px;border-radius:6px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:var(--gray-900);line-height:1.1;">${formatMinutes(u.time_week_min)}</div>
+                        <div style="font-size:11px;font-weight:600;color:var(--gray-500);margin-top:4px;text-transform:uppercase;">Time This Week</div>
+                    </div>
+                </div>
+                <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-100);display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:12px;color:var(--gray-500);">Lifetime actions</span>
+                    <span style="font-size:14px;font-weight:700;color:var(--gray-700);">${u.total_actions.toLocaleString()}</span>
                 </div>
             </div>
         `).join('');
