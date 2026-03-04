@@ -1636,21 +1636,35 @@ def api_employees_create():
     data = request.get_json()
     username = (data.get('username') or '').strip()
     password = data.get('password', '')
-    if not username or not password:
-        return jsonify({'error': 'Username and password required'}), 400
+    display_name = (data.get('display_name') or '').strip()
+    if not display_name:
+        return jsonify({'error': 'Display name is required'}), 400
+    if username and not password:
+        return jsonify({'error': 'Password is required when setting a username'}), 400
 
     conn = get_db()
-    existing = conn.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
-    if existing:
-        conn.close()
-        return jsonify({'error': 'Username already taken'}), 400
+
+    # If username provided, check for duplicates and create with login access
+    if username:
+        existing = conn.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+        if existing:
+            conn.close()
+            return jsonify({'error': 'Username already taken'}), 400
+        pw_hash = generate_password_hash(password)
+        must_change = 1
+    else:
+        # No login access — generate a unique placeholder username
+        import uuid
+        username = '_nologin_' + uuid.uuid4().hex[:8]
+        pw_hash = generate_password_hash(uuid.uuid4().hex)
+        must_change = 0
 
     cursor = conn.execute(
         '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate, must_change_password)
            VALUES (?,?,?,?,?,?,?,?)''',
-        (username, data.get('display_name', username), generate_password_hash(password),
+        (username, display_name, pw_hash,
          data.get('role', 'employee'), data.get('email', ''), data.get('phone', ''),
-         float(data.get('hourly_rate', 0)), 1)
+         float(data.get('hourly_rate', 0)), must_change)
     )
     uid = cursor.lastrowid
 

@@ -83,8 +83,9 @@ function editEmployee(id) {
         document.getElementById('empEditId').value = e.id;
         document.getElementById('empModalTitle').textContent = 'Edit Employee';
         document.getElementById('empName').value = e.display_name || '';
-        document.getElementById('empUsername').value = e.username || '';
-        document.getElementById('empUsername').readOnly = true;
+        const hasLogin = e.username && !e.username.startsWith('_nologin_');
+        document.getElementById('empUsername').value = hasLogin ? e.username : '';
+        document.getElementById('empUsername').readOnly = hasLogin;
         document.getElementById('empPassword').value = '';
         document.getElementById('empPasswordGroup').style.display = 'none';
         document.getElementById('empRole').value = e.role || 'employee';
@@ -143,8 +144,9 @@ async function saveEmployee() {
     } else {
         data.username = document.getElementById('empUsername').value.trim();
         data.password = document.getElementById('empPassword').value;
-        if (!data.username || !data.password) return alert('Username and password are required');
         if (!data.display_name) return alert('Display name is required');
+        if (data.username && !data.password) return alert('Password is required when setting a username');
+        if (!data.username && data.password) return alert('Username is required when setting a password');
         const res = await fetch('/api/employees', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
         });
