@@ -416,5 +416,5 @@
 {% endif %}
 
 <script>window.BID_ID = {{ bid_id }}; window.USER_ROLE = '{{ current_user.role }}';</script>
-<script src="/static/bids.js"></script>
+<script src="/static/bids.js?v={{ sv }}"></script>
 {% endblock %}

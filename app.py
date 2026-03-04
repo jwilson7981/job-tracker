@@ -32,6 +32,14 @@ def add_no_cache_headers(response):
         response.headers['Expires'] = '0'
     return response
 
+# Cache-busting version for static files — changes on each server restart
+import time as _time
+_static_version = str(int(_time.time()))
+
+@app.context_processor
+def inject_static_version():
+    return {'sv': _static_version}
+
 # ─── Auth Helpers ────────────────────────────────────────────────
 
 def login_required(f):
