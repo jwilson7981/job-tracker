@@ -142,15 +142,27 @@ function recalculate() {
         const profitPct = val('bidProfitPct');
         companyProfit = totalCostToBuild * (profitPct / 100);
     }
-    const totalBid = totalCostToBuild + companyProfit;
-    const netProfit = companyProfit;
+    const suggestedBid = totalCostToBuild + companyProfit;
 
     $('bidProfitAmt').value = fmt(companyProfit);
 
-    // Profit breakdown (30/35/35)
-    if ($('breakdownCompany')) $('breakdownCompany').textContent = fmt(companyProfit * 0.30);
-    if ($('breakdownDan')) $('breakdownDan').textContent = fmt(companyProfit * 0.35);
-    if ($('breakdownJames')) $('breakdownJames').textContent = fmt(companyProfit * 0.35);
+    // Actual bid override — if set, recalc profit from override
+    const bidOverride = val('bidOverride');
+    let actualBid, actualProfit;
+    if (bidOverride > 0) {
+        actualBid = bidOverride;
+        actualProfit = bidOverride - totalCostToBuild;
+        if ($('overrideInfo')) $('overrideInfo').style.display = '';
+    } else {
+        actualBid = suggestedBid;
+        actualProfit = companyProfit;
+        if ($('overrideInfo')) $('overrideInfo').style.display = 'none';
+    }
+
+    // Profit breakdown (30/35/35) — uses actual profit (override or suggested)
+    if ($('breakdownCompany')) $('breakdownCompany').textContent = fmt(actualProfit * 0.30);
+    if ($('breakdownDan')) $('breakdownDan').textContent = fmt(actualProfit * 0.35);
+    if ($('breakdownJames')) $('breakdownJames').textContent = fmt(actualProfit * 0.35);
 
     // Per-unit calcs
     const costPerApt = numApt > 0 ? totalCostToBuild / numApt : 0;
@@ -159,11 +171,11 @@ function recalculate() {
     const laborPerSys = totalSystems > 0 ? laborCost / totalSystems : 0;
 
     // Suggested bids
-    let sugAptBid = totalBid, sugClubBid = 0;
+    let sugAptBid = actualBid, sugClubBid = 0;
     if (hasClub && clubSystems > 0 && totalSystems > 0) {
         const aptShare = (totalSystems - clubSystems) / totalSystems;
-        sugAptBid = totalBid * aptShare;
-        sugClubBid = totalBid * (1 - aptShare);
+        sugAptBid = actualBid * aptShare;
+        sugClubBid = actualBid * (1 - aptShare);
     }
 
     // Update summary
@@ -175,11 +187,11 @@ function recalculate() {
     $('sumPerDiem').textContent = fmt(perDiemTotal);
     $('sumCostToBuild').textContent = fmt(totalCostToBuild);
     $('sumProfit').textContent = fmt(companyProfit);
-    $('sumTotal').textContent = fmt(totalBid);
-    $('sumNetProfit').textContent = fmt(netProfit);
-    if ($('sumBreakdownCompany')) $('sumBreakdownCompany').textContent = fmt(companyProfit * 0.30);
-    if ($('sumBreakdownDan')) $('sumBreakdownDan').textContent = fmt(companyProfit * 0.35);
-    if ($('sumBreakdownJames')) $('sumBreakdownJames').textContent = fmt(companyProfit * 0.35);
+    $('sumTotal').textContent = fmt(suggestedBid);
+    $('sumNetProfit').textContent = fmt(actualProfit);
+    if ($('sumBreakdownCompany')) $('sumBreakdownCompany').textContent = fmt(actualProfit * 0.30);
+    if ($('sumBreakdownDan')) $('sumBreakdownDan').textContent = fmt(actualProfit * 0.35);
+    if ($('sumBreakdownJames')) $('sumBreakdownJames').textContent = fmt(actualProfit * 0.35);
     $('sumAptBid').textContent = fmt(sugAptBid);
     $('sumClubBid').textContent = fmt(sugClubBid);
     $('sumCostPerApt').textContent = fmt(costPerApt);
@@ -187,8 +199,8 @@ function recalculate() {
     $('sumLaborPerApt').textContent = fmt(laborPerApt);
     $('sumLaborPerSys').textContent = fmt(laborPerSys);
 
-    // Recalc partner profit amounts
-    recalcPartners(companyProfit);
+    // Recalc partner profit amounts — uses actual profit
+    recalcPartners(actualProfit);
 }
 
 function recalcPartners(companyProfit) {
@@ -291,6 +303,7 @@ async function loadBid() {
         $('bidProfitPct').value = bid.company_profit_pct || 0;
         if ($('bidProfitMode')) $('bidProfitMode').value = bid.profit_mode || 'percentage';
         if ($('bidProfitPerSystem')) $('bidProfitPerSystem').value = bid.profit_per_system || 0;
+        if ($('bidOverride')) $('bidOverride').value = bid.actual_bid_override || 0;
         toggleProfitMode();
 
         bidPartners = bid.partners || [];
@@ -468,6 +481,7 @@ async function saveBid() {
             company_profit_pct: val('bidProfitPct'),
             profit_mode: $('bidProfitMode') ? $('bidProfitMode').value : 'percentage',
             profit_per_system: val('bidProfitPerSystem'),
+            actual_bid_override: val('bidOverride'),
         });
     }
 
