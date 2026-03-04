@@ -17,6 +17,16 @@
         <button class="btn btn-primary" onclick="saveAllEntries()">Save</button>
         <button class="btn btn-secondary" id="viewPdfBtn" onclick="viewPayAppPDF()" style="display:none;">View PDF</button>
         <button class="btn btn-primary" onclick="generatePayAppPDF()" style="background:#1a5276;">Generate PDF</button>
+        <button class="btn btn-secondary" id="emailPdfBtn" onclick="openPayAppEmailModal()" style="display:none;">Email PDF</button>
+        <label class="btn btn-secondary" style="cursor:pointer;">
+            Upload Signature
+            <input type="file" accept="image/png,image/jpeg" style="display:none;" onchange="uploadSignature(this)">
+        </label>
+        <label class="btn btn-secondary" style="cursor:pointer;">
+            Upload Signed Copy
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg" style="display:none;" onchange="uploadSignedCopy(this)">
+        </label>
+        <button class="btn btn-secondary" id="viewSignedBtn" onclick="viewSignedCopy()" style="display:none;">View Signed</button>
     </div>
 </div>
 
@@ -52,11 +62,11 @@
             <div class="form-row" style="gap:8px;">
                 <div class="form-group">
                     <label class="form-label" style="font-size:12px;">Additions This Month</label>
-                    <input type="number" id="coAdd" class="form-input" step="0.01" value="0" onchange="recalcG702()">
+                    <div id="coAddDisplay" style="font-weight:600;font-size:14px;padding:6px 0;">$0.00</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label" style="font-size:12px;">Deductions This Month</label>
-                    <input type="number" id="coDed" class="form-input" step="0.01" value="0" onchange="recalcG702()">
+                    <div id="coDelDisplay" style="font-weight:600;font-size:14px;padding:6px 0;">$0.00</div>
                 </div>
             </div>
             <div class="form-group" style="margin-top:4px;">
@@ -89,6 +99,49 @@
             <tbody id="g703Body"><tr><td colspan="10" class="empty-state">Loading...</td></tr></tbody>
             <tfoot id="g703Foot"></tfoot>
         </table>
+    </div>
+</div>
+
+<!-- Signature Preview -->
+<div id="sigPreview" style="display:none;margin-bottom:16px;padding:12px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+    <div style="display:flex;align-items:center;gap:16px;">
+        <div>
+            <div style="font-size:12px;color:#6b7280;margin-bottom:4px;font-weight:600;">Contractor Signature (stored in app)</div>
+            <img id="sigImage" src="/api/settings/signature" style="height:40px;border:1px solid #d1d5db;border-radius:4px;background:#fff;padding:4px;">
+        </div>
+        <label class="btn btn-secondary btn-small" style="cursor:pointer;">
+            Replace
+            <input type="file" accept="image/png,image/jpeg" style="display:none;" onchange="uploadSignature(this)">
+        </label>
+        <button class="btn btn-danger btn-small" onclick="deleteSignature()">Remove</button>
+    </div>
+</div>
+
+<!-- Email Pay App Modal -->
+<div class="modal-overlay" id="payappEmailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Email Pay Application</h2>
+            <button class="modal-close" onclick="document.getElementById('payappEmailModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="sendPayAppEmail(event)">
+            <div class="form-group">
+                <label class="form-label">Recipients (comma-separated)</label>
+                <input type="text" id="paEmailTo" class="form-input" placeholder="gc@example.com" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="paEmailSubject" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Message</label>
+                <textarea id="paEmailBody" class="form-input" rows="5"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('payappEmailModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="paEmailSendBtn">Send Email</button>
+            </div>
+        </form>
     </div>
 </div>
 

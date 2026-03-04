@@ -14,6 +14,19 @@ async function initList() {
     paJobs = await res.json();
     const sel = document.getElementById('ncJob');
     paJobs.forEach(j => { const o = document.createElement('option'); o.value = j.id; o.textContent = j.name; sel.appendChild(o); });
+    sel.addEventListener('change', async () => {
+        const jobId = sel.value;
+        if (!jobId) return;
+        try {
+            const r = await fetch('/api/jobs/' + jobId + '/customer-info');
+            const c = await r.json();
+            if (c.company_name) document.getElementById('ncGcName').value = c.company_name;
+            if (c.address) document.getElementById('ncGcAddr').value = c.address;
+            if (c.primary_contact) document.getElementById('ncGcContact').value = c.primary_contact;
+            if (c.contact_email) document.getElementById('ncGcEmail').value = c.contact_email;
+            if (c.contact_phone) document.getElementById('ncGcPhone').value = c.contact_phone;
+        } catch(e) {}
+    });
     loadContracts();
 }
 
@@ -46,6 +59,9 @@ async function saveContract(e) {
             job_id: document.getElementById('ncJob').value,
             gc_name: document.getElementById('ncGcName').value,
             gc_address: document.getElementById('ncGcAddr').value,
+            gc_contact: document.getElementById('ncGcContact').value,
+            gc_email: document.getElementById('ncGcEmail').value,
+            gc_phone: document.getElementById('ncGcPhone').value,
             project_no: document.getElementById('ncProjNo').value,
             contract_for: document.getElementById('ncContractFor').value,
             contract_date: document.getElementById('ncContractDate').value,
@@ -228,8 +244,9 @@ async function initApplication() {
     document.getElementById('appTitle').textContent = 'Pay Application #' + appData.application.application_number;
     document.getElementById('appStatus').value = appData.application.status;
     document.getElementById('periodTo').value = appData.application.period_to || '';
-    document.getElementById('coAdd').value = appData.application.co_additions || 0;
-    document.getElementById('coDed').value = appData.application.co_deductions || 0;
+    // Auto-calculated CO values from backend
+    document.getElementById('coAddDisplay').textContent = fmt(appData.g702.co_this_additions || 0);
+    document.getElementById('coDelDisplay').textContent = fmt(appData.g702.co_this_deductions || 0);
 
     // G702 header info
     document.getElementById('g702AppNo').textContent = appData.application.application_number;
@@ -244,11 +261,20 @@ async function initApplication() {
     renderG703();
     recalcG702();
 
-    // Show View PDF button if a PDF has been generated
-    const viewBtn = document.getElementById('viewPdfBtn');
-    if (viewBtn && appData.application.pdf_file) {
-        viewBtn.style.display = '';
+    // Show View PDF / Email buttons if a PDF has been generated
+    if (appData.application.pdf_file) {
+        const viewBtn = document.getElementById('viewPdfBtn');
+        if (viewBtn) viewBtn.style.display = '';
+        const emailBtn = document.getElementById('emailPdfBtn');
+        if (emailBtn) emailBtn.style.display = '';
     }
+    // Show View Signed button if signed copy uploaded
+    if (appData.application.signed_file) {
+        const signedBtn = document.getElementById('viewSignedBtn');
+        if (signedBtn) signedBtn.style.display = '';
+    }
+    // Load signature preview
+    loadSignaturePreview();
 }
 
 function viewPayAppPDF() {
@@ -357,8 +383,8 @@ function recalcG702() {
     const c = appData.contract;
     const g = appData.g702;
 
-    const coAdd = parseFloat(document.getElementById('coAdd').value) || 0;
-    const coDed = parseFloat(document.getElementById('coDed').value) || 0;
+    const coAdd = g.co_this_additions || 0;
+    const coDed = g.co_this_deductions || 0;
     const netCO = (g.co_prev_additions + coAdd) - (g.co_prev_deductions + coDed);
 
     const l1 = c.original_contract_sum || 0;
@@ -415,8 +441,6 @@ async function saveAppMeta() {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
             period_to: document.getElementById('periodTo').value,
-            co_additions: parseFloat(document.getElementById('coAdd').value) || 0,
-            co_deductions: parseFloat(document.getElementById('coDed').value) || 0,
         })
     });
     document.getElementById('g702PeriodTo').textContent = document.getElementById('periodTo').value || '-';
@@ -454,8 +478,6 @@ async function generatePayAppPDF() {
             body: JSON.stringify({
                 entries,
                 period_to: document.getElementById('periodTo').value,
-                co_additions: parseFloat(document.getElementById('coAdd').value) || 0,
-                co_deductions: parseFloat(document.getElementById('coDed').value) || 0,
             })
         });
         // Generate PDF
@@ -478,6 +500,110 @@ async function generatePayAppPDF() {
     }
     btn.disabled = false;
     setTimeout(() => { btn.textContent = orig; }, 3000);
+}
+
+async function loadSignaturePreview() {
+    const preview = document.getElementById('sigPreview');
+    if (!preview) return;
+    try {
+        const res = await fetch('/api/settings/signature');
+        if (res.ok) {
+            preview.style.display = '';
+            document.getElementById('sigImage').src = '/api/settings/signature?' + Date.now();
+        } else {
+            preview.style.display = 'none';
+        }
+    } catch(e) { preview.style.display = 'none'; }
+}
+
+async function uploadSignature(input) {
+    if (!input.files.length) return;
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const res = await fetch('/api/settings/signature', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+        alert('Signature saved! It will appear on the next generated PDF.');
+        loadSignaturePreview();
+    } else {
+        alert(data.error || 'Upload failed');
+    }
+    input.value = '';
+}
+
+async function deleteSignature() {
+    if (!confirm('Remove the stored signature?')) return;
+    const res = await fetch('/api/settings/signature', { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+        const preview = document.getElementById('sigPreview');
+        if (preview) preview.style.display = 'none';
+    }
+}
+
+async function openPayAppEmailModal() {
+    const jobName = appData.job_name || 'Project';
+    const appNum = appData.application.application_number || '';
+    const gcEmail = appData.contract.gc_email || '';
+    document.getElementById('paEmailTo').value = gcEmail;
+    document.getElementById('paEmailSubject').value = `Pay Application #${appNum} - ${jobName}`;
+    document.getElementById('paEmailBody').value = `Please find attached Pay Application #${appNum} for ${jobName}.\n\nPlease review and let us know if you have any questions.\n\nThank you,\nLGHVAC Mechanical, LLC`;
+    document.getElementById('payappEmailModal').style.display = 'flex';
+}
+
+async function sendPayAppEmail(e) {
+    e.preventDefault();
+    const btn = document.getElementById('paEmailSendBtn');
+    btn.textContent = 'Sending...';
+    btn.disabled = true;
+    try {
+        const recipients = document.getElementById('paEmailTo').value.split(',').map(e => e.trim()).filter(Boolean);
+        const res = await fetch('/api/payapps/applications/' + PA_APP_ID + '/email', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                recipients,
+                subject: document.getElementById('paEmailSubject').value,
+                body: document.getElementById('paEmailBody').value,
+            })
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            alert('Pay App sent to: ' + data.sent_to.join(', '));
+            document.getElementById('payappEmailModal').style.display = 'none';
+        }
+    } catch (err) {
+        alert('Failed to send: ' + err.message);
+    } finally {
+        btn.textContent = 'Send Email';
+        btn.disabled = false;
+    }
+}
+
+async function uploadSignedCopy(input) {
+    if (!input.files.length) return;
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const res = await fetch('/api/payapps/applications/' + PA_APP_ID + '/signed', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+        alert('Signed copy uploaded.');
+        appData.application.signed_file = data.filename;
+        const signedBtn = document.getElementById('viewSignedBtn');
+        if (signedBtn) signedBtn.style.display = '';
+    } else {
+        alert(data.error || 'Upload failed');
+    }
+    input.value = '';
+}
+
+function viewSignedCopy() {
+    if (appData && appData.application.signed_file) {
+        window.open('/api/payapps/applications/' + PA_APP_ID + '/signed/' + appData.application.signed_file, '_blank');
+    } else {
+        alert('No signed copy uploaded yet.');
+    }
 }
 
 // ─── ANALYTICS PAGE ──────────────────────────────────────────

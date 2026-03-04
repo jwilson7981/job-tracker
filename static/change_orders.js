@@ -7,9 +7,12 @@ function fmt(n) {
 }
 
 // ─── Init ────────────────────────────────────────────────────
+let contractsByJobId = {};
+
 document.addEventListener('DOMContentLoaded', function() {
     loadJobsList();
     loadChangeOrders();
+    loadContractsLookup();
 });
 
 // ─── Load Jobs Dropdown ──────────────────────────────────────
@@ -28,6 +31,26 @@ async function loadJobsList() {
         o2.textContent = j.name;
         modalSel.appendChild(o2);
     });
+}
+
+// ─── Load Contracts Lookup (for GC name auto-fill) ──────────
+async function loadContractsLookup() {
+    try {
+        const res = await fetch('/api/payapps/contracts');
+        const contracts = await res.json();
+        contracts.forEach(c => { contractsByJobId[c.job_id] = c; });
+        // Attach onchange to coJob dropdown
+        const coJob = document.getElementById('coJob');
+        if (coJob) {
+            coJob.addEventListener('change', function() {
+                const contract = contractsByJobId[this.value];
+                const gcField = document.getElementById('coGcName');
+                if (gcField && contract && contract.gc_name) {
+                    gcField.value = contract.gc_name;
+                }
+            });
+        }
+    } catch(e) { /* contracts not available */ }
 }
 
 // ─── Load Change Orders ──────────────────────────────────────
@@ -133,7 +156,9 @@ function showAddCO() {
     document.getElementById('coScope').value = '';
     document.getElementById('coReason').value = '';
     document.getElementById('coAmount').value = '';
-    document.getElementById('coGcName').value = '';
+    const selectedJob = document.getElementById('coJob').value;
+    const contract = contractsByJobId[selectedJob];
+    document.getElementById('coGcName').value = (contract && contract.gc_name) ? contract.gc_name : '';
     document.getElementById('coStatus').value = 'Draft';
     document.getElementById('coStatusGroup').style.display = 'none';
     document.getElementById('coModal').style.display = 'flex';
