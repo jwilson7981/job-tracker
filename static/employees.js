@@ -21,7 +21,8 @@ function filterEmployees() {
         (e.display_name || '').toLowerCase().includes(q) ||
         (e.employee_number || '').toLowerCase().includes(q) ||
         (e.email || '').toLowerCase().includes(q) ||
-        (e.phone || '').toLowerCase().includes(q)
+        (e.phone || '').toLowerCase().includes(q) ||
+        (e.home_base_city || '').toLowerCase().includes(q)
     ) : allEmployees;
 
     document.getElementById('empCount').textContent = filtered.length + ' employee' + (filtered.length !== 1 ? 's' : '');
@@ -65,12 +66,14 @@ async function resetEmpPassword(id, name) {
 function showAddEmployee() {
     document.getElementById('empEditId').value = '';
     document.getElementById('empModalTitle').textContent = 'Add Employee';
-    document.getElementById('empName').value = '';
+    document.getElementById('empFirstName').value = '';
+    document.getElementById('empLastName').value = '';
     document.getElementById('empUsername').value = '';
     document.getElementById('empUsername').readOnly = false;
     document.getElementById('empPassword').value = '';
     document.getElementById('empPasswordGroup').style.display = '';
     document.getElementById('empRole').value = 'employee';
+    document.getElementById('empHomeCity').value = '';
     document.getElementById('empNumber').value = '';
     document.getElementById('empEmail').value = '';
     document.getElementById('empPhone').value = '';
@@ -95,13 +98,15 @@ function editEmployee(id) {
     fetch('/api/employees/' + id).then(r => r.json()).then(e => {
         document.getElementById('empEditId').value = e.id;
         document.getElementById('empModalTitle').textContent = 'Edit Employee';
-        document.getElementById('empName').value = e.display_name || '';
+        document.getElementById('empFirstName').value = e.first_name || '';
+        document.getElementById('empLastName').value = e.last_name || '';
         const hasLogin = e.username && !e.username.startsWith('_nologin_');
         document.getElementById('empUsername').value = hasLogin ? e.username : '';
         document.getElementById('empUsername').readOnly = hasLogin;
         document.getElementById('empPassword').value = '';
         document.getElementById('empPasswordGroup').style.display = 'none';
         document.getElementById('empRole').value = e.role || 'employee';
+        document.getElementById('empHomeCity').value = e.home_base_city || '';
         document.getElementById('empNumber').value = e.employee_number || '';
         document.getElementById('empEmail').value = e.email || '';
         document.getElementById('empPhone').value = e.phone || '';
@@ -127,8 +132,10 @@ function closeEmpModal() { document.getElementById('empModal').style.display = '
 async function saveEmployee() {
     const id = document.getElementById('empEditId').value;
     const data = {
-        display_name: document.getElementById('empName').value.trim(),
+        first_name: document.getElementById('empFirstName').value.trim(),
+        last_name: document.getElementById('empLastName').value.trim(),
         role: document.getElementById('empRole').value,
+        home_base_city: document.getElementById('empHomeCity').value.trim(),
         employee_number: document.getElementById('empNumber').value.trim(),
         email: document.getElementById('empEmail').value.trim(),
         phone: document.getElementById('empPhone').value.trim(),
@@ -157,7 +164,7 @@ async function saveEmployee() {
     } else {
         data.username = document.getElementById('empUsername').value.trim();
         data.password = document.getElementById('empPassword').value;
-        if (!data.display_name) return alert('Display name is required');
+        if (!data.first_name) return alert('First name is required');
         if (data.username && !data.password) return alert('Password is required when setting a username');
         if (!data.username && data.password) return alert('Username is required when setting a password');
         const res = await fetch('/api/employees', {
@@ -215,6 +222,7 @@ function renderDetail() {
             <div style="display:grid;gap:8px;font-size:14px;">
                 <div><strong>Email:</strong> ${e.email || '-'}</div>
                 <div><strong>Phone:</strong> ${e.phone || '-'}</div>
+                <div><strong>Home Base:</strong> ${e.home_base_city || '-'}</div>
                 <div><strong>DOB:</strong> ${e.date_of_birth || '-'}</div>
                 ${ssnRow}
                 <div><strong>Shirt Size:</strong> ${e.shirt_size || '-'}</div>
@@ -289,8 +297,10 @@ async function revealSSN() {
 
 function editEmployeeDetail() {
     const e = empDetail;
-    document.getElementById('editName').value = e.display_name || '';
+    document.getElementById('editFirstName').value = e.first_name || '';
+    document.getElementById('editLastName').value = e.last_name || '';
     document.getElementById('editRole').value = e.role || 'employee';
+    document.getElementById('editHomeCity').value = e.home_base_city || '';
     document.getElementById('editNumber').value = e.employee_number || '';
     document.getElementById('editEmail').value = e.email || '';
     document.getElementById('editPhone').value = e.phone || '';
@@ -314,8 +324,10 @@ function closeEditModal() { document.getElementById('empEditModal').style.displa
 
 async function saveEmployeeEdit() {
     const data = {
-        display_name: document.getElementById('editName').value.trim(),
+        first_name: document.getElementById('editFirstName').value.trim(),
+        last_name: document.getElementById('editLastName').value.trim(),
         role: document.getElementById('editRole').value,
+        home_base_city: document.getElementById('editHomeCity').value.trim(),
         employee_number: document.getElementById('editNumber').value.trim(),
         email: document.getElementById('editEmail').value.trim(),
         phone: document.getElementById('editPhone').value.trim(),

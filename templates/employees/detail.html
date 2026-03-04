@@ -44,8 +44,10 @@
         <div class="modal-body">
             <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Basic Info</h4>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
-                <div class="bid-field"><label class="form-label">Display Name *</label>
-                    <input type="text" id="editName" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">First Name</label>
+                    <input type="text" id="editFirstName" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Last Name</label>
+                    <input type="text" id="editLastName" class="form-input"></div>
                 <div class="bid-field"><label class="form-label">Role</label>
                     <select id="editRole" class="form-select">
                         <option value="employee">Employee</option>
@@ -53,6 +55,8 @@
                         <option value="project_manager">Project Manager</option>
                         <option value="admin">Admin</option>
                     </select></div>
+                <div class="bid-field"><label class="form-label">Home Base City</label>
+                    <input type="text" id="editHomeCity" class="form-input" placeholder="e.g. Edmond"></div>
                 <div class="bid-field"><label class="form-label">Employee #</label>
                     <input type="text" id="editNumber" class="form-input"></div>
                 <div class="bid-field"><label class="form-label">Email</label>

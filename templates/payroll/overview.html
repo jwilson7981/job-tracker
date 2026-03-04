@@ -60,11 +60,13 @@
         <div class="modal-body">
             <input type="hidden" id="editEmpId">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div class="bid-field"><label class="form-label">Display Name *</label>
-                    <input type="text" id="empName" class="form-input" placeholder="e.g. John Smith"></div>
-                <div class="bid-field"><label class="form-label">Username *</label>
+                <div class="bid-field"><label class="form-label">First Name</label>
+                    <input type="text" id="empFirstName" class="form-input" placeholder="e.g. John"></div>
+                <div class="bid-field"><label class="form-label">Last Name</label>
+                    <input type="text" id="empLastName" class="form-input" placeholder="e.g. Smith"></div>
+                <div class="bid-field"><label class="form-label">Username <span style="font-weight:normal;color:var(--gray-400);">(for app login)</span></label>
                     <input type="text" id="empUsername" class="form-input" placeholder="e.g. jsmith"></div>
-                <div class="bid-field" id="empPasswordGroup"><label class="form-label">Password *</label>
+                <div class="bid-field" id="empPasswordGroup"><label class="form-label">Password</label>
                     <input type="password" id="empPassword" class="form-input"></div>
                 <div class="bid-field"><label class="form-label">Role</label>
                     <select id="empRole" class="form-select">
@@ -73,6 +75,8 @@
                         <option value="project_manager">Project Manager</option>
                         <option value="admin">Admin</option>
                     </select></div>
+                <div class="bid-field"><label class="form-label">Home Base City</label>
+                    <input type="text" id="empHomeCity" class="form-input" placeholder="e.g. Edmond"></div>
                 <div class="bid-field"><label class="form-label">Hourly Rate</label>
                     <input type="number" id="empRate" class="form-input" step="0.01" min="0" value="0"></div>
                 <div class="bid-field"><label class="form-label">Email</label>
@@ -82,8 +86,8 @@
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeAddEmployee()">Cancel</button>
-            <button class="btn btn-primary" onclick="saveEmployee()">Save</button>
+            <button type="button" class="btn btn-secondary" onclick="closeAddEmployee()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="saveEmployee()">Save</button>
         </div>
     </div>
 </div>
@@ -121,8 +125,8 @@
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeNewRunModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="createRun()">Create Run</button>
+            <button type="button" class="btn btn-secondary" onclick="closeNewRunModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="createRun()">Create Run</button>
         </div>
     </div>
 </div>

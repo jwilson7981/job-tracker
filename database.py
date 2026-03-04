@@ -1872,6 +1872,20 @@ def init_db():
     if 'must_change_password' not in u_cols:
         conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
+    # Migration: add first_name, last_name, home_base_city to users
+    u_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if 'first_name' not in u_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN first_name TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE users ADD COLUMN last_name TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE users ADD COLUMN home_base_city TEXT DEFAULT ''")
+        # Populate first_name/last_name from existing display_name
+        users = conn.execute("SELECT id, display_name FROM users").fetchall()
+        for u in users:
+            parts = (u['display_name'] or '').strip().split(' ', 1)
+            fn = parts[0] if parts else ''
+            ln = parts[1] if len(parts) > 1 else ''
+            conn.execute("UPDATE users SET first_name = ?, last_name = ? WHERE id = ?", (fn, ln, u['id']))
+
     # Migration: Team Pay tables (internal progress-based payroll)
     existing_tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     if 'team_pay_schedules' not in existing_tables:

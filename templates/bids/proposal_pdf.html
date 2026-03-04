@@ -116,18 +116,6 @@ table.summary tr.total td { border-top: 2px solid #1a5276; font-weight: 700; fon
 </ul>
 {% endif %}
 
-<!-- COST SUMMARY TABLE -->
-<h2>Cost Summary</h2>
-<table class="summary">
-    <tr><td>Equipment / Materials</td><td>${{ '{:,.2f}'.format(bid.material_cost) }}</td></tr>
-    <tr><td>Labor ({{ bid.total_man_hours|int }} man-hours, crew of {{ bid.crew_size }})</td><td>${{ '{:,.2f}'.format(bid.labor_cost) }}</td></tr>
-    {% if bid.insurance_cost %}<tr><td>Insurance</td><td>${{ '{:,.2f}'.format(bid.insurance_cost) }}</td></tr>{% endif %}
-    {% if bid.permit_cost %}<tr><td>Permits</td><td>${{ '{:,.2f}'.format(bid.permit_cost) }}</td></tr>{% endif %}
-    {% if bid.management_fee %}<tr><td>Management</td><td>${{ '{:,.2f}'.format(bid.management_fee) }}</td></tr>{% endif %}
-    {% if bid.per_diem_total %}<tr><td>Per Diem</td><td>${{ '{:,.2f}'.format(bid.per_diem_total) }}</td></tr>{% endif %}
-    <tr class="total"><td>Total</td><td>${{ '{:,.2f}'.format(bid.total_bid) }}</td></tr>
-</table>
-
 {% if bid.has_clubhouse and bid.suggested_clubhouse_bid %}
 <p style="font-size:10px;color:#555;">
     Suggested Apartment Portion: ${{ '{:,.2f}'.format(bid.suggested_apartment_bid) }} &nbsp;|&nbsp;

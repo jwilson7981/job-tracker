@@ -40,8 +40,10 @@
 
             <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Basic Info</h4>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
-                <div class="bid-field"><label class="form-label">Display Name *</label>
-                    <input type="text" id="empName" class="form-input" placeholder="e.g. John Smith"></div>
+                <div class="bid-field"><label class="form-label">First Name</label>
+                    <input type="text" id="empFirstName" class="form-input" placeholder="e.g. John"></div>
+                <div class="bid-field"><label class="form-label">Last Name</label>
+                    <input type="text" id="empLastName" class="form-input" placeholder="e.g. Smith"></div>
                 <div class="bid-field"><label class="form-label">Username <span style="font-weight:normal;color:var(--gray-400);">(optional — for app login)</span></label>
                     <input type="text" id="empUsername" class="form-input" placeholder="e.g. jsmith"></div>
                 <div class="bid-field" id="empPasswordGroup"><label class="form-label">Password <span style="font-weight:normal;color:var(--gray-400);">(optional)</span></label>
@@ -53,6 +55,8 @@
                         <option value="project_manager">Project Manager</option>
                         <option value="admin">Admin</option>
                     </select></div>
+                <div class="bid-field"><label class="form-label">Home Base City</label>
+                    <input type="text" id="empHomeCity" class="form-input" placeholder="e.g. Edmond"></div>
                 <div class="bid-field"><label class="form-label">Employee #</label>
                     <input type="text" id="empNumber" class="form-input" placeholder="e.g. EMP-001"></div>
                 <div class="bid-field"><label class="form-label">Email</label>

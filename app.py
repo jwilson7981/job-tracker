@@ -1288,6 +1288,9 @@ def api_payroll_summary():
         result.append({
             'id': u['id'],
             'display_name': u['display_name'],
+            'first_name': u['first_name'] or '',
+            'last_name': u['last_name'] or '',
+            'home_base_city': u['home_base_city'] or '',
             'username': u['username'],
             'role': u['role'],
             'hourly_rate': u['hourly_rate'] or 0,
@@ -1962,9 +1965,11 @@ def api_employees_create():
     data = request.get_json()
     username = (data.get('username') or '').strip()
     password = data.get('password', '')
-    display_name = (data.get('display_name') or '').strip()
+    first_name = (data.get('first_name') or '').strip()
+    last_name = (data.get('last_name') or '').strip()
+    display_name = (data.get('display_name') or '').strip() or f'{first_name} {last_name}'.strip()
     if not display_name:
-        return jsonify({'error': 'Display name is required'}), 400
+        return jsonify({'error': 'First name is required'}), 400
     if username and not password:
         return jsonify({'error': 'Password is required when setting a username'}), 400
 
@@ -1986,9 +1991,11 @@ def api_employees_create():
         must_change = 0
 
     cursor = conn.execute(
-        '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate, must_change_password)
-           VALUES (?,?,?,?,?,?,?,?)''',
-        (username, display_name, pw_hash,
+        '''INSERT INTO users (username, display_name, first_name, last_name, home_base_city,
+           password_hash, role, email, phone, hourly_rate, must_change_password)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+        (username, display_name, first_name, last_name, data.get('home_base_city', ''),
+         pw_hash,
          data.get('role', 'employee'), data.get('email', ''), data.get('phone', ''),
          float(data.get('hourly_rate', 0)), must_change)
     )
@@ -2057,10 +2064,19 @@ def api_employees_update(uid):
     # Update user fields
     user_fields = []
     user_values = []
-    for f in ('display_name', 'role', 'email', 'phone', 'hourly_rate'):
+    for f in ('display_name', 'first_name', 'last_name', 'home_base_city', 'role', 'email', 'phone', 'hourly_rate'):
         if f in data:
             user_fields.append(f'{f} = ?')
             user_values.append(data[f])
+    # Auto-compose display_name from first/last if provided
+    if 'first_name' in data or 'last_name' in data:
+        cur = conn.execute('SELECT first_name, last_name FROM users WHERE id = ?', (uid,)).fetchone()
+        fn = data.get('first_name', cur['first_name'] if cur else '')
+        ln = data.get('last_name', cur['last_name'] if cur else '')
+        composed = f'{fn} {ln}'.strip()
+        if composed:
+            user_fields.append('display_name = ?')
+            user_values.append(composed)
     if 'password' in data and data['password']:
         user_fields.append('password_hash = ?')
         user_values.append(generate_password_hash(data['password']))
@@ -3024,7 +3040,7 @@ def admin_users():
 @api_role_required('owner', 'admin')
 def api_admin_users():
     conn = get_db()
-    users = conn.execute('SELECT id, username, display_name, role, email, phone, hourly_rate, is_active, created_at FROM users ORDER BY display_name').fetchall()
+    users = conn.execute('SELECT id, username, display_name, first_name, last_name, home_base_city, role, email, phone, hourly_rate, is_active, created_at FROM users ORDER BY display_name').fetchall()
     conn.close()
     return jsonify([dict(u) for u in users])
 
@@ -3043,10 +3059,15 @@ def api_create_user():
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
 
+    first_name = (data.get('first_name') or '').strip()
+    last_name = (data.get('last_name') or '').strip()
+    display_name = data.get('display_name', '').strip() or f'{first_name} {last_name}'.strip() or username
     cursor = conn.execute(
-        '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate, must_change_password)
-           VALUES (?,?,?,?,?,?,?,?)''',
-        (username, data.get('display_name', username), generate_password_hash(password),
+        '''INSERT INTO users (username, display_name, first_name, last_name, home_base_city,
+           password_hash, role, email, phone, hourly_rate, must_change_password)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+        (username, display_name, first_name, last_name, data.get('home_base_city', ''),
+         generate_password_hash(password),
          data.get('role', 'employee'), data.get('email', ''), data.get('phone', ''),
          float(data.get('hourly_rate', 0)), 1 if data.get('must_change_password', False) else 0)
     )
@@ -3067,10 +3088,19 @@ def api_update_user(uid):
     conn = get_db()
     fields = []
     values = []
-    for f in ('display_name', 'role', 'email', 'phone', 'hourly_rate', 'is_active'):
+    for f in ('display_name', 'first_name', 'last_name', 'home_base_city', 'role', 'email', 'phone', 'hourly_rate', 'is_active'):
         if f in data:
             fields.append(f'{f} = ?')
             values.append(data[f])
+    # Auto-compose display_name from first/last if provided
+    if 'first_name' in data or 'last_name' in data:
+        cur = conn.execute('SELECT first_name, last_name FROM users WHERE id = ?', (uid,)).fetchone()
+        fn = data.get('first_name', cur['first_name'] if cur else '')
+        ln = data.get('last_name', cur['last_name'] if cur else '')
+        composed = f'{fn} {ln}'.strip()
+        if composed:
+            fields.append('display_name = ?')
+            values.append(composed)
     if 'password' in data and data['password']:
         fields.append('password_hash = ?')
         values.append(generate_password_hash(data['password']))

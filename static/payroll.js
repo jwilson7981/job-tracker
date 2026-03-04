@@ -32,11 +32,13 @@ async function loadPayroll() {
 function showAddEmployee() {
     document.getElementById('editEmpId').value = '';
     document.getElementById('empModalTitle').textContent = 'Add Employee';
-    document.getElementById('empName').value = '';
+    document.getElementById('empFirstName').value = '';
+    document.getElementById('empLastName').value = '';
     document.getElementById('empUsername').value = '';
     document.getElementById('empPassword').value = '';
     document.getElementById('empPasswordGroup').style.display = '';
     document.getElementById('empRole').value = 'employee';
+    document.getElementById('empHomeCity').value = '';
     document.getElementById('empRate').value = '0';
     document.getElementById('empEmail').value = '';
     document.getElementById('empPhone').value = '';
@@ -49,12 +51,14 @@ function editEmployee(id) {
     if (!u) return;
     document.getElementById('editEmpId').value = u.id;
     document.getElementById('empModalTitle').textContent = 'Edit Employee';
-    document.getElementById('empName').value = u.display_name || '';
+    document.getElementById('empFirstName').value = u.first_name || '';
+    document.getElementById('empLastName').value = u.last_name || '';
     document.getElementById('empUsername').value = u.username || '';
     document.getElementById('empUsername').readOnly = true;
     document.getElementById('empPassword').value = '';
     document.getElementById('empPasswordGroup').style.display = 'none';
     document.getElementById('empRole').value = u.role || 'employee';
+    document.getElementById('empHomeCity').value = u.home_base_city || '';
     document.getElementById('empRate').value = u.hourly_rate || 0;
     document.getElementById('empEmail').value = u.email || '';
     document.getElementById('empPhone').value = u.phone || '';
@@ -66,8 +70,10 @@ function closeAddEmployee() { document.getElementById('addEmployeeModal').style.
 async function saveEmployee() {
     const id = document.getElementById('editEmpId').value;
     const data = {
-        display_name: document.getElementById('empName').value.trim(),
+        first_name: document.getElementById('empFirstName').value.trim(),
+        last_name: document.getElementById('empLastName').value.trim(),
         role: document.getElementById('empRole').value,
+        home_base_city: document.getElementById('empHomeCity').value.trim(),
         hourly_rate: parseFloat(document.getElementById('empRate').value) || 0,
         email: document.getElementById('empEmail').value.trim(),
         phone: document.getElementById('empPhone').value.trim(),
@@ -82,8 +88,7 @@ async function saveEmployee() {
     } else {
         data.username = document.getElementById('empUsername').value.trim();
         data.password = document.getElementById('empPassword').value;
-        if (!data.username || !data.password) return alert('Username and password are required');
-        if (!data.display_name) return alert('Display name is required');
+        if (!data.first_name) return alert('First name is required');
         const res = await fetch('/api/admin/users', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
         });
