@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Construction Management{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="LGHVAC CM">
+    <meta name="theme-color" content="#3B82F6">
 </head>
 <body class="{% if current_user %}has-sidebar{% endif %} {% block body_class %}{% endblock %}" {% if current_user %}data-role="{{ current_user.role }}"{% endif %}>
     {% if current_user %}
