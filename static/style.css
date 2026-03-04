@@ -3085,18 +3085,27 @@ tr[data-submittal-resubmit] .badge {
 
 /* ─── Print Styles ──────────────────────────────────────────── */
 @media print {
+    /* Hide everything by default */
     body, html { margin: 0 !important; padding: 0 !important; background: #fff !important; }
-    body * { display: none !important; }
-    .bid-summary-card, .bid-summary-card * { display: block !important; }
-    .bid-summary-card .cost-summary-grid { display: grid !important; }
-    .bid-summary-card .cost-row { display: flex !important; }
+    .sidebar, .page-header, .chat-widget, .calc-widget,
+    .notif-bell-wrapper, .notif-panel, #chatWidget,
+    .bid-form > *:not(:last-child),
+    .bid-section, .bid-row-2col, #emailModal,
+    #followupsSection, #awardSection,
+    script, style { display: none !important; }
+    /* Show the summary card and its parent chain */
+    .app-main, .app-main .container, .bid-form { display: block !important; margin: 0 !important; padding: 0 !important; }
     .bid-summary-card {
-        position: fixed; left: 0; top: 0;
+        display: block !important;
+        position: relative; left: 0; top: 0;
         width: 100%; max-width: 100%;
         border: none; margin: 0; padding: 20px 32px;
         box-shadow: none;
         font-size: 13px;
     }
+    .bid-summary-card * { display: block !important; }
+    .bid-summary-card .cost-summary-grid { display: grid !important; }
+    .bid-summary-card .cost-row { display: flex !important; }
     .bid-summary-card h3 { font-size: 18px; margin-bottom: 12px; }
     .cost-summary-grid { font-size: 13px; gap: 2px !important; }
     .cost-row { padding: 3px 0 !important; }
