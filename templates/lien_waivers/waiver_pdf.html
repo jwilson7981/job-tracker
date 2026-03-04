@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter;
+    margin: 0.75in 1in;
+}
+body {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 12px;
+    color: #000;
+    line-height: 1.5;
+}
+.title-block {
+    text-align: center;
+    margin-bottom: 20px;
+}
+.title-company {
+    font-size: 14px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+}
+.title-type {
+    font-size: 16px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-top: 2px solid #000;
+    border-bottom: 2px solid #000;
+    padding: 6px 0;
+    margin: 8px 0 20px;
+}
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 11px;
+}
+.info-table td {
+    padding: 3px 8px;
+    vertical-align: top;
+}
+.info-table .label {
+    font-weight: bold;
+    width: 200px;
+    white-space: nowrap;
+}
+.info-table .value {
+    border-bottom: 1px solid #333;
+    min-width: 200px;
+}
+.legal-body {
+    text-align: justify;
+    font-size: 11.5px;
+    line-height: 1.7;
+    margin: 24px 0;
+}
+.legal-body .blank {
+    border-bottom: 1px solid #000;
+    display: inline-block;
+    min-width: 180px;
+    text-align: center;
+    font-weight: bold;
+}
+.legal-body .blank-short {
+    border-bottom: 1px solid #000;
+    display: inline-block;
+    min-width: 100px;
+    text-align: center;
+    font-weight: bold;
+}
+.money {
+    font-weight: bold;
+}
+.signature-section {
+    margin-top: 40px;
+    page-break-inside: avoid;
+}
+.sig-line {
+    margin-top: 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+.sig-block {
+    width: 55%;
+}
+.sig-field {
+    border-bottom: 1px solid #000;
+    padding-bottom: 2px;
+    margin-bottom: 4px;
+    min-height: 20px;
+    font-size: 11px;
+}
+.sig-label {
+    font-size: 10px;
+    color: #333;
+}
+.notary-section {
+    margin-top: 40px;
+    border: 1px solid #999;
+    padding: 20px;
+    font-size: 11px;
+    line-height: 1.7;
+    page-break-inside: avoid;
+}
+.notary-section .notary-title {
+    text-align: center;
+    font-weight: bold;
+    font-size: 12px;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+}
+.notary-line {
+    border-bottom: 1px solid #000;
+    display: inline-block;
+    min-width: 150px;
+}
+.notary-sig-area {
+    margin-top: 30px;
+    display: flex;
+    justify-content: space-between;
+}
+.notary-sig-block {
+    width: 45%;
+}
+.seal-block {
+    border: 1px dashed #999;
+    width: 150px;
+    height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 10px;
+    margin-top: 10px;
+}
+</style>
+</head>
+<body>
+
+<!-- TITLE BLOCK -->
+<div class="title-block">
+    {% if waiver.title_company %}
+    <div class="title-company">{{ waiver.title_company }}</div>
+    {% endif %}
+    {% set type_labels = {
+        'Conditional Progress': 'CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT',
+        'Unconditional Progress': 'UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT',
+        'Conditional Final': 'CONDITIONAL WAIVER AND RELEASE ON FINAL PAYMENT',
+        'Unconditional Final': 'UNCONDITIONAL WAIVER AND RELEASE ON FINAL PAYMENT'
+    } %}
+    <div class="title-type">{{ type_labels.get(waiver.waiver_type, waiver.waiver_type) }}</div>
+</div>
+
+<!-- INFO BLOCK -->
+<table class="info-table">
+    <tr>
+        <td class="label">Date:</td>
+        <td class="value">{{ waiver.waiver_date }}</td>
+        <td class="label" style="text-align:right;">File No.:</td>
+        <td class="value">{{ waiver.file_number }}</td>
+    </tr>
+    <tr>
+        <td class="label">State:</td>
+        <td class="value">{{ waiver.state }}</td>
+        <td class="label" style="text-align:right;">County:</td>
+        <td class="value">{{ waiver.county }}</td>
+    </tr>
+    <tr>
+        <td colspan="4" style="padding-top:12px;"></td>
+    </tr>
+    <tr>
+        <td class="label">Original Contract Amount:</td>
+        <td class="value money">${{ "{:,.2f}".format(waiver.contract_amount or 0) }}</td>
+        <td></td><td></td>
+    </tr>
+    <tr>
+        <td class="label">Previous Payments Received:</td>
+        <td class="value money">${{ "{:,.2f}".format(waiver.previous_payments or 0) }}</td>
+        <td></td><td></td>
+    </tr>
+    <tr>
+        <td class="label">Current Payment Due:</td>
+        <td class="value money">${{ "{:,.2f}".format(waiver.current_payment or 0) }}</td>
+        <td></td><td></td>
+    </tr>
+    <tr>
+        <td class="label">Contract Balance:</td>
+        <td class="value money">${{ "{:,.2f}".format(waiver.contract_balance or 0) }}</td>
+        <td></td><td></td>
+    </tr>
+</table>
+
+<!-- LEGAL BODY -->
+<div class="legal-body">
+{% if waiver.waiver_type == 'Conditional Progress' %}
+    <p>Upon receipt of a check from <span class="blank">{{ waiver.against_company }}</span>
+    in the sum of <span class="blank-short">${{ "{:,.2f}".format(waiver.current_payment or 0) }}</span>
+    payable to <span class="blank">{{ waiver.claimant }}</span>
+    and when the check has been properly endorsed and has been paid by the bank upon which it is drawn,
+    this document shall become effective to release any mechanic's lien, stop notice, or bond right the
+    undersigned has on the job of <span class="blank">{{ waiver.against_company }}</span>
+    located at <span class="blank">{{ waiver.premises_description }}</span>
+    to the following extent:</p>
+
+    <p>This document covers a progress payment for all labor, services, equipment, or materials furnished
+    to the jobsite or to <span class="blank">{{ waiver.against_company }}</span>
+    through <span class="blank-short">{{ waiver.through_date }}</span>
+    only and does not cover any retention or items furnished after that date.</p>
+
+    <p>Before any recipient of this document relies on it, said party should verify evidence of payment
+    to the undersigned.</p>
+
+{% elif waiver.waiver_type == 'Unconditional Progress' %}
+    <p>The undersigned has been paid and has received a progress payment in the sum of
+    <span class="blank-short">${{ "{:,.2f}".format(waiver.current_payment or 0) }}</span>
+    for labor, services, equipment, or materials furnished to
+    <span class="blank">{{ waiver.against_company }}</span>
+    on the job of <span class="blank">{{ waiver.against_company }}</span>
+    located at <span class="blank">{{ waiver.premises_description }}</span>
+    and does hereby release any mechanic's lien, stop notice, or bond right that the undersigned
+    has on the above referenced job to the following extent:</p>
+
+    <p>This document covers a progress payment for all labor, services, equipment, or materials furnished
+    to the jobsite or to <span class="blank">{{ waiver.against_company }}</span>
+    through <span class="blank-short">{{ waiver.through_date }}</span>
+    only and does not cover any retention or items furnished after that date.</p>
+
+{% elif waiver.waiver_type == 'Conditional Final' %}
+    <p>Upon receipt of a check from <span class="blank">{{ waiver.against_company }}</span>
+    in the sum of <span class="blank-short">${{ "{:,.2f}".format(waiver.current_payment or 0) }}</span>
+    payable to <span class="blank">{{ waiver.claimant }}</span>
+    and when the check has been properly endorsed and has been paid by the bank upon which it is drawn,
+    this document shall become effective to release any mechanic's lien, stop notice, or bond right the
+    undersigned has on the job of <span class="blank">{{ waiver.against_company }}</span>
+    located at <span class="blank">{{ waiver.premises_description }}</span>.</p>
+
+    <p>This document covers the final payment for all labor, services, equipment, or materials furnished
+    to the jobsite or to <span class="blank">{{ waiver.against_company }}</span>.
+    The undersigned warrants that it has fully paid all of its obligations for labor, services, equipment,
+    and materials used to perform its work on the project.</p>
+
+    <p>Before any recipient of this document relies on it, said party should verify evidence of payment
+    to the undersigned.</p>
+
+{% elif waiver.waiver_type == 'Unconditional Final' %}
+    <p>The undersigned has been paid in full for all labor, services, equipment, or materials furnished to
+    <span class="blank">{{ waiver.against_company }}</span>
+    on the job of <span class="blank">{{ waiver.against_company }}</span>
+    located at <span class="blank">{{ waiver.premises_description }}</span>
+    and does hereby unconditionally waive and release any right to a mechanic's lien, stop notice,
+    or any right against a labor and material bond on the above referenced job.</p>
+
+    <p>The undersigned warrants that it has fully paid all of its obligations for labor, services, equipment,
+    and materials used to perform its work on the project.</p>
+{% endif %}
+</div>
+
+<!-- SIGNATURE BLOCK -->
+<div class="signature-section">
+    <div class="sig-line">
+        <div class="sig-block">
+            <div class="sig-field">{{ waiver.claimant }}</div>
+            <div class="sig-label">Individual / Corporate Name (Claimant)</div>
+        </div>
+    </div>
+
+    <div class="sig-line">
+        <div class="sig-block">
+            <div class="sig-field">&nbsp;</div>
+            <div class="sig-label">By (Signature)</div>
+        </div>
+    </div>
+
+    <div class="sig-line" style="margin-top:16px;">
+        <div class="sig-block" style="width:45%;">
+            <div class="sig-field">{{ waiver.signer_name }}</div>
+            <div class="sig-label">Print Name</div>
+        </div>
+        <div class="sig-block" style="width:35%;">
+            <div class="sig-field">{{ waiver.signer_title }}</div>
+            <div class="sig-label">Title</div>
+        </div>
+    </div>
+</div>
+
+<!-- NOTARY BLOCK -->
+<div class="notary-section">
+    <div class="notary-title">Notary Acknowledgment</div>
+
+    <p>State of <span class="notary-line">{{ waiver.state }}</span>
+    &nbsp;&nbsp; County of <span class="notary-line">{{ waiver.county }}</span></p>
+
+    <p>Subscribed and sworn to before me this _______ day of _________________________, 20_____.</p>
+
+    <div class="notary-sig-area">
+        <div class="notary-sig-block">
+            <div class="sig-field" style="margin-top:30px;">&nbsp;</div>
+            <div class="sig-label">Notary Public Signature</div>
+            <div style="margin-top:8px;">
+                <div class="sig-field">&nbsp;</div>
+                <div class="sig-label">Printed Name</div>
+            </div>
+            <div style="margin-top:8px;font-size:10px;">
+                My commission expires: _______________________
+            </div>
+        </div>
+        <div class="notary-sig-block" style="display:flex;align-items:center;justify-content:center;">
+            <div class="seal-block">[NOTARY SEAL]</div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

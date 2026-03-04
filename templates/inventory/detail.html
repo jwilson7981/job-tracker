@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Inventory Item - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 id="detailTitle">Inventory Item</h1>
+    <div>
+        <button class="btn btn-secondary" onclick="editCurrentItem()">Edit Item</button>
+        <a href="/inventory" class="btn btn-secondary">Back to Inventory</a>
+    </div>
+</div>
+
+<!-- Item Info Card -->
+<div class="card" id="itemInfoCard" style="margin-bottom:24px;padding:20px;">
+    <p class="loading">Loading...</p>
+</div>
+
+<!-- Adjustment Form -->
+<div class="card" style="margin-bottom:24px;padding:20px;">
+    <h2 style="margin-top:0;margin-bottom:16px;font-size:18px;">Stock Adjustment</h2>
+    <form onsubmit="submitAdjustment(event)" id="adjustForm">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="form-group">
+                <label class="form-label">Transaction Type</label>
+                <select id="adjType" class="form-select" required onchange="updateAdjLabel()">
+                    <option value="receive">Receive (add stock)</option>
+                    <option value="issue">Issue (remove for job)</option>
+                    <option value="return">Return (back to stock)</option>
+                    <option value="adjust">Adjust (+/-)</option>
+                    <option value="count">Physical Count (set qty)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label" id="adjQtyLabel">Quantity</label>
+                <input type="number" id="adjQty" class="form-input" step="any" required placeholder="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Job (optional)</label>
+                <select id="adjJob" class="form-select">
+                    <option value="">-- No Job --</option>
+                </select>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+                <label class="form-label">Reference (PO#, invoice, etc.)</label>
+                <input type="text" id="adjReference" class="form-input" placeholder="e.g. PO-2024-001">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <input type="text" id="adjNotes" class="form-input" placeholder="Optional notes">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:8px;">Submit Adjustment</button>
+    </form>
+</div>
+
+<!-- Transaction History -->
+<div style="margin-bottom:24px;">
+    <h2 style="margin-bottom:12px;font-size:18px;">Transaction History</h2>
+    <div class="module-table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Quantity</th>
+                    <th>Job</th>
+                    <th>User</th>
+                    <th>Reference</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody id="transactionsBody">
+                <tr><td colspan="7" class="loading">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Edit Item Modal (reused from list page pattern) -->
+<div id="itemModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="itemModalTitle">Edit Inventory Item</h2>
+            <button class="modal-close" onclick="document.getElementById('itemModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveItemEdit(event)" id="itemForm">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">SKU</label>
+                    <input type="text" id="itemSku" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <input type="text" id="itemCategory" class="form-input">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="itemDescription" class="form-input" required>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Unit</label>
+                    <select id="itemUnit" class="form-select">
+                        <option value="each">Each</option>
+                        <option value="ft">Feet</option>
+                        <option value="in">Inches</option>
+                        <option value="lb">Pounds</option>
+                        <option value="box">Box</option>
+                        <option value="roll">Roll</option>
+                        <option value="gallon">Gallon</option>
+                        <option value="ton">Ton</option>
+                        <option value="set">Set</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Reorder Point</label>
+                    <input type="number" id="itemReorder" class="form-input" step="any" min="0" value="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Location</label>
+                <input type="text" id="itemLocation" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="itemNotes" class="form-input" rows="3" style="resize:vertical;min-height:60px;font-family:inherit;"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('itemModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update Item</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>window.ITEM_ID = {{ item_id }};</script>
+<script src="/static/inventory.js"></script>
+{% endblock %}

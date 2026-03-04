@@ -14,7 +14,7 @@ async function loadPayroll() {
     const tbody = document.getElementById('payrollBody');
     if (!payrollUsers.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No employees.</td></tr>'; return; }
     tbody.innerHTML = payrollUsers.map(u => `<tr>
-        <td><a href="/payroll/employee/${u.id}" class="link">${u.display_name}</a></td>
+        <td><a href="/payroll/employee/${u.id}" class="link">${u.display_name}</a>${u.employee_number ? ' <span style="color:var(--gray-400);font-size:12px;">#'+u.employee_number+'</span>' : ''}</td>
         <td><span class="badge">${u.role.replace('_',' ')}</span></td>
         <td class="cell-computed">${fmt(u.hourly_rate)}/hr</td>
         <td class="cell-computed">${u.total_hours}h</td>
@@ -73,14 +73,12 @@ async function saveEmployee() {
     };
 
     if (id) {
-        // Update existing
         const res = await fetch('/api/admin/users/' + id, {
             method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
         });
         if (res.ok) { closeAddEmployee(); loadPayroll(); }
         else { const err = await res.json(); alert(err.error || 'Failed to update'); }
     } else {
-        // Create new
         data.username = document.getElementById('empUsername').value.trim();
         data.password = document.getElementById('empPassword').value;
         if (!data.username || !data.password) return alert('Username and password are required');
@@ -101,19 +99,38 @@ async function deleteEmployee(id) {
     else { const err = await res.json(); alert(err.error || 'Failed to delete'); }
 }
 
-// Employee detail
+// ─── Employee Detail Page ────────────────────────────────────
+let empEntries = [];
+let empJobs = [];
+
 if (window.EMPLOYEE_ID) {
+    initEmployeeDetail();
+}
+
+async function initEmployeeDetail() {
+    // Load jobs for dropdown
+    const jr = await fetch('/api/jobs/list');
+    empJobs = await jr.json();
+    const sel = document.getElementById('entryJob');
+    if (sel) {
+        empJobs.forEach(j => {
+            const o = document.createElement('option');
+            o.value = j.id;
+            o.textContent = j.name;
+            sel.appendChild(o);
+        });
+    }
     loadEmployeeDetail();
 }
 
 async function loadEmployeeDetail() {
     const res = await fetch(`/api/payroll/employee/${EMPLOYEE_ID}`);
-    const entries = await res.json();
+    empEntries = await res.json();
     const tbody = document.getElementById('entriesBody');
-    if (!entries.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No time entries.</td></tr>'; return; }
+    if (!empEntries.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No time entries. Click "+ Add Time Entry" to add one.</td></tr>'; return; }
 
     let totalHours = 0, totalPay = 0;
-    tbody.innerHTML = entries.map(e => {
+    tbody.innerHTML = empEntries.map(e => {
         const pay = (e.hours || 0) * (e.hourly_rate || 0);
         totalHours += e.hours || 0;
         totalPay += pay;
@@ -125,7 +142,11 @@ async function loadEmployeeDetail() {
             <td class="cell-computed" style="font-weight:700;">${fmt(pay)}</td>
             <td>${e.description || '-'}</td>
             <td>${e.approved ? '<span class="status-badge status-complete">Approved</span>' : '<span class="status-badge status-needs-bid">Pending</span>'}</td>
-            <td>${!e.approved ? `<button class="btn btn-small btn-primary" onclick="approveEntry(${e.id})">Approve</button>` : ''}</td>
+            <td style="white-space:nowrap;">
+                ${!e.approved ? `<button class="btn btn-small btn-primary" onclick="approveEntry(${e.id})">Approve</button>` : ''}
+                <button class="btn btn-small btn-secondary" onclick="editEntry(${e.id})">Edit</button>
+                <button class="btn btn-small btn-secondary" onclick="deleteTimeEntry(${e.id})" style="color:#EF4444;">Del</button>
+            </td>
         </tr>`;
     }).join('');
 
@@ -134,17 +155,94 @@ async function loadEmployeeDetail() {
         kpis.innerHTML = `
             <div class="kpi-card"><div class="kpi-value">${totalHours.toFixed(1)}h</div><div class="kpi-label">Total Hours</div></div>
             <div class="kpi-card"><div class="kpi-value">${fmt(totalPay)}</div><div class="kpi-label">Total Pay</div></div>
-            <div class="kpi-card"><div class="kpi-value">${entries.length}</div><div class="kpi-label">Entries</div></div>
+            <div class="kpi-card"><div class="kpi-value">${empEntries.length}</div><div class="kpi-label">Entries</div></div>
         `;
     }
 }
 
 async function approveEntry(id) {
     await fetch(`/api/time-entries/${id}/approve`, { method: 'POST' });
-    if (window.EMPLOYEE_ID) loadEmployeeDetail();
+    loadEmployeeDetail();
 }
 
-// Time entry page
+function showAddEntry() {
+    document.getElementById('editEntryId').value = '';
+    document.getElementById('entryModalTitle').textContent = 'Add Time Entry';
+    document.getElementById('entryDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('entryHours').value = '';
+    document.getElementById('entryRate').value = window.EMPLOYEE_RATE || 0;
+    document.getElementById('entryType').value = 'regular';
+    document.getElementById('entryDesc').value = '';
+    if (empJobs.length) document.getElementById('entryJob').value = empJobs[0].id;
+    document.getElementById('entryModal').style.display = 'flex';
+}
+
+function editEntry(id) {
+    const e = empEntries.find(x => x.id === id);
+    if (!e) return;
+    document.getElementById('editEntryId').value = e.id;
+    document.getElementById('entryModalTitle').textContent = 'Edit Time Entry';
+    document.getElementById('entryJob').value = e.job_id;
+    document.getElementById('entryDate').value = e.work_date || '';
+    document.getElementById('entryHours').value = e.hours || '';
+    document.getElementById('entryRate').value = e.hourly_rate || 0;
+    document.getElementById('entryType').value = e.entry_type || 'regular';
+    document.getElementById('entryDesc').value = e.description || '';
+    document.getElementById('entryModal').style.display = 'flex';
+}
+
+function closeEntryModal() { document.getElementById('entryModal').style.display = 'none'; }
+
+async function saveEntry() {
+    const id = document.getElementById('editEntryId').value;
+    const data = {
+        user_id: EMPLOYEE_ID,
+        job_id: document.getElementById('entryJob').value,
+        work_date: document.getElementById('entryDate').value,
+        hours: parseFloat(document.getElementById('entryHours').value) || 0,
+        hourly_rate: parseFloat(document.getElementById('entryRate').value) || 0,
+        entry_type: document.getElementById('entryType').value,
+        description: document.getElementById('entryDesc').value.trim(),
+    };
+    if (!data.job_id) return alert('Job is required');
+    if (!data.hours) return alert('Hours is required');
+    if (!data.work_date) return alert('Date is required');
+
+    const url = id ? `/api/payroll/entries/${id}` : '/api/payroll/entries';
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    if (res.ok) { closeEntryModal(); loadEmployeeDetail(); }
+    else { const err = await res.json(); alert(err.error || 'Failed to save'); }
+}
+
+async function deleteTimeEntry(id) {
+    if (!confirm('Delete this time entry?')) return;
+    const res = await fetch(`/api/payroll/entries/${id}`, { method: 'DELETE' });
+    if (res.ok) { loadEmployeeDetail(); }
+    else { const err = await res.json(); alert(err.error || 'Failed to delete'); }
+}
+
+// Edit hourly rate
+function showEditRate() { document.getElementById('rateModal').style.display = 'flex'; }
+function closeRateModal() { document.getElementById('rateModal').style.display = 'none'; }
+
+async function saveRate() {
+    const rate = parseFloat(document.getElementById('newRate').value) || 0;
+    const res = await fetch('/api/admin/users/' + EMPLOYEE_ID, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ hourly_rate: rate })
+    });
+    if (res.ok) {
+        window.EMPLOYEE_RATE = rate;
+        closeRateModal();
+        location.reload();
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to update rate');
+    }
+}
+
+// ─── Time Entry Page (self-service) ──────────────────────────
 if (document.getElementById('myEntriesBody')) {
     loadMyEntries();
 }

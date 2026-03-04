@@ -1,0 +1,518 @@
+{% extends "base.html" %}
+{% block title %}Lien Waivers - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Lien Waivers</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Lien Waivers','waiversBody','Lien_Waivers')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Lien Waivers','waiversBody','Lien_Waivers')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddWaiver()">+ New Waiver</button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="waiverSummary">
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total Waivers</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #9CA3AF;">
+        <div class="kpi-value" id="sumDraft">0</div>
+        <div class="kpi-label">Draft</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #F59E0B;">
+        <div class="kpi-value" id="sumSent">0</div>
+        <div class="kpi-label">Sent</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="sumExecuted">0</div>
+        <div class="kpi-label">Executed</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #3B82F6;">
+        <div class="kpi-value" id="sumAmount">$0.00</div>
+        <div class="kpi-label">Total Current Payments</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="loadWaivers()" style="max-width:240px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="loadWaivers()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Draft">Draft</option>
+        <option value="Sent">Sent</option>
+        <option value="Executed">Executed</option>
+    </select>
+    <select id="filterType" class="form-select" onchange="loadWaivers()" style="max-width:220px;">
+        <option value="">All Types</option>
+        <option value="Conditional Progress">Conditional Progress</option>
+        <option value="Unconditional Progress">Unconditional Progress</option>
+        <option value="Conditional Final">Conditional Final</option>
+        <option value="Unconditional Final">Unconditional Final</option>
+    </select>
+    <span id="waiverCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Waivers Table -->
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>#</th>
+                <th>Type</th>
+                <th>Against</th>
+                <th>Current Payment</th>
+                <th>Balance</th>
+                <th>Through Date</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="waiversBody">
+            <tr><td colspan="9" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Waiver Modal -->
+<div class="modal-overlay" id="waiverModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+            <h2 id="waiverModalTitle">New Lien Waiver</h2>
+            <button class="modal-close" onclick="document.getElementById('waiverModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveWaiver(event)" id="waiverForm">
+            <input type="hidden" id="waiverEditId" value="">
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Job *</label>
+                    <select id="waiverJob" class="form-select" required onchange="autoFillFromJob()"></select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Type *</label>
+                    <select id="waiverType" class="form-select" required>
+                        <option value="Conditional Progress">Conditional Progress</option>
+                        <option value="Unconditional Progress">Unconditional Progress</option>
+                        <option value="Conditional Final">Conditional Final</option>
+                        <option value="Unconditional Final">Unconditional Final</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Waiver Date</label>
+                    <input type="date" id="waiverDate" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Through Date (work furnished prior to)</label>
+                    <input type="date" id="waiverThrough" class="form-input">
+                </div>
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Claimant</label>
+                    <input type="text" id="waiverClaimant" class="form-input" value="LGHVAC Mechanical, LLC">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Against (Company/Owner)</label>
+                    <input type="text" id="waiverAgainst" class="form-input" placeholder="Owner or GC name">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Premises Description</label>
+                <input type="text" id="waiverPremises" class="form-input" placeholder="Project name / location">
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Title Company</label>
+                    <input type="text" id="waiverTitleCo" class="form-input" placeholder="e.g. Stewart Title">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">File No.</label>
+                    <input type="text" id="waiverFileNo" class="form-input" placeholder="File number">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">State / County</label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="waiverState" class="form-input" placeholder="State" style="width:50%;">
+                        <input type="text" id="waiverCounty" class="form-input" placeholder="County" style="width:50%;">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Original Contract Amount ($)</label>
+                    <input type="number" id="waiverContractAmt" class="form-input" step="0.01" min="0" value="0" onchange="calcBalance()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Previous Payments ($)</label>
+                    <input type="number" id="waiverPrevPay" class="form-input" step="0.01" min="0" value="0" onchange="calcBalance()">
+                </div>
+            </div>
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Current Payment ($)</label>
+                    <input type="number" id="waiverCurrentPay" class="form-input" step="0.01" min="0" value="0" onchange="calcBalance()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Contract Balance ($)</label>
+                    <input type="number" id="waiverBalance" class="form-input" step="0.01" value="0" readonly style="background:var(--gray-100);">
+                </div>
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Signer Name</label>
+                    <input type="text" id="waiverSigner" class="form-input" placeholder="Name of person signing">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Signer Title</label>
+                    <input type="text" id="waiverSignerTitle" class="form-input" placeholder="e.g. Office Manager">
+                </div>
+            </div>
+
+            <div class="form-group" id="waiverStatusGroup" style="display:none;">
+                <label class="form-label">Status</label>
+                <select id="waiverStatus" class="form-select">
+                    <option value="Draft">Draft</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Executed">Executed</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="waiverNotes" class="form-input" rows="2" placeholder="Additional notes..." style="resize:vertical;min-height:60px;"></textarea>
+            </div>
+
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('waiverModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Waiver</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View Detail Modal -->
+<div class="modal-overlay" id="waiverDetailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+            <h2 id="detailTitle">Waiver Details</h2>
+            <button class="modal-close" onclick="document.getElementById('waiverDetailModal').style.display='none'">&times;</button>
+        </div>
+        <div id="detailContent" style="padding:0 4px;"></div>
+        <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('waiverDetailModal').style.display='none'">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Signed Waiver Modal -->
+<div class="modal-overlay" id="uploadModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Upload Signed Waiver</h2>
+            <button class="modal-close" onclick="document.getElementById('uploadModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="uploadSigned(event)" id="uploadForm">
+            <input type="hidden" id="uploadWaiverId" value="">
+            <div class="form-group">
+                <label class="form-label">Signed / Notarized PDF</label>
+                <input type="file" id="uploadFile" class="form-input" accept=".pdf" required>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('uploadModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let allWaivers = [];
+let allJobs = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadJobs();
+    loadWaivers();
+});
+
+async function loadJobs() {
+    const res = await fetch('/api/jobs');
+    allJobs = await res.json();
+    const filterSel = document.getElementById('filterJob');
+    const formSel = document.getElementById('waiverJob');
+    allJobs.forEach(j => {
+        filterSel.innerHTML += `<option value="${j.id}">${j.name}</option>`;
+        formSel.innerHTML += `<option value="${j.id}">${j.name}</option>`;
+    });
+}
+
+async function loadWaivers() {
+    const params = new URLSearchParams();
+    const jid = document.getElementById('filterJob').value;
+    const st = document.getElementById('filterStatus').value;
+    const tp = document.getElementById('filterType').value;
+    if (jid) params.set('job_id', jid);
+    if (st) params.set('status', st);
+    if (tp) params.set('type', tp);
+
+    const res = await fetch('/api/lien-waivers?' + params.toString());
+    allWaivers = await res.json();
+    renderTable();
+    updateSummary();
+}
+
+function renderTable() {
+    const tbody = document.getElementById('waiversBody');
+    if (!allWaivers.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No lien waivers found. Click "+ New Waiver" to create one.</td></tr>';
+        document.getElementById('waiverCount').textContent = '';
+        return;
+    }
+    document.getElementById('waiverCount').textContent = allWaivers.length + ' waiver' + (allWaivers.length !== 1 ? 's' : '');
+    tbody.innerHTML = allWaivers.map(w => {
+        const statusClass = w.status === 'Draft' ? 'badge-gray' : w.status === 'Sent' ? 'badge-yellow' : 'badge-green';
+        const typeShort = w.waiver_type.replace('Conditional ', 'Cond. ').replace('Unconditional ', 'Uncond. ');
+        return `<tr>
+            <td>${w.job_name || ''}</td>
+            <td>${w.waiver_number}</td>
+            <td>${typeShort}</td>
+            <td>${w.against_company || '-'}</td>
+            <td>$${fmt(w.current_payment)}</td>
+            <td>$${fmt(w.contract_balance)}</td>
+            <td>${w.through_date || '-'}</td>
+            <td><span class="badge ${statusClass}">${w.status}</span></td>
+            <td>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-small" onclick="viewWaiver(${w.id})" title="View">View</button>
+                    <button class="btn btn-secondary btn-small" onclick="editWaiver(${w.id})" title="Edit">Edit</button>
+                    <button class="btn btn-secondary btn-small" onclick="generatePdf(${w.id})" title="Generate PDF">PDF</button>
+                    ${w.has_pdf ? `<a class="btn btn-secondary btn-small" href="/api/lien-waivers/${w.id}/pdf/${w.proposal_file}" target="_blank" title="View PDF">View</a>` : ''}
+                    <button class="btn btn-secondary btn-small" onclick="showUpload(${w.id})" title="Upload Signed">Upload</button>
+                    ${w.has_file ? `<a class="btn btn-secondary btn-small" href="/api/lien-waivers/${w.id}/file" target="_blank" title="View Signed">Signed</a>` : ''}
+                    ${w.status === 'Draft' ? `<button class="btn btn-secondary btn-small" onclick="deleteWaiver(${w.id})" title="Delete" style="color:var(--danger);">Del</button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function updateSummary() {
+    document.getElementById('sumTotal').textContent = allWaivers.length;
+    document.getElementById('sumDraft').textContent = allWaivers.filter(w => w.status === 'Draft').length;
+    document.getElementById('sumSent').textContent = allWaivers.filter(w => w.status === 'Sent').length;
+    document.getElementById('sumExecuted').textContent = allWaivers.filter(w => w.status === 'Executed').length;
+    const totalAmt = allWaivers.reduce((s, w) => s + (w.current_payment || 0), 0);
+    document.getElementById('sumAmount').textContent = '$' + fmt(totalAmt);
+}
+
+function fmt(n) {
+    return (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function calcBalance() {
+    const ca = parseFloat(document.getElementById('waiverContractAmt').value) || 0;
+    const pp = parseFloat(document.getElementById('waiverPrevPay').value) || 0;
+    const cp = parseFloat(document.getElementById('waiverCurrentPay').value) || 0;
+    document.getElementById('waiverBalance').value = (ca - pp - cp).toFixed(2);
+}
+
+function showAddWaiver() {
+    document.getElementById('waiverEditId').value = '';
+    document.getElementById('waiverModalTitle').textContent = 'New Lien Waiver';
+    document.getElementById('waiverForm').reset();
+    document.getElementById('waiverClaimant').value = 'LGHVAC Mechanical, LLC';
+    document.getElementById('waiverDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('waiverStatusGroup').style.display = 'none';
+    document.getElementById('waiverBalance').value = '0.00';
+    document.getElementById('waiverModal').style.display = 'flex';
+}
+
+async function autoFillFromJob() {
+    const jobId = document.getElementById('waiverJob').value;
+    if (!jobId) return;
+    // Fetch job details for auto-fill
+    try {
+        const res = await fetch('/api/jobs/' + jobId);
+        if (!res.ok) return;
+        const job = await res.json();
+        if (job.state) document.getElementById('waiverState').value = job.state;
+        document.getElementById('waiverPremises').value = job.name || '';
+
+        // Try to get contract value and customer
+        const cRes = await fetch('/api/contracts?job_id=' + jobId);
+        const contracts = await cRes.json();
+        const active = contracts.find(c => c.status === 'Active') || contracts[0];
+        if (active && active.value) {
+            document.getElementById('waiverContractAmt').value = active.value.toFixed(2);
+        }
+        if (active && active.contractor) {
+            document.getElementById('waiverAgainst').value = active.contractor;
+        }
+        calcBalance();
+    } catch(e) { /* ignore auto-fill errors */ }
+}
+
+async function editWaiver(id) {
+    const res = await fetch('/api/lien-waivers/' + id);
+    const w = await res.json();
+    document.getElementById('waiverEditId').value = w.id;
+    document.getElementById('waiverModalTitle').textContent = 'Edit Lien Waiver #' + w.waiver_number;
+    document.getElementById('waiverJob').value = w.job_id;
+    document.getElementById('waiverType').value = w.waiver_type;
+    document.getElementById('waiverDate').value = w.waiver_date || '';
+    document.getElementById('waiverThrough').value = w.through_date || '';
+    document.getElementById('waiverClaimant').value = w.claimant || 'LGHVAC Mechanical, LLC';
+    document.getElementById('waiverAgainst').value = w.against_company || '';
+    document.getElementById('waiverPremises').value = w.premises_description || '';
+    document.getElementById('waiverTitleCo').value = w.title_company || '';
+    document.getElementById('waiverFileNo').value = w.file_number || '';
+    document.getElementById('waiverState').value = w.state || '';
+    document.getElementById('waiverCounty').value = w.county || '';
+    document.getElementById('waiverContractAmt').value = (w.contract_amount || 0).toFixed(2);
+    document.getElementById('waiverPrevPay').value = (w.previous_payments || 0).toFixed(2);
+    document.getElementById('waiverCurrentPay').value = (w.current_payment || 0).toFixed(2);
+    document.getElementById('waiverBalance').value = (w.contract_balance || 0).toFixed(2);
+    document.getElementById('waiverSigner').value = w.signer_name || '';
+    document.getElementById('waiverSignerTitle').value = w.signer_title || '';
+    document.getElementById('waiverStatus').value = w.status;
+    document.getElementById('waiverNotes').value = w.notes || '';
+    document.getElementById('waiverStatusGroup').style.display = 'block';
+    document.getElementById('waiverModal').style.display = 'flex';
+}
+
+async function saveWaiver(e) {
+    e.preventDefault();
+    const editId = document.getElementById('waiverEditId').value;
+    const payload = {
+        job_id: parseInt(document.getElementById('waiverJob').value),
+        waiver_type: document.getElementById('waiverType').value,
+        waiver_date: document.getElementById('waiverDate').value,
+        through_date: document.getElementById('waiverThrough').value,
+        claimant: document.getElementById('waiverClaimant').value,
+        against_company: document.getElementById('waiverAgainst').value,
+        premises_description: document.getElementById('waiverPremises').value,
+        title_company: document.getElementById('waiverTitleCo').value,
+        file_number: document.getElementById('waiverFileNo').value,
+        state: document.getElementById('waiverState').value,
+        county: document.getElementById('waiverCounty').value,
+        contract_amount: parseFloat(document.getElementById('waiverContractAmt').value) || 0,
+        previous_payments: parseFloat(document.getElementById('waiverPrevPay').value) || 0,
+        current_payment: parseFloat(document.getElementById('waiverCurrentPay').value) || 0,
+        signer_name: document.getElementById('waiverSigner').value,
+        signer_title: document.getElementById('waiverSignerTitle').value,
+        notes: document.getElementById('waiverNotes').value,
+    };
+    if (editId) {
+        payload.status = document.getElementById('waiverStatus').value;
+    }
+
+    const url = editId ? '/api/lien-waivers/' + editId : '/api/lien-waivers';
+    const method = editId ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    if (res.ok) {
+        document.getElementById('waiverModal').style.display = 'none';
+        loadWaivers();
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Error saving waiver');
+    }
+}
+
+async function viewWaiver(id) {
+    const res = await fetch('/api/lien-waivers/' + id);
+    const w = await res.json();
+    document.getElementById('detailTitle').textContent = `Lien Waiver #${w.waiver_number} - ${w.job_name}`;
+    document.getElementById('detailContent').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div><strong>Type:</strong> ${w.waiver_type}</div>
+            <div><strong>Status:</strong> <span class="badge ${w.status === 'Draft' ? 'badge-gray' : w.status === 'Sent' ? 'badge-yellow' : 'badge-green'}">${w.status}</span></div>
+            <div><strong>Waiver Date:</strong> ${w.waiver_date || '-'}</div>
+            <div><strong>Through Date:</strong> ${w.through_date || '-'}</div>
+            <div><strong>Claimant:</strong> ${w.claimant || '-'}</div>
+            <div><strong>Against:</strong> ${w.against_company || '-'}</div>
+            <div><strong>Premises:</strong> ${w.premises_description || '-'}</div>
+            <div><strong>Title Company:</strong> ${w.title_company || '-'}</div>
+            <div><strong>File No.:</strong> ${w.file_number || '-'}</div>
+            <div><strong>State/County:</strong> ${w.state || '-'} / ${w.county || '-'}</div>
+        </div>
+        <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div><strong>Original Contract:</strong> $${fmt(w.contract_amount)}</div>
+            <div><strong>Previous Payments:</strong> $${fmt(w.previous_payments)}</div>
+            <div><strong>Current Payment:</strong> $${fmt(w.current_payment)}</div>
+            <div><strong>Contract Balance:</strong> $${fmt(w.contract_balance)}</div>
+        </div>
+        <hr style="margin:16px 0;border:none;border-top:1px solid var(--gray-200);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div><strong>Signer:</strong> ${w.signer_name || '-'}</div>
+            <div><strong>Title:</strong> ${w.signer_title || '-'}</div>
+        </div>
+        ${w.notes ? `<div style="margin-top:12px;"><strong>Notes:</strong> ${w.notes}</div>` : ''}
+        <div style="margin-top:16px;display:flex;gap:8px;">
+            ${w.has_pdf ? `<a class="btn btn-primary btn-small" href="/api/lien-waivers/${w.id}/pdf/${w.proposal_file}" target="_blank">View Generated PDF</a>` : ''}
+            ${w.has_file ? `<a class="btn btn-primary btn-small" href="/api/lien-waivers/${w.id}/file" target="_blank">View Signed Copy</a>` : ''}
+        </div>
+    `;
+    document.getElementById('waiverDetailModal').style.display = 'flex';
+}
+
+async function generatePdf(id) {
+    if (!confirm('Generate PDF for this lien waiver?')) return;
+    const res = await fetch('/api/lien-waivers/' + id + '/generate', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+        window.open(data.path, '_blank');
+        loadWaivers();
+    } else {
+        alert(data.error || 'Error generating PDF');
+    }
+}
+
+function showUpload(id) {
+    document.getElementById('uploadWaiverId').value = id;
+    document.getElementById('uploadForm').reset();
+    document.getElementById('uploadModal').style.display = 'flex';
+}
+
+async function uploadSigned(e) {
+    e.preventDefault();
+    const id = document.getElementById('uploadWaiverId').value;
+    const file = document.getElementById('uploadFile').files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/lien-waivers/' + id + '/upload', { method: 'POST', body: fd });
+    if (res.ok) {
+        document.getElementById('uploadModal').style.display = 'none';
+        loadWaivers();
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Upload failed');
+    }
+}
+
+async function deleteWaiver(id) {
+    if (!confirm('Delete this draft waiver? This cannot be undone.')) return;
+    const res = await fetch('/api/lien-waivers/' + id, { method: 'DELETE' });
+    if (res.ok) {
+        loadWaivers();
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Error deleting waiver');
+    }
+}
+</script>
+{% endblock %}

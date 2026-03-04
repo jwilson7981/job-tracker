@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Feedback & Requests - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Feedback & Requests</h1>
+    <button class="btn btn-primary" onclick="showSubmitFeedback()">+ Submit Feedback</button>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-grid" id="feedbackKpis">
+    <div class="kpi-card" style="border-left: 4px solid var(--blue-primary);">
+        <div class="kpi-value" id="kpiTotal">0</div>
+        <div class="kpi-label">Total</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #F59E0B;">
+        <div class="kpi-value" id="kpiOpen">0</div>
+        <div class="kpi-label">Open</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="kpiPlanned">0</div>
+        <div class="kpi-label">Planned</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="kpiComplete">0</div>
+        <div class="kpi-label">Complete</div>
+    </div>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterCategory" class="form-select" onchange="filterFeedback()" style="max-width:160px;">
+        <option value="">All Categories</option>
+        <option value="Bug">Bug</option>
+        <option value="Feature">Feature</option>
+        <option value="Improvement">Improvement</option>
+        <option value="Question">Question</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="filterFeedback()" style="max-width:160px;">
+        <option value="">All Statuses</option>
+        <option value="New">New</option>
+        <option value="Under Review">Under Review</option>
+        <option value="Planned">Planned</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Complete">Complete</option>
+        <option value="Wont Fix">Won't Fix</option>
+    </select>
+    <select id="filterPriority" class="form-select" onchange="filterFeedback()" style="max-width:140px;">
+        <option value="">All Priorities</option>
+        <option value="Low">Low</option>
+        <option value="Medium">Medium</option>
+        <option value="High">High</option>
+    </select>
+    <input type="text" id="filterSearch" class="form-input" placeholder="Search..." oninput="filterFeedback()" style="max-width:200px;">
+</div>
+
+<!-- Data Table -->
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Category</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Submitted By</th>
+                <th>Upvotes</th>
+                <th>Date</th>
+            </tr>
+        </thead>
+        <tbody id="feedbackBody">
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Submit Feedback Modal -->
+<div class="modal-overlay" id="fbModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="fbModalTitle">Submit Feedback</h2>
+            <button class="modal-close" onclick="document.getElementById('fbModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="submitFeedback(event)">
+            <input type="hidden" id="fbId" value="">
+            <div class="form-group">
+                <label class="form-label">Title *</label>
+                <input type="text" id="fbTitle" class="form-input" placeholder="Brief summary of your request" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea id="fbDesc" class="form-input" rows="4" placeholder="Detailed description of the bug, feature request, or question..."></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <select id="fbCategory" class="form-select">
+                        <option value="Feature">Feature</option>
+                        <option value="Bug">Bug</option>
+                        <option value="Improvement">Improvement</option>
+                        <option value="Question">Question</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select id="fbPriority" class="form-select">
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                        <option value="High">High</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('fbModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Submit</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Detail / Owner Response Modal -->
+<div class="modal-overlay" id="fbDetailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+            <h2 id="fbDetailTitle">Feedback Detail</h2>
+            <button class="modal-close" onclick="document.getElementById('fbDetailModal').style.display='none'">&times;</button>
+        </div>
+        <div id="fbDetailBody" style="padding:20px;"></div>
+    </div>
+</div>
+
+<script>window.USER_ROLE = '{{ current_user.role }}';</script>
+<script src="/static/feedback.js"></script>
+{% endblock %}

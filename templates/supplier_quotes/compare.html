@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Compare Supplier Quotes{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Compare Supplier Quotes</h1>
+    <a href="/supplier-quotes" class="btn btn-secondary">Back to Quotes</a>
+</div>
+
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <label class="form-label" style="margin:0;">Job:</label>
+    <select id="compareJob" class="form-select" onchange="loadComparison()" style="max-width:280px;">
+        <option value="">-- Select Job --</option>
+    </select>
+    <span id="compareCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<div id="compareEmpty" class="bid-section" style="text-align:center;padding:48px;color:var(--gray-400);">
+    Select a job above to compare supplier quotes.
+</div>
+
+<div id="compareContainer" style="display:none;">
+    <!-- Summary Cards -->
+    <div id="summaryCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:20px;"></div>
+
+    <!-- Comparison Table -->
+    <div class="module-table-wrapper" style="overflow-x:auto;">
+        <table class="data-table" id="compareTable">
+            <thead id="compareHead"></thead>
+            <tbody id="compareBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .compare-card {
+        background: var(--white, #fff);
+        border: 1px solid var(--gray-200, #e5e7eb);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .compare-card.is-baseline {
+        border-color: var(--green-400, #4ade80);
+        background: var(--green-50, #f0fdf4);
+    }
+    .compare-card h4 { margin: 0 0 8px; font-size: 15px; }
+    .compare-card .card-meta { font-size: 13px; color: var(--gray-500); }
+    .compare-card .card-total { font-size: 20px; font-weight: 700; margin-top: 8px; }
+    .lowest-price { background: var(--green-50, #f0fdf4); font-weight: 700; color: var(--green-700, #15803d); }
+    #compareTable th { font-size: 13px; white-space: nowrap; }
+    #compareTable td { font-size: 13px; }
+</style>
+
+<script>
+let compareJobs = [];
+let compareData = [];
+
+async function loadJobs() {
+    const res = await fetch('/api/projects');
+    compareJobs = await res.json();
+    const sel = document.getElementById('compareJob');
+    compareJobs.forEach(j => {
+        sel.appendChild(new Option(j.name, j.id));
+    });
+    // Check URL param
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('job_id')) {
+        sel.value = params.get('job_id');
+        loadComparison();
+    }
+}
+
+async function loadComparison() {
+    const jobId = document.getElementById('compareJob').value;
+    if (!jobId) {
+        document.getElementById('compareEmpty').style.display = '';
+        document.getElementById('compareContainer').style.display = 'none';
+        return;
+    }
+    const res = await fetch('/api/supplier-quotes/compare?job_id=' + jobId);
+    compareData = await res.json();
+    if (!compareData.length) {
+        document.getElementById('compareEmpty').style.display = '';
+        document.getElementById('compareEmpty').textContent = 'No quotes with status Received, Reviewing, or Selected found for this job.';
+        document.getElementById('compareContainer').style.display = 'none';
+        return;
+    }
+    document.getElementById('compareEmpty').style.display = 'none';
+    document.getElementById('compareContainer').style.display = '';
+    document.getElementById('compareCount').textContent = compareData.length + ' quotes to compare';
+    renderSummary();
+    renderComparison();
+}
+
+function fmt(n) {
+    return '$' + parseFloat(n || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function renderSummary() {
+    const container = document.getElementById('summaryCards');
+    container.innerHTML = compareData.map(q => {
+        const cls = q.is_baseline ? 'compare-card is-baseline' : 'compare-card';
+        const baseline = q.is_baseline ? ' <span style="font-size:11px;background:var(--green-200,#bbf7d0);padding:1px 6px;border-radius:8px;">BASELINE</span>' : '';
+        return `<div class="${cls}">
+            <h4>${q.supplier_name || 'Unknown'}${baseline}</h4>
+            <div class="card-meta">Quote #${q.quote_number || '-'}</div>
+            <div class="card-meta">Status: ${q.status}</div>
+            <div class="card-meta">Items: ${(q.items || []).length}</div>
+            <div class="card-total">${fmt(q.total || q.subtotal)}</div>
+            <div class="card-meta" style="margin-top:4px;">
+                <a href="/supplier-quotes/${q.id}" class="link">View Details</a>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderComparison() {
+    // Build a unified list of line items by description/SKU
+    const lineMap = new Map(); // key = description|sku => { description, sku, qty, suppliers: { qid: { unit_price, ext } } }
+
+    compareData.forEach(q => {
+        (q.items || []).forEach(item => {
+            const key = (item.description || '').trim().toLowerCase() + '|' + (item.sku || '').trim().toLowerCase();
+            if (!lineMap.has(key)) {
+                lineMap.set(key, {
+                    description: item.description || '',
+                    sku: item.sku || '',
+                    qty: item.quantity || 0,
+                    suppliers: {}
+                });
+            }
+            const entry = lineMap.get(key);
+            // Use max qty across suppliers
+            if ((item.quantity || 0) > entry.qty) entry.qty = item.quantity;
+            entry.suppliers[q.id] = {
+                unit_price: item.unit_price || 0,
+                extended_price: item.extended_price || 0
+            };
+        });
+    });
+
+    // Build table header
+    const thead = document.getElementById('compareHead');
+    let headerHTML = '<tr><th>Description</th><th>SKU</th><th>Qty</th>';
+    compareData.forEach(q => {
+        const baseline = q.is_baseline ? ' *' : '';
+        headerHTML += `<th style="text-align:right;">${q.supplier_name || 'Unknown'}${baseline}<br><small>Unit Price</small></th>`;
+        headerHTML += `<th style="text-align:right;">${q.supplier_name || 'Unknown'}${baseline}<br><small>Extended</small></th>`;
+    });
+    headerHTML += '</tr>';
+    thead.innerHTML = headerHTML;
+
+    // Build table body
+    const tbody = document.getElementById('compareBody');
+    const lines = Array.from(lineMap.values());
+    if (!lines.length) {
+        const colSpan = 3 + compareData.length * 2;
+        tbody.innerHTML = `<tr><td colspan="${colSpan}" class="empty-state">No line items to compare.</td></tr>`;
+        return;
+    }
+
+    let bodyHTML = '';
+    lines.forEach(line => {
+        bodyHTML += '<tr>';
+        bodyHTML += `<td>${line.description}</td>`;
+        bodyHTML += `<td>${line.sku}</td>`;
+        bodyHTML += `<td style="text-align:center;">${line.qty}</td>`;
+
+        // Find lowest unit price across suppliers for this line
+        let lowestPrice = Infinity;
+        compareData.forEach(q => {
+            const s = line.suppliers[q.id];
+            if (s && s.unit_price > 0 && s.unit_price < lowestPrice) {
+                lowestPrice = s.unit_price;
+            }
+        });
+
+        compareData.forEach(q => {
+            const s = line.suppliers[q.id];
+            if (s) {
+                const isLowest = s.unit_price > 0 && s.unit_price === lowestPrice && compareData.length > 1;
+                const cls = isLowest ? ' class="lowest-price"' : '';
+                bodyHTML += `<td style="text-align:right;"${cls}>${fmt(s.unit_price)}</td>`;
+                bodyHTML += `<td style="text-align:right;"${cls}>${fmt(s.extended_price)}</td>`;
+            } else {
+                bodyHTML += '<td style="text-align:right;color:var(--gray-400);">-</td>';
+                bodyHTML += '<td style="text-align:right;color:var(--gray-400);">-</td>';
+            }
+        });
+        bodyHTML += '</tr>';
+    });
+
+    // Totals row
+    bodyHTML += '<tr style="font-weight:700;border-top:2px solid var(--gray-300,#d1d5db);">';
+    bodyHTML += '<td colspan="3">TOTALS</td>';
+    compareData.forEach(q => {
+        bodyHTML += `<td style="text-align:right;">${fmt(q.subtotal)}</td>`;
+        bodyHTML += `<td style="text-align:right;">${fmt(q.total || q.subtotal)}</td>`;
+    });
+    bodyHTML += '</tr>';
+
+    tbody.innerHTML = bodyHTML;
+}
+
+document.addEventListener('DOMContentLoaded', loadJobs);
+</script>
+{% endblock %}

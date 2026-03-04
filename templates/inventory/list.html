@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Inventory - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Inventory</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Inventory','inventoryBody','Inventory')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Inventory','inventoryBody','Inventory')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddItem()">+ Add Item</button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="inventorySummary">
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total Items</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="sumInStock">0</div>
+        <div class="kpi-label">In Stock</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #EF4444;" id="sumLowCard">
+        <div class="kpi-value" id="sumLow">0</div>
+        <div class="kpi-label">Low Stock</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #9CA3AF;">
+        <div class="kpi-value" id="sumOutOfStock">0</div>
+        <div class="kpi-label">Out of Stock</div>
+    </div>
+</div>
+
+<!-- Filter Row -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:16px;">
+    <input type="text" id="searchInput" class="form-input" placeholder="Search SKU or description..." style="max-width:280px;" oninput="debounceLoad()">
+    <select id="filterCategory" class="form-select" onchange="loadInventory()" style="max-width:200px;">
+        <option value="">All Categories</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--gray-600);cursor:pointer;">
+        <input type="checkbox" id="filterLowStock" onchange="loadInventory()"> Low stock only
+    </label>
+    <span id="itemCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Inventory Table -->
+<div class="module-table-wrapper" style="margin-top:16px;">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>SKU</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th>On Hand</th>
+                <th>Unit</th>
+                <th>Location</th>
+                <th>Reorder Point</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="inventoryBody">
+            <tr><td colspan="9" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Item Modal -->
+<div id="itemModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="itemModalTitle">Add Inventory Item</h2>
+            <button class="modal-close" onclick="document.getElementById('itemModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveItem(event)" id="itemForm">
+            <input type="hidden" id="itemId" value="">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">SKU</label>
+                    <input type="text" id="itemSku" class="form-input" placeholder="e.g. PIPE-CU-1/2">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <input type="text" id="itemCategory" class="form-input" placeholder="e.g. Pipe, Fittings, Equipment" list="categoryList">
+                    <datalist id="categoryList"></datalist>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="itemDescription" class="form-input" required placeholder="e.g. 1/2 inch copper pipe Type L">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Quantity On Hand</label>
+                    <input type="number" id="itemQty" class="form-input" step="any" min="0" value="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Unit</label>
+                    <select id="itemUnit" class="form-select">
+                        <option value="each">Each</option>
+                        <option value="ft">Feet</option>
+                        <option value="in">Inches</option>
+                        <option value="lb">Pounds</option>
+                        <option value="box">Box</option>
+                        <option value="roll">Roll</option>
+                        <option value="gallon">Gallon</option>
+                        <option value="ton">Ton</option>
+                        <option value="set">Set</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Reorder Point</label>
+                    <input type="number" id="itemReorder" class="form-input" step="any" min="0" value="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Location</label>
+                <input type="text" id="itemLocation" class="form-input" value="Warehouse" placeholder="e.g. Warehouse, Truck #1, Job Site">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="itemNotes" class="form-input" rows="3" placeholder="Optional notes..." style="resize:vertical;min-height:60px;font-family:inherit;"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('itemModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Item</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/inventory.js"></script>
+{% endblock %}

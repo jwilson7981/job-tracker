@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Contracts - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Contracts</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Contracts','contractsBody','Contracts')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Contracts','contractsBody','Contracts')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddContract()">+ Add Contract</button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="contractSummary">
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total Contracts</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #9CA3AF;">
+        <div class="kpi-value" id="sumDraft">0</div>
+        <div class="kpi-label">Draft</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #3B82F6;">
+        <div class="kpi-value" id="sumActive">0</div>
+        <div class="kpi-label">Active</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="sumComplete">$0.00</div>
+        <div class="kpi-label">Complete</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #EF4444;">
+        <div class="kpi-value" id="sumTerminated">0</div>
+        <div class="kpi-label">Terminated</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="loadContracts()" style="max-width:240px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="loadContracts()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Draft">Draft</option>
+        <option value="Active">Active</option>
+        <option value="Complete">Complete</option>
+        <option value="Terminated">Terminated</option>
+    </select>
+    <select id="filterType" class="form-select" onchange="loadContracts()" style="max-width:180px;">
+        <option value="">All Types</option>
+        <option value="Prime">Prime</option>
+        <option value="Sub">Sub</option>
+        <option value="Vendor">Vendor</option>
+    </select>
+    <span id="contractCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Contracts Table -->
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Title</th>
+                <th>Contractor</th>
+                <th>Type</th>
+                <th>Value</th>
+                <th>Status</th>
+                <th>Date Added</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="contractsBody">
+            <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- AI Review Results Panel -->
+<div id="reviewPanel" style="display:none;margin-top:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <h2 style="margin:0;">AI Contract Review</h2>
+        <button class="btn btn-secondary btn-small" onclick="document.getElementById('reviewPanel').style.display='none'">Close</button>
+    </div>
+    <div id="reviewContent" class="card" style="padding:20px;background:var(--gray-50);border-radius:8px;"></div>
+</div>
+
+<!-- Add/Edit Contract Modal -->
+<div class="modal-overlay" id="contractModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="contractModalTitle">Add Contract</h2>
+            <button class="modal-close" onclick="document.getElementById('contractModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveContract(event)" id="contractForm">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="contractJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input type="text" id="contractTitle" class="form-input" required placeholder="Contract title">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Contractor</label>
+                <input type="text" id="contractContractor" class="form-input" placeholder="Contractor or vendor name">
+            </div>
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Type</label>
+                    <select id="contractType" class="form-select" required>
+                        <option value="Prime">Prime</option>
+                        <option value="Sub">Sub</option>
+                        <option value="Vendor">Vendor</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Value ($)</label>
+                    <input type="number" id="contractValue" class="form-input" step="0.01" min="0" placeholder="0.00">
+                </div>
+            </div>
+            <div class="form-group" id="contractStatusGroup" style="display:none;">
+                <label class="form-label">Status</label>
+                <select id="contractStatus" class="form-select">
+                    <option value="Draft">Draft</option>
+                    <option value="Active">Active</option>
+                    <option value="Complete">Complete</option>
+                    <option value="Terminated">Terminated</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="contractNotes" class="form-input" rows="3" placeholder="Additional notes..." style="resize:vertical;min-height:80px;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Contract File (PDF)</label>
+                <input type="file" id="contractFile" class="form-input" accept=".pdf">
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('contractModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Contract</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View Contract Detail Modal -->
+<div class="modal-overlay" id="contractDetailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;">
+        <div class="modal-header">
+            <h2 id="detailTitle">Contract Details</h2>
+            <button class="modal-close" onclick="document.getElementById('contractDetailModal').style.display='none'">&times;</button>
+        </div>
+        <div id="detailContent" style="padding:0 4px;">
+            <!-- Filled dynamically -->
+        </div>
+        <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('contractDetailModal').style.display='none'">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/contracts.js"></script>
+{% endblock %}

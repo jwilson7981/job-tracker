@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Supplier Quotes{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Supplier Quotes</h1>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Supplier Quotes','quotesBody','Supplier_Quotes')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Supplier Quotes','quotesBody','Supplier_Quotes')">PDF</button>
+        </div>
+        <a href="/supplier-quotes/compare" class="btn btn-secondary">Compare Quotes</a>
+        <button class="btn btn-primary" onclick="openNewQuoteModal()">+ New Quote Request</button>
+    </div>
+</div>
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <select id="jobFilter" class="form-select" onchange="filterQuotes()" style="max-width:220px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="statusFilter" class="form-select" onchange="filterQuotes()" style="max-width:160px;">
+        <option value="">All Statuses</option>
+        <option value="Requested">Requested</option>
+        <option value="Received">Received</option>
+        <option value="Reviewing">Reviewing</option>
+        <option value="Selected">Selected</option>
+        <option value="Rejected">Rejected</option>
+        <option value="Expired">Expired</option>
+    </select>
+    <input type="text" id="searchInput" class="form-input" placeholder="Search supplier..." oninput="filterQuotes()" style="max-width:240px;">
+    <span id="quoteCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th class="sortable" data-col="supplier_name">Supplier</th>
+            <th class="sortable" data-col="job_name">Job</th>
+            <th class="sortable" data-col="quote_number">Quote #</th>
+            <th class="sortable" data-col="quote_date">Date</th>
+            <th class="sortable" data-col="status">Status</th>
+            <th class="sortable" data-col="total">Total</th>
+            <th>Baseline</th>
+            <th class="sortable active-sort" data-col="updated_at">Updated</th>
+        </tr></thead>
+        <tbody id="quotesBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<!-- New Quote Modal -->
+<div id="newQuoteModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeNewQuoteModal()">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>New Quote Request</h3>
+            <button onclick="closeNewQuoteModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="display:grid;gap:12px;">
+                <div>
+                    <label class="form-label">Job *</label>
+                    <select id="newQuoteJob" class="form-select"><option value="">-- Select Job --</option></select>
+                </div>
+                <div>
+                    <label class="form-label">Supplier Name *</label>
+                    <input type="text" id="newQuoteSupplier" class="form-input" placeholder="e.g. Locke Supply">
+                </div>
+                <div>
+                    <label class="form-label">Quote Number</label>
+                    <input type="text" id="newQuoteNumber" class="form-input" placeholder="Optional">
+                </div>
+                <div>
+                    <label class="form-label">Quote Date</label>
+                    <input type="date" id="newQuoteDate" class="form-input">
+                </div>
+                <div>
+                    <label class="form-label">Expiration Date</label>
+                    <input type="date" id="newQuoteExpDate" class="form-input">
+                </div>
+                <div>
+                    <label class="form-label">Notes</label>
+                    <textarea id="newQuoteNotes" class="form-textarea" rows="3" placeholder="Additional notes..."></textarea>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeNewQuoteModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="createQuote()">Create Quote Request</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    th.sortable { cursor: pointer; user-select: none; position: relative; }
+    th.sortable:hover { color: var(--blue-primary); }
+    th.sortable::after { content: '\21C5'; font-size: 10px; margin-left: 4px; opacity: 0.3; }
+    th.sortable.sort-asc::after { content: '\2191'; opacity: 0.8; }
+    th.sortable.sort-desc::after { content: '\2193'; opacity: 0.8; }
+    .baseline-badge { background: var(--green-100, #dcfce7); color: var(--green-700, #15803d); padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+</style>
+<script>
+let allQuotes = [];
+let allJobs = [];
+let currentSort = { col: 'updated_at', dir: 'desc' };
+
+async function loadJobs() {
+    const res = await fetch('/api/projects');
+    allJobs = await res.json();
+    const jobFilter = document.getElementById('jobFilter');
+    const newQuoteJob = document.getElementById('newQuoteJob');
+    allJobs.forEach(j => {
+        const opt1 = new Option(j.name, j.id);
+        const opt2 = new Option(j.name, j.id);
+        jobFilter.appendChild(opt1);
+        newQuoteJob.appendChild(opt2);
+    });
+}
+
+async function loadQuotes() {
+    const res = await fetch('/api/supplier-quotes');
+    allQuotes = await res.json();
+    filterQuotes();
+}
+
+function getFiltered() {
+    const jobId = document.getElementById('jobFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    return allQuotes.filter(q => {
+        if (jobId && q.job_id != jobId) return false;
+        if (status && q.status !== status) return false;
+        if (search) {
+            const fields = [q.supplier_name, q.job_name, q.quote_number, q.notes].map(f => (f || '').toLowerCase());
+            if (!fields.some(f => f.includes(search))) return false;
+        }
+        return true;
+    });
+}
+
+function sortQuotes(quotes) {
+    const col = currentSort.col;
+    const dir = currentSort.dir === 'asc' ? 1 : -1;
+    return [...quotes].sort((a, b) => {
+        let va = a[col], vb = b[col];
+        if (col === 'total' || col === 'subtotal') {
+            return ((va || 0) - (vb || 0)) * dir;
+        }
+        va = (va || '').toString().toLowerCase();
+        vb = (vb || '').toString().toLowerCase();
+        return va < vb ? -dir : va > vb ? dir : 0;
+    });
+}
+
+function filterQuotes() {
+    const filtered = sortQuotes(getFiltered());
+    document.getElementById('quoteCount').textContent = `${filtered.length} of ${allQuotes.length} quotes`;
+    renderQuotes(filtered);
+}
+
+function renderQuotes(quotes) {
+    const tbody = document.getElementById('quotesBody');
+    if (!quotes.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No supplier quotes found.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = quotes.map(q => {
+        const statusClass = 'status-' + (q.status || 'requested').toLowerCase().replace(/ /g, '-');
+        const baseline = q.is_baseline ? '<span class="baseline-badge">Baseline</span>' : '<span style="color:var(--gray-400);font-size:13px;">-</span>';
+        const total = q.total ? '$' + parseFloat(q.total).toLocaleString('en-US', {minimumFractionDigits: 2}) : '-';
+        return `<tr onclick="window.location='/supplier-quotes/${q.id}'" style="cursor:pointer;">
+            <td><a href="/supplier-quotes/${q.id}" class="link">${q.supplier_name || 'Unknown'}</a></td>
+            <td>${q.job_name || '-'}</td>
+            <td>${q.quote_number || '-'}</td>
+            <td style="font-size:13px;color:var(--gray-500);">${q.quote_date || '-'}</td>
+            <td><span class="status-badge ${statusClass}">${q.status || 'Requested'}</span></td>
+            <td style="text-align:right;font-weight:600;">${total}</td>
+            <td style="text-align:center;">${baseline}</td>
+            <td style="font-size:13px;color:var(--gray-500);">${q.updated_at ? q.updated_at.split(' ')[0] : '-'}</td>
+        </tr>`;
+    }).join('');
+}
+
+// Sortable column headers
+document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (currentSort.col === col) {
+            currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort = { col, dir: 'asc' };
+        }
+        document.querySelectorAll('th.sortable').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+        th.classList.add(currentSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+        filterQuotes();
+    });
+});
+
+function openNewQuoteModal() {
+    document.getElementById('newQuoteModal').style.display = 'flex';
+    document.getElementById('newQuoteDate').value = new Date().toISOString().split('T')[0];
+}
+
+function closeNewQuoteModal() {
+    document.getElementById('newQuoteModal').style.display = 'none';
+}
+
+async function createQuote() {
+    const jobId = document.getElementById('newQuoteJob').value;
+    const supplier = document.getElementById('newQuoteSupplier').value.trim();
+    if (!jobId) return alert('Please select a job.');
+    if (!supplier) return alert('Please enter a supplier name.');
+    const body = {
+        job_id: parseInt(jobId),
+        supplier_name: supplier,
+        quote_number: document.getElementById('newQuoteNumber').value.trim(),
+        quote_date: document.getElementById('newQuoteDate').value,
+        expiration_date: document.getElementById('newQuoteExpDate').value,
+        notes: document.getElementById('newQuoteNotes').value.trim()
+    };
+    const res = await fetch('/api/supplier-quotes', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.ok) {
+        window.location = '/supplier-quotes/' + data.id;
+    } else {
+        alert(data.error || 'Failed to create quote request.');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadJobs();
+    await loadQuotes();
+});
+</script>
+{% endblock %}

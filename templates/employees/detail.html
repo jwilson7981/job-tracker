@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}{{ employee.display_name }} - Employee{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/employees" class="link" style="font-size:14px;">&larr; Back to Employees</a>
+        <h1 id="empDetailName">{{ employee.display_name }}</h1>
+        <div style="font-size:13px;color:var(--gray-500);" id="empDetailSubtitle">
+            {{ employee.role|replace('_',' ')|title }}
+        </div>
+    </div>
+    <div style="display:flex;gap:8px;">
+        <a href="/payroll/employee/{{ employee.id }}" class="btn btn-secondary">View Payroll</a>
+        <button class="btn btn-secondary" onclick="editEmployeeDetail()">Edit</button>
+        <button class="btn btn-secondary" onclick="showStatusChange()">Change Status</button>
+    </div>
+</div>
+
+<div class="kpi-grid" id="empKpis"></div>
+
+<!-- Info Cards -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;" id="infoCards">
+    <div class="loading">Loading employee details...</div>
+</div>
+
+<!-- Recent Time Entries -->
+<h3 style="margin:0 0 12px;">Recent Time Entries</h3>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>Date</th><th>Job</th><th>Hours</th><th>Rate</th><th>Total</th><th>Description</th>
+        </tr></thead>
+        <tbody id="recentEntriesBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<!-- Edit Employee Modal -->
+<div id="empEditModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeEditModal()">
+    <div class="modal-box" style="max-width:700px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h3>Edit Employee</h3>
+            <button onclick="closeEditModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Basic Info</h4>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+                <div class="bid-field"><label class="form-label">Display Name *</label>
+                    <input type="text" id="editName" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Role</label>
+                    <select id="editRole" class="form-select">
+                        <option value="employee">Employee</option>
+                        <option value="warehouse">Warehouse</option>
+                        <option value="project_manager">Project Manager</option>
+                        <option value="admin">Admin</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Employee #</label>
+                    <input type="text" id="editNumber" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Email</label>
+                    <input type="email" id="editEmail" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Phone</label>
+                    <input type="text" id="editPhone" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Hire Date</label>
+                    <input type="date" id="editHireDate" class="form-input"></div>
+            </div>
+
+            <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Personal</h4>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+                <div class="bid-field"><label class="form-label">Date of Birth</label>
+                    <input type="date" id="editDOB" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">SSN (leave blank to keep)</label>
+                    <input type="password" id="editSSN" class="form-input" placeholder="###-##-####" autocomplete="off"></div>
+                <div class="bid-field"><label class="form-label">Shirt Size</label>
+                    <select id="editShirtSize" class="form-select">
+                        <option value="">--</option>
+                        <option value="S">S</option>
+                        <option value="M">M</option>
+                        <option value="L">L</option>
+                        <option value="XL">XL</option>
+                        <option value="2XL">2XL</option>
+                        <option value="3XL">3XL</option>
+                    </select></div>
+            </div>
+
+            <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Address</h4>
+            <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:4px;">
+                <div class="bid-field"><label class="form-label">Street</label>
+                    <input type="text" id="editStreet" class="form-input"></div>
+            </div>
+            <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:20px;">
+                <div class="bid-field"><label class="form-label">City</label>
+                    <input type="text" id="editCity" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">State</label>
+                    <input type="text" id="editState" class="form-input" maxlength="2"></div>
+                <div class="bid-field"><label class="form-label">ZIP</label>
+                    <input type="text" id="editZip" class="form-input" maxlength="10"></div>
+            </div>
+
+            <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Pay</h4>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+                <div class="bid-field"><label class="form-label">Hourly Rate ($)</label>
+                    <input type="number" id="editRate" class="form-input" step="0.01" min="0"></div>
+            </div>
+
+            <h4 style="margin:0 0 10px;font-size:14px;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;">Emergency Contact</h4>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+                <div class="bid-field"><label class="form-label">Name</label>
+                    <input type="text" id="editECName" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Phone</label>
+                    <input type="text" id="editECPhone" class="form-input"></div>
+                <div class="bid-field"><label class="form-label">Relationship</label>
+                    <input type="text" id="editECRelation" class="form-input"></div>
+            </div>
+
+            <div class="bid-field"><label class="form-label">Notes</label>
+                <textarea id="editNotes" class="form-input" rows="2"></textarea></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEmployeeEdit()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Status Change Modal -->
+<div id="statusModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeStatusModal()">
+    <div class="modal-box" style="max-width:400px;">
+        <div class="modal-header">
+            <h3>Change Employment Status</h3>
+            <button onclick="closeStatusModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin:0 0 12px;color:var(--gray-500);font-size:13px;">Current status: <strong id="currentStatusText"></strong></p>
+            <div class="bid-field"><label class="form-label">New Status</label>
+                <select id="newStatus" class="form-select">
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="Terminated">Terminated</option>
+                </select></div>
+            <p id="statusWarning" style="margin:8px 0 0;font-size:13px;color:#D97706;display:none;"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeStatusModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveStatusChange()">Update Status</button>
+        </div>
+    </div>
+</div>
+
+<script>
+window.EMPLOYEE_ID = {{ employee.id }};
+window.USER_ROLE = '{{ current_user.role }}';
+</script>
+<script src="/static/employees.js"></script>
+{% endblock %}

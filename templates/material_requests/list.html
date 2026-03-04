@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% block title %}Material Requests{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Material Requests</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Material Requests','requestsBody','Material_Requests')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Material Requests','requestsBody','Material_Requests')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showNewRequest()">+ New Request</button>
+    </div>
+</div>
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <select id="jobFilter" class="form-select" onchange="loadRequests()" style="max-width:200px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="statusFilter" class="form-select" onchange="loadRequests()" style="max-width:160px;">
+        <option value="">All Statuses</option>
+        <option value="Pending">Pending</option>
+        <option value="Approved">Approved</option>
+        <option value="Fulfilled">Fulfilled</option>
+        <option value="Partial">Partial</option>
+        <option value="Rejected">Rejected</option>
+    </select>
+    <span id="reqCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th>ID</th><th>Job</th><th>Phase</th><th>Requested By</th><th>Priority</th><th>Needed By</th><th>Items</th><th>Status</th><th>Created</th><th></th>
+        </tr></thead>
+        <tbody id="requestsBody"><tr><td colspan="10" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<!-- New Request Modal -->
+<div id="newRequestModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeNewRequest()">
+    <div class="modal-box" style="max-width:900px;">
+        <div class="modal-header">
+            <h3>New Material Request</h3>
+            <button onclick="closeNewRequest()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+                <div class="bid-field"><label class="form-label">Job *</label>
+                    <select id="reqJob" class="form-select" onchange="loadImportGrid()"></select></div>
+                <div class="bid-field"><label class="form-label">Phase</label>
+                    <select id="reqPhase" class="form-select" onchange="loadImportGrid()">
+                        <option value="">All Phases</option>
+                        <option value="Rough-In">Rough-In</option>
+                        <option value="Trim Out">Trim Out</option>
+                        <option value="Equipment">Equipment</option>
+                        <option value="Startup">Startup</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Priority</label>
+                    <select id="reqPriority" class="form-select">
+                        <option value="Low">Low</option><option value="Normal" selected>Normal</option>
+                        <option value="High">High</option><option value="Urgent">Urgent</option>
+                    </select></div>
+                <div class="bid-field"><label class="form-label">Needed By</label>
+                    <input type="date" id="reqNeededBy" class="form-input"></div>
+            </div>
+            <div class="bid-field" style="margin-bottom:16px;"><label class="form-label">Notes</label>
+                <input type="text" id="reqNotes" class="form-input"></div>
+
+            <!-- Import Grid -->
+            <div id="importSection" style="display:none;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <h4 style="margin:0;">Import from Material List</h4>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-secondary btn-small" onclick="selectAllImport()">Select All</button>
+                        <button class="btn btn-secondary btn-small" onclick="selectInStockOnly()">In Stock Only</button>
+                        <button class="btn btn-secondary btn-small" onclick="deselectAllImport()">Deselect All</button>
+                    </div>
+                </div>
+                <div style="max-height:300px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
+                    <table class="data-table" style="margin:0;">
+                        <thead style="position:sticky;top:0;z-index:1;"><tr>
+                            <th style="width:36px;"><input type="checkbox" id="importCheckAll" onchange="toggleAllImport(this.checked)"></th>
+                            <th>SKU</th><th>Description</th><th>Needed</th><th>Stock</th><th>Status</th><th>Qty</th><th>Order?</th>
+                        </tr></thead>
+                        <tbody id="importBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="noItemsMsg" style="display:none;padding:16px;text-align:center;color:var(--gray-500);font-size:13px;">
+                No line items found for this job. Use manual entry below.
+            </div>
+
+            <!-- Manual Items -->
+            <h4 style="margin-top:16px;">Manual Items</h4>
+            <table class="data-table" style="margin-top:8px;">
+                <thead><tr><th>SKU</th><th>Description</th><th>Qty</th><th>Unit</th><th></th></tr></thead>
+                <tbody id="reqItemsBody"></tbody>
+            </table>
+            <button class="btn btn-secondary btn-small" style="margin-top:8px;" onclick="addRequestItem()">+ Add Manual Item</button>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeNewRequest()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitRequest()">Submit Request</button>
+        </div>
+    </div>
+</div>
+
+<!-- Detail Modal -->
+<div id="detailModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeDetail()">
+    <div class="modal-box" style="max-width:800px;">
+        <div class="modal-header">
+            <h3 id="detailTitle">Material Request</h3>
+            <button onclick="closeDetail()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body" id="detailBody"></div>
+        <div class="modal-footer" id="detailFooter"></div>
+    </div>
+</div>
+
+<script>
+let allRequests = [];
+let importItems = [];
+const userRole = document.body.dataset.role || 'employee';
+
+async function loadJobs() {
+    const res = await fetch('/api/projects');
+    const jobs = await res.json();
+    const jobFilter = document.getElementById('jobFilter');
+    const reqJob = document.getElementById('reqJob');
+    jobs.forEach(j => {
+        const o1 = document.createElement('option'); o1.value = j.id; o1.textContent = j.name; jobFilter.appendChild(o1);
+        const o2 = document.createElement('option'); o2.value = j.id; o2.textContent = j.name; reqJob.appendChild(o2);
+    });
+}
+
+async function loadRequests() {
+    const job = document.getElementById('jobFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    let url = '/api/material-requests?';
+    if (job) url += `job_id=${job}&`;
+    if (status) url += `status=${status}&`;
+    const res = await fetch(url);
+    allRequests = await res.json();
+    document.getElementById('reqCount').textContent = `${allRequests.length} requests`;
+    const tbody = document.getElementById('requestsBody');
+    if (!allRequests.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No material requests.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = allRequests.map(r => {
+        const prClass = r.priority === 'Urgent' ? 'color:var(--red);font-weight:700;' : r.priority === 'High' ? 'color:orange;font-weight:600;' : '';
+        const statusCls = 'status-' + (r.status||'pending').toLowerCase().replace(/ /g, '-');
+        return `<tr style="cursor:pointer;" onclick="showDetail(${r.id})">
+            <td>#${r.id}</td><td>${r.job_name}</td><td>${r.phase || '-'}</td><td>${r.requester_name}</td>
+            <td style="${prClass}">${r.priority}</td><td>${r.needed_by || '-'}</td>
+            <td style="text-align:center;">-</td>
+            <td><span class="status-badge ${statusCls}">${r.status}</span></td>
+            <td style="font-size:13px;">${r.created_at || ''}</td>
+            <td onclick="event.stopPropagation();">
+                ${r.status === 'Pending' && ['owner','admin','project_manager'].includes(userRole) ?
+                    `<button class="btn btn-secondary btn-small" onclick="approveRequest(${r.id})">Approve</button>` : ''}
+                ${r.status === 'Approved' && ['owner','admin','project_manager','warehouse'].includes(userRole) ?
+                    `<button class="btn btn-secondary btn-small" onclick="fulfillRequest(${r.id})">Fulfill</button>` : ''}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+// ─── New Request Modal ────────────────────────────────
+
+function showNewRequest() {
+    document.getElementById('newRequestModal').style.display = 'flex';
+    document.getElementById('importSection').style.display = 'none';
+    document.getElementById('noItemsMsg').style.display = 'none';
+    importItems = [];
+    loadImportGrid();
+}
+function closeNewRequest() {
+    document.getElementById('newRequestModal').style.display = 'none';
+    document.getElementById('reqItemsBody').innerHTML = '';
+    document.getElementById('importBody').innerHTML = '';
+    document.getElementById('reqPhase').value = '';
+    importItems = [];
+}
+
+async function loadImportGrid() {
+    const jobId = document.getElementById('reqJob').value;
+    const phase = document.getElementById('reqPhase').value;
+    const importSection = document.getElementById('importSection');
+    const noItemsMsg = document.getElementById('noItemsMsg');
+    const importBody = document.getElementById('importBody');
+    if (!jobId) {
+        importSection.style.display = 'none';
+        noItemsMsg.style.display = 'none';
+        importItems = [];
+        return;
+    }
+    let url = `/api/jobs/${jobId}/line-items-for-request`;
+    if (phase) url += `?phase=${encodeURIComponent(phase)}`;
+    const res = await fetch(url);
+    importItems = await res.json();
+    if (!importItems.length) {
+        importSection.style.display = 'none';
+        noItemsMsg.style.display = 'block';
+        return;
+    }
+    noItemsMsg.style.display = 'none';
+    importSection.style.display = 'block';
+    importBody.innerHTML = importItems.map((item, idx) => {
+        const inStock = item.in_stock;
+        const statusBadge = inStock
+            ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">In Stock</span>'
+            : '<span style="background:#fef2f2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">Order Needed</span>';
+        const preChecked = phase ? item.has_phase_shipment : (item.qty_still_needed > 0);
+        const orderChecked = !inStock;
+        return `<tr>
+            <td style="text-align:center;"><input type="checkbox" class="import-check" data-idx="${idx}" ${preChecked ? 'checked' : ''}></td>
+            <td style="font-size:13px;font-family:monospace;">${item.sku || '-'}</td>
+            <td style="font-size:13px;">${item.description}</td>
+            <td style="text-align:center;">${item.qty_still_needed}</td>
+            <td style="text-align:center;">${item.stock_on_hand}</td>
+            <td style="text-align:center;">${statusBadge}</td>
+            <td><input type="number" class="form-input import-qty" data-idx="${idx}" value="${item.qty_still_needed}" min="0" step="0.5" style="width:70px;"></td>
+            <td style="text-align:center;"><input type="checkbox" class="import-order" data-idx="${idx}" ${orderChecked ? 'checked' : ''} title="Mark as Order Needed"></td>
+        </tr>`;
+    }).join('');
+    document.getElementById('importCheckAll').checked = false;
+}
+
+function toggleAllImport(checked) {
+    document.querySelectorAll('.import-check').forEach(cb => cb.checked = checked);
+}
+function selectAllImport() {
+    document.querySelectorAll('.import-check').forEach(cb => cb.checked = true);
+    document.getElementById('importCheckAll').checked = true;
+}
+function deselectAllImport() {
+    document.querySelectorAll('.import-check').forEach(cb => cb.checked = false);
+    document.getElementById('importCheckAll').checked = false;
+}
+function selectInStockOnly() {
+    document.querySelectorAll('.import-check').forEach(cb => {
+        const idx = parseInt(cb.dataset.idx);
+        cb.checked = importItems[idx] && importItems[idx].in_stock;
+    });
+}
+
+// ─── Manual Items ────────────────────────────────────
+
+let itemIdx = 0;
+function addRequestItem() {
+    const row = `<tr id="ri${itemIdx}">
+        <td><input type="text" class="form-input ri-sku" style="width:100px;"></td>
+        <td><input type="text" class="form-input ri-desc" style="width:200px;"></td>
+        <td><input type="number" class="form-input ri-qty" style="width:80px;" value="1" min="0" step="0.5"></td>
+        <td><select class="form-select ri-unit"><option>each</option><option>ft</option><option>roll</option><option>box</option><option>bag</option></select></td>
+        <td><button class="btn btn-secondary btn-small" onclick="document.getElementById('ri${itemIdx}').remove()" style="color:red;">&times;</button></td>
+    </tr>`;
+    document.getElementById('reqItemsBody').insertAdjacentHTML('beforeend', row);
+    itemIdx++;
+}
+
+// ─── Submit ──────────────────────────────────────────
+
+async function submitRequest() {
+    const items = [];
+    // Gather checked import items
+    document.querySelectorAll('.import-check:checked').forEach(cb => {
+        const idx = parseInt(cb.dataset.idx);
+        const item = importItems[idx];
+        if (!item) return;
+        const qtyInput = document.querySelector(`.import-qty[data-idx="${idx}"]`);
+        const orderCb = document.querySelector(`.import-order[data-idx="${idx}"]`);
+        const qty = parseFloat(qtyInput?.value) || 0;
+        if (qty <= 0) return;
+        items.push({
+            sku: item.sku,
+            description: item.description,
+            quantity_requested: qty,
+            unit: 'each',
+            line_item_id: item.line_item_id,
+            order_needed: orderCb?.checked ? 1 : 0,
+            inventory_item_id: item.inventory_item_id
+        });
+    });
+    // Gather manual items
+    document.querySelectorAll('#reqItemsBody tr').forEach(row => {
+        items.push({
+            sku: row.querySelector('.ri-sku').value,
+            description: row.querySelector('.ri-desc').value,
+            quantity_requested: parseFloat(row.querySelector('.ri-qty').value) || 0,
+            unit: row.querySelector('.ri-unit').value
+        });
+    });
+    if (!items.length) return alert('Add at least one item');
+    const data = {
+        job_id: document.getElementById('reqJob').value,
+        phase: document.getElementById('reqPhase').value,
+        priority: document.getElementById('reqPriority').value,
+        needed_by: document.getElementById('reqNeededBy').value,
+        notes: document.getElementById('reqNotes').value,
+        items
+    };
+    if (!data.job_id) return alert('Select a job');
+    const res = await fetch('/api/material-requests', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    if (res.ok) { closeNewRequest(); loadRequests(); }
+}
+
+// ─── Detail Modal ────────────────────────────────────
+
+async function showDetail(rid) {
+    const res = await fetch(`/api/material-requests/${rid}`);
+    const r = await res.json();
+    document.getElementById('detailTitle').textContent = `Material Request #${rid}`;
+    let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
+        <div><strong>Job:</strong> ${r.job_name}</div><div><strong>Requester:</strong> ${r.requester_name}</div>
+        <div><strong>Priority:</strong> ${r.priority}</div><div><strong>Status:</strong> ${r.status}</div>
+        <div><strong>Needed By:</strong> ${r.needed_by || '-'}</div><div><strong>Phase:</strong> ${r.phase || '-'}</div>
+        <div style="grid-column:1/-1;"><strong>Notes:</strong> ${r.notes || '-'}</div>
+    </div><h4>Items</h4><table class="data-table" style="margin-top:8px;">
+    <thead><tr><th>SKU</th><th>Description</th><th>Requested</th><th>Approved</th><th>Fulfilled</th><th>Unit</th><th>Stock</th><th>Status</th></tr></thead>
+    <tbody>${(r.items||[]).map(i => {
+        const stockVal = i.stock_on_hand != null ? i.stock_on_hand : '-';
+        const statusLabel = i.order_needed
+            ? '<span style="background:#fef2f2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">Order Needed</span>'
+            : '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">From Stock</span>';
+        return `<tr><td style="font-family:monospace;">${i.sku||'-'}</td><td>${i.description}</td>
+        <td>${i.quantity_requested}</td><td>${i.quantity_approved||'-'}</td><td>${i.quantity_fulfilled||'-'}</td>
+        <td>${i.unit}</td><td style="text-align:center;">${stockVal}</td><td style="text-align:center;">${statusLabel}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    document.getElementById('detailBody').innerHTML = html;
+    document.getElementById('detailFooter').innerHTML = `<button class="btn btn-secondary" onclick="closeDetail()">Close</button>`;
+    document.getElementById('detailModal').style.display = 'flex';
+}
+function closeDetail() { document.getElementById('detailModal').style.display = 'none'; }
+
+async function approveRequest(rid) {
+    if (!confirm('Approve this material request?')) return;
+    const res = await fetch(`/api/material-requests/${rid}`);
+    const r = await res.json();
+    const items = (r.items||[]).map(i => ({id: i.id, quantity_approved: i.quantity_requested}));
+    await fetch(`/api/material-requests/${rid}/approve`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({items})
+    });
+    loadRequests();
+}
+
+async function fulfillRequest(rid) {
+    if (!confirm('Mark as fulfilled?')) return;
+    const res = await fetch(`/api/material-requests/${rid}`);
+    const r = await res.json();
+    const items = (r.items||[]).map(i => ({id: i.id, quantity_fulfilled: i.quantity_approved || i.quantity_requested, quantity_requested: i.quantity_requested, inventory_item_id: i.inventory_item_id}));
+    await fetch(`/api/material-requests/${rid}/fulfill`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({items})
+    });
+    loadRequests();
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadJobs(); loadRequests(); });
+</script>
+{% endblock %}

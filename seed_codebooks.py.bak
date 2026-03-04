@@ -1,0 +1,547 @@
+"""Seed detailed code book sections (depth=1) under existing chapter-level entries."""
+
+
+def seed_detailed_sections(conn):
+    count = conn.execute("SELECT COUNT(*) FROM code_sections WHERE depth > 0").fetchone()[0]
+    if count > 0:
+        return
+
+    books = conn.execute("SELECT id, code FROM code_books").fetchall()
+    book_map = {row[1]: row[0] for row in books}
+
+    for code, func in [
+        ('IMC', _seed_imc), ('IFGC', _seed_ifgc), ('IECC', _seed_iecc),
+        ('IBC', _seed_ibc), ('IRC', _seed_irc), ('IPC', _seed_ipc),
+        ('NEC', _seed_nec), ('OSHA', _seed_osha),
+    ]:
+        bid = book_map.get(code)
+        if bid:
+            func(conn, bid)
+
+
+def _ch(conn, book_id, num):
+    row = conn.execute(
+        "SELECT id FROM code_sections WHERE book_id=? AND section_number=? AND depth=0",
+        (book_id, num)).fetchone()
+    return row[0] if row else None
+
+
+def _ins(conn, book_id, parent_id, sections):
+    for i, (num, title, content) in enumerate(sections):
+        conn.execute(
+            '''INSERT INTO code_sections (book_id,section_number,title,content,parent_section_id,depth,sort_order)
+               VALUES (?,?,?,?,?,1,?)''',
+            (book_id, num, title, content, parent_id, i))
+
+
+# ── IMC (International Mechanical Code 2021) ─────────────────────
+
+def _seed_imc(conn, bid):
+    # Ch 1 - Scope and Administration
+    _ins(conn, bid, _ch(conn, bid, '1'), [
+        ('101', 'General', 'Establishes the scope of the IMC covering design, installation, maintenance, alteration and inspection of mechanical systems. Applies to all buildings except detached one- and two-family dwellings and townhouses covered by the IRC.'),
+        ('102', 'Applicability', 'Existing installations may remain if legally installed and maintained. Relocated/replaced systems must comply with current code. Moved buildings must comply with new construction requirements.'),
+        ('103', 'Department of Mechanical Inspection', 'Establishes the authority of the code official to enforce the code, grant modifications, and approve alternative materials or methods that meet the code intent.'),
+        ('104', 'Duties and Powers', 'Code official may enter premises for inspection, issue notices of violation, and require correction of violations. Right of entry provisions and liability limitations.'),
+        ('106', 'Permits', 'Mechanical permits required before installation, alteration or repair. Lists exempt work including portable equipment, replacement of minor components, and routine maintenance.'),
+        ('107', 'Inspections and Testing', 'Required inspections include underground, rough-in, and final. Systems must be tested per Section 107.2. Approval required before concealment of work.'),
+    ])
+    # Ch 2 - Definitions
+    _ins(conn, bid, _ch(conn, bid, '2'), [
+        ('201', 'General', 'Terms defined in this chapter have the meanings stated herein. Terms not defined have ordinary dictionary meanings. Referenced code definitions also apply.'),
+        ('202', 'General Definitions', 'Key definitions: APPLIANCE, CHIMNEY, DUCT, EQUIPMENT, FURNACE, MECHANICAL SYSTEM, PLENUM, REFRIGERANT, RETURN AIR, SUPPLY AIR, VENTILATION, and VENT. Critical for correct code interpretation.'),
+    ])
+    # Ch 3 - General Regulations
+    _ins(conn, bid, _ch(conn, bid, '3'), [
+        ('301', 'General', 'Mechanical systems shall be installed in accordance with manufacturer instructions and the IMC. Equipment must be listed and labeled by approved agencies per Section 301.3.'),
+        ('302', 'Protection of Structure', 'Mechanical systems must not weaken building structural elements. Penetrations through fire-rated assemblies require approved firestopping per Section 302.2.'),
+        ('303', 'Equipment and Appliance Location', 'Equipment in occupied spaces must not create hazards. Fuel-burning appliances in sleeping rooms restricted per Section 303.3. Outdoor installations require weatherproofing.'),
+        ('304', 'Installation', 'Equipment must be supported and anchored per manufacturer specs. Vibration isolation required where necessary. Equipment must be accessible for service per Section 306.'),
+        ('305', 'Piping Support', 'Piping must be supported at intervals per Table 305.4. Hangers, anchors and supports must be adequate for operating weight plus test weight.'),
+        ('306', 'Access and Service Space', 'Clearances for maintenance and replacement required. Attic access opening min 22x30 inches. Passageways min 22 inches wide. Appliances in attics/crawl spaces need continuous flooring min 24 inches wide.'),
+        ('307', 'Condensate Disposal', 'Condensate from cooling coils and fuel-burning appliances must drain to approved location. Primary and secondary drain required for ceiling-mounted units per Section 307.2.1.'),
+        ('308', 'Clearances to Combustibles', 'Appliances, vents and connectors must maintain clearance to combustibles per listing or Table 308.2. Reduced clearances allowed with approved protection per Table 308.5.'),
+    ])
+    # Ch 4 - Ventilation
+    _ins(conn, bid, _ch(conn, bid, '4'), [
+        ('401', 'General', 'All occupied spaces must be ventilated by natural or mechanical means. Ventilation rates per Section 403 or Table 403.3.1.1. System design per ASHRAE 62.1 acceptable as alternative.'),
+        ('402', 'Natural Ventilation', 'Openable area min 4% of floor area. Adjoining rooms may count if opening between them is min 8% of combined floor area per Section 402.2. Atriums may serve as ventilation plenums.'),
+        ('403', 'Mechanical Ventilation', 'Outdoor air rates per Table 403.3.1.1 based on occupancy type. Minimum cfm/person plus cfm/sq ft of area. Recirculation limited per Section 403.3.1.3. Transfer air permitted per Section 403.3.1.4.'),
+        ('404', 'Enclosed Parking Garages', 'Mechanical ventilation required at min 0.75 cfm/sq ft. CO detection may reduce rates. Exhaust discharge min 10 ft from building openings. Contaminant sensing allowed to modulate rates.'),
+        ('405', 'Systems Control', 'Mechanical ventilation systems must have readily accessible manual or automatic controls. Occupied/unoccupied modes allowed. Demand control ventilation (DCV) with CO2 sensors per Section 403.3.1.2.'),
+    ])
+    # Ch 5 - Exhaust Systems
+    _ins(conn, bid, _ch(conn, bid, '5'), [
+        ('501', 'General', 'Exhaust systems required where contaminants are generated. Product-conveying systems per Section 510. Exhaust discharge must not create nuisance or recirculate into building.'),
+        ('502', 'Required Systems', 'Specific exhaust rates: bathrooms 50 cfm intermittent/20 cfm continuous, kitchens 100 cfm intermittent/25 cfm continuous per Table 403.3.1.1. Laboratories, manufacturing areas have specific requirements.'),
+        ('503', 'Motors, Fans and Filters', 'Fan motors in contaminated airstreams must be suitable for the exposure. Belt guards required. Filters per Section 606. Grease-laden ducts must have listed grease extractors.'),
+        ('504', 'Clothes Dryer Exhaust', 'Dryer exhaust ducts: max 35 ft developed length from dryer to termination (reduced by elbows per Table 504.6.5.1). Must be 4-inch rigid metal, smooth interior. Termination min 3 ft from openings.'),
+        ('505', 'Domestic Kitchen Exhaust', 'Range hoods listed to UL 507. Duct material min 0.013 inch steel, copper, or stainless. Makeup air required per Section 505.2. Hoods must exhaust to outdoors.'),
+        ('506', 'Commercial Kitchen Hoods', 'Type I hoods for grease-laden vapors, Type II for heat/steam. Duct velocity min 1500 fpm for grease ducts. Fire suppression required for Type I hoods. Clearances per NFPA 96.'),
+        ('510', 'Hazardous Exhaust Systems', 'Systems conveying flammable vapors, gases, fumes, mists must comply. Independent systems, no recirculation. Explosion venting per NFPA standards. Duct construction per Section 510.5.'),
+    ])
+    # Ch 6 - Duct Systems
+    _ins(conn, bid, _ch(conn, bid, '6'), [
+        ('601', 'General', 'Supply, return and exhaust duct systems per this chapter. Air distribution to each space must maintain design conditions. Plenums per Section 602, construction per Section 603.'),
+        ('602', 'Plenums', 'Only approved materials in plenums: wiring per NEC, piping limited, no combustibles. Uninhabitable crawl spaces and ceiling cavities may be plenums per Section 602.2.1 with restrictions.'),
+        ('603', 'Duct Construction and Materials', 'Sheet metal ducts per SMACNA standards. Fibrous duct construction per UL 181. Flexible ducts max 5 ft unless longer is unavoidable per Section 603.6. Duct sealing required per Section 603.9.'),
+        ('604', 'Duct Insulation', 'Supply and return ducts in unconditioned spaces must be insulated per IECC. Insulation minimum R-values per Table C403.3.3.1.7. Vapor retarders required in cooling climates per Section 604.10.'),
+        ('605', 'Air Filters', 'HVAC systems serving occupied spaces require filters per ASHRAE 52.2 with MERV ratings. Min MERV 8 for most commercial applications. Filter access required for replacement.'),
+        ('606', 'Smoke Detection', 'Duct smoke detectors required in systems over 2,000 cfm per Section 606.2. Smoke detectors in return air per Section 606.2.1. Detectors per UL 268A.'),
+        ('607', 'Fire and Smoke Dampers', 'Fire dampers at fire-rated assembly penetrations per Section 607.5. Smoke dampers at smoke barriers per Section 607.6. Combination fire/smoke dampers per UL 555S. Ceiling radiation dampers per Section 607.5.5.'),
+    ])
+    # Ch 7 - Combustion Air
+    _ins(conn, bid, _ch(conn, bid, '7'), [
+        ('701', 'General', 'Fuel-burning appliances must have adequate combustion air supply. Indoor air, outdoor air, or combination methods per Sections 702-704. Engineered designs per Section 705.'),
+        ('702', 'Inside Air', 'Buildings with adequate infiltration rate (0.40 ACH) may use indoor air if volume is 50 cu ft per 1,000 Btu/hr. Unusually tight buildings must use outdoor air or direct-vent appliances.'),
+        ('703', 'Outdoor Air', 'Two permanent openings required: one within 12 inches of top, one within 12 inches of bottom of enclosure. Free area per Section 703.2: 1 sq in per 4,000 Btu/hr for direct outdoor opening.'),
+        ('704', 'Combined Use', 'When indoor volume is insufficient, supplemental outdoor air openings per Section 703. Calculations use combined indoor volume plus outdoor air supply.'),
+    ])
+    # Ch 8 - Chimneys and Vents
+    _ins(conn, bid, _ch(conn, bid, '8'), [
+        ('801', 'General', 'Fuel-burning appliances must be vented to outdoors per this chapter. Direct-vent and mechanical draft systems per manufacturer listing. Masonry chimneys per IBC Chapter 21.'),
+        ('802', 'Vent Components', 'Type B vents for gas appliances per UL 441. Type L vents for oil per UL 641. Chimney connectors min 24-gauge steel for gas, 24-gauge for oil. Single-wall connectors limited per Section 802.6.'),
+        ('803', 'Chimney and Vent Connectors', 'Max 75% of vertical height in horizontal length. Slope min 1/4 inch per foot upward. Connectors must not pass through floors, ceilings, or fire-rated walls except with listed sleeves.'),
+        ('804', 'Venting Systems', 'Category I appliances: natural draft or fan-assisted, non-positive pressure. Category III/IV: positive pressure venting, special materials required. Sidewall venting per Section 804.3.'),
+        ('805', 'Factory-Built Chimneys', 'Listed factory-built chimneys per UL 103 for solid fuel, UL 127 for fireplaces. Installation per manufacturer instructions and listing. Clearances per listing, not less than 2 inches.'),
+    ])
+    # Ch 9 - Specific Appliances
+    _ins(conn, bid, _ch(conn, bid, '9'), [
+        ('901', 'General', 'Appliances installed per manufacturer instructions, listing, and this code. Safety controls required per Section 901.2. Gas appliances per IFGC.'),
+        ('902', 'Floor Furnaces', 'Floor furnaces installed per UL 729. Max 75,000 Btu/hr input. Support capable of 150% of appliance weight plus 200 lb live load. Register required.'),
+        ('903', 'Unit Heaters', 'Unit heaters per Section 903. Suspended heaters min 8 ft to floor in commercial, 7 ft in residential. Ductwork from unit heaters per Chapter 6.'),
+        ('904', 'Vented Wall Furnaces', 'Wall furnaces per UL 730. Max 70,000 Btu/hr. Clearances per listing. Must be vented to outdoors.'),
+        ('906', 'Heat Pumps', 'Air-source and ground-source heat pumps installed per listing. Supplemental heat per Section 906.4. Refrigerant per Chapter 11. Outdoor units per Section 906.5.'),
+    ])
+    # Ch 10 - Boilers, Water Heaters, Pressure Vessels
+    _ins(conn, bid, _ch(conn, bid, '10'), [
+        ('1001', 'General', 'Boilers, water heaters, and pressure vessels installed per this chapter and ASME requirements. Safety devices required per Section 1006. Annual inspection recommended.'),
+        ('1002', 'Water Heaters', 'Water heaters listed per UL 174 (electric), UL 732 (oil), or CSA (gas). T&P relief valve required, discharge within 6 inches of floor or to approved drain. Max 210°F / 150 psi.'),
+        ('1003', 'Boilers', 'Low-pressure boilers: max 15 psi steam or 160 psi/250°F hot water. Safety valve, low-water cutoff, pressure/temp gauge required. Boiler rooms per Section 1003.3.'),
+        ('1004', 'Pressure Vessels', 'Unfired pressure vessels per ASME Section VIII. Safety relief devices per ASME. Vessels over 5 cu ft capacity or 250 psi require ASME stamp.'),
+        ('1006', 'Safety and Pressure Relief', 'T&P relief valves, safety valves per ASME/ANSI. Discharge piped to safe location. No valves between vessel and safety device. Testing per Section 1006.5.'),
+    ])
+    # Ch 11 - Refrigeration
+    _ins(conn, bid, _ch(conn, bid, '11'), [
+        ('1101', 'General', 'Refrigeration systems per ASHRAE 15 (Safety Standard for Refrigeration Systems). Equipment rooms required for certain refrigerant quantities per Section 1105.'),
+        ('1102', 'System Requirements', 'Refrigerant classification per ASHRAE 34. Group A1 refrigerants (R-410A, R-134a) allowed in occupied spaces with quantity limits per Table 1103.1. Group B refrigerants restricted.'),
+        ('1103', 'Refrigerant Quantity Limits', 'Max refrigerant charge based on occupancy type, room volume, and refrigerant safety group per Table 1103.1. R-410A limit in occupied spaces varies by occupancy.'),
+        ('1104', 'Piping', 'Refrigerant piping per ASME B31.5. Copper tubing ACR type. Support per Table 305.4. Joints by brazing with nitrogen purge. Protection from physical damage required.'),
+        ('1105', 'Machinery Rooms', 'Required when refrigerant exceeds Table 1103.1 limits. Ventilation min 0.5 cfm/sq ft or per ASHRAE 15. Refrigerant detector, exhaust fan, and self-closing door required.'),
+    ])
+    # Ch 12 - Hydronic Piping
+    _ins(conn, bid, _ch(conn, bid, '12'), [
+        ('1201', 'General', 'Hydronic heating/cooling piping systems per this chapter. Materials per Section 1202. System must include expansion tank, air elimination, and pressure relief.'),
+        ('1202', 'Material', 'Pipe materials: copper, steel, CPVC (hot water), PEX. Fittings compatible with pipe material. Soldering with lead-free solder per Section 1202.3.'),
+        ('1203', 'Joints and Connections', 'Joints per approved standards. Brazing/soldering per ASTM B828. Press fittings per ASME. Dielectric unions at dissimilar metal connections.'),
+        ('1204', 'Piping Installation', 'Support intervals per Table 305.4. Expansion provisions for thermal movement. Air vents at high points. Drains at low points. Insulation per IECC or ASHRAE 90.1.'),
+        ('1205', 'Tests', 'Hydronic systems tested at 100 psi or 1.5x operating pressure for min 2 hours. No leakage permitted. Test before concealment.'),
+    ])
+    # Ch 13 - Fuel Oil Piping
+    _ins(conn, bid, _ch(conn, bid, '13'), [
+        ('1301', 'General', 'Fuel oil piping and storage for oil-fired appliances. Materials per Section 1302. Tank installation per NFPA 31 and Section 1305.'),
+        ('1302', 'Materials', 'Steel pipe, copper tubing, or approved flexible connectors. Fittings compatible with pipe material. Underground piping must be protected from corrosion.'),
+        ('1305', 'Oil Storage Tanks', 'Above-ground tanks per UL 80 (inside) or UL 142 (outside). Underground tanks per UL 58. Secondary containment for indoor tanks over 660 gallons. Fill and vent piping per Section 1305.7.'),
+    ])
+    # Ch 14 - Solar Thermal
+    _ins(conn, bid, _ch(conn, bid, '14'), [
+        ('1401', 'General', 'Solar thermal energy systems for heating water or spaces. Design and installation per SRCC OG-100 or OG-300. Systems must include freeze protection.'),
+        ('1402', 'Installation', 'Collectors mounted per structural requirements of IBC. Roof penetrations flashed and sealed. Piping per Chapters 12 (hydronic) or applicable plumbing code.'),
+        ('1403', 'Heat Transfer Fluids', 'Toxic or flammable fluids require double-wall heat exchangers with leak detection. Glycol solutions must be listed for intended use. Pressure relief required.'),
+    ])
+    # Ch 15 - Referenced Standards
+    _ins(conn, bid, _ch(conn, bid, '15'), [
+        ('1501', 'General', 'Standards referenced in this code are listed by promulgating agency. Standards are considered part of this code to the extent referenced. ASHRAE, SMACNA, UL, NFPA, ASME and ASTM are key agencies.'),
+    ])
+
+
+# ── IFGC (International Fuel Gas Code 2021) ──────────────────────
+
+def _seed_ifgc(conn, bid):
+    _ins(conn, bid, _ch(conn, bid, '1'), [
+        ('101', 'Scope and General', 'Covers fuel gas piping, appliances, equipment and accessories. Applies to natural gas, LP gas, and manufactured gas systems. Does not cover utility gas distribution mains.'),
+        ('102', 'Applicability', 'Existing installations may remain if safe. Additions and alterations must comply. Gas piping in buildings under construction must be tested before use.'),
+        ('106', 'Permits', 'Gas permit required before installation, extension, or alteration of gas piping or equipment. Exemptions for portable appliances and approved appliance connection.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '2'), [
+        ('201', 'General', 'Terms defined herein have stated meanings. Key terms include APPLIANCE, CONNECTOR, DRAFT HOOD, FLUE, GAS PIPING, and VENT.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '3'), [
+        ('301', 'General', 'Gas equipment must be listed and labeled by approved agency. Installation per manufacturer instructions and this code. Unapproved equipment prohibited.'),
+        ('302', 'Structural Safety', 'Gas appliances must not weaken structural elements. Supports capable of appliance weight plus loads. Vibration isolation where needed.'),
+        ('303', 'Appliance Location', 'Appliances in occupied spaces must have adequate combustion air. Fuel-burning appliances prohibited in sleeping rooms unless direct-vent or listed as safe. Garages require elevation per Section 303.3.'),
+        ('304', 'Combustion, Ventilation, Dilution Air', 'Fuel-burning appliances require combustion air per Chapter 7 of IMC or IFGC Section 304. Indoor air method: 50 cu ft per 1,000 Btu/hr. Outdoor air method: two openings sized per Section 304.6.'),
+        ('305', 'Installation', 'Equipment accessible for service. Clearances per listing. Connectors per Section 411. Sediment traps required within 6 inches upstream of appliance connections.'),
+        ('306', 'Access and Service Space', 'Min 30-inch working space in front of controls. Attic installations per Section 306.3. Level service platform min 30 inches wide required for elevated appliances.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '4'), [
+        ('401', 'General', 'Gas piping designed for max expected pressure plus safety factor. Pipe sizing per Section 402. Testing per Section 406. Gas shutoff at meter and each appliance.'),
+        ('402', 'Pipe Sizing', 'Longest length method or branch length method. Tables 402.4(1-34) for different pipe materials and pressures. Sizing based on gas demand (Btu/hr), pipe length, and pressure drop.'),
+        ('403', 'Piping Materials', 'Steel (ASTM A53), copper (ASTM B88 Type K or L), corrugated stainless steel tubing (CSST) listed per ANSI LC1. PE pipe for outdoor underground only. CSST must be bonded per Section 310.1.1.'),
+        ('404', 'Piping System Installation', 'Min burial depth 12 inches for metallic, 18 inches for PE. Piping through foundation sealed. Support per Table 415.2. No concealed unions. Drip legs at low points.'),
+        ('405', 'Gas Shutoff Valves', 'Shutoff at each appliance within 6 ft. Shutoff at meter for entire building. Manual shutoff accessible. Earthquake valves per Section 415.4 in seismic zones.'),
+        ('406', 'Piping Testing', 'Test at 1.5x working pressure or min 3 psi gauge for min 10 minutes. No drop permitted. Testing with air or nitrogen only (never gas). Re-test after repairs.'),
+        ('408', 'Piping Purging', 'Gas piping must be purged of air before appliance operation. Outdoor discharge or through appliance burner. Indoor purging per Section 408.2 with continuous ventilation.'),
+        ('411', 'Appliance Connections', 'Rigid pipe or listed flexible connectors. Max 6 ft for flex connectors on movable appliances. Sediment trap (drip leg) min 3 inches per Section 411.1.3.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '5'), [
+        ('501', 'General', 'Fuel gas appliance venting per this chapter. Vent categories per Section 501.4: Category I (natural draft, negative), II (natural, positive), III (mechanical, positive <176°F), IV (mechanical, positive >176°F condensing).'),
+        ('502', 'Vent Components', 'Type B gas vents for Category I appliances per UL 441. Type BW for wall furnaces. Stainless steel or AL29-4C for Category III/IV. PVC/CPVC for Category IV per manufacturer listing.'),
+        ('503', 'Single-Appliance Venting', 'Vent sizing per Tables 503.4(1-3) for Type B, single-wall, and mechanical draft. Height, rise, lateral length, and connector size must be within table values.'),
+        ('504', 'Multi-Appliance Venting', 'Common vent sizing per Tables 504.3(1-3). Input ratings must not exceed table maximums. Smallest appliance dictates connector size. Manifold venting per Section 504.4.'),
+        ('505', 'Direct-Vent Appliances', 'Direct-vent appliances draw combustion air from and discharge products to outdoors through a sealed system. No chimney or vent required. Installation per listing.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '6'), [
+        ('601', 'General', 'Specific installation requirements for individual appliance types. Clearances, venting, and connections per this chapter and manufacturer listing.'),
+        ('602', 'Decorative Gas Appliances', 'Log lighters and decorative gas appliances per ANSI Z21.60 and Z21.84. Damper must be fixed open. Room ventilation required.'),
+        ('603', 'Gas Fireplaces', 'Listed gas fireplaces per ANSI Z21.88. Direct-vent preferred. Vented decorative types must have fixed open damper or draft hood. Installation per listing.'),
+        ('612', 'Forced Air Furnaces', 'Furnaces listed to ANSI Z21.47 or UL 795. Installation in garages: elevated ignition 18 inches above floor. Return air from same story or adjacent story per Section 612.2.'),
+        ('618', 'Unit Heaters', 'Gas-fired unit heaters per ANSI Z83.8. Min 8 ft above floor in commercial. Venting per Chapter 5. Unvented infrared heaters in specific occupancies only per Section 618.5.'),
+        ('621', 'Gas Ranges', 'Listed gas ranges per ANSI Z21.1. Not for space heating. Min 30 inches clearance to combustibles above cooking surface or per listing. Range hoods recommended.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '7'), [
+        ('701', 'General', 'Gaseous hydrogen systems including generation, storage, and piping. Quantities exceeding Table 701.1 require permits. Systems per NFPA 2 (Hydrogen Technologies Code).'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, '8'), [
+        ('801', 'Referenced Standards', 'Standards referenced in this code listed by agency. Key agencies: ANSI, ASME, ASTM, CSA, NFPA, UL. Standards part of code to extent referenced.'),
+    ])
+
+
+# ── IECC (International Energy Conservation Code 2021) ───────────
+
+def _seed_iecc(conn, bid):
+    _ins(conn, bid, _ch(conn, bid, 'C1'), [
+        ('C101', 'Scope and General', 'Establishes energy efficiency requirements for commercial buildings. Applies to building envelope, HVAC, service water heating, lighting, and power systems.'),
+        ('C102', 'Applicability', 'All new commercial buildings and additions/alterations. Compliance via prescriptive (C4) or performance path (C407). ASHRAE 90.1 accepted as alternate.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'C2'), [
+        ('C201', 'General', 'Definitions for commercial energy provisions including BUILDING THERMAL ENVELOPE, CONDITIONED SPACE, CLIMATE ZONE, and efficiency terms.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'C3'), [
+        ('C301', 'Climate Zones', 'Oklahoma is primarily Climate Zone 3A (mixed-humid). Climate zone determines insulation, fenestration, and HVAC requirements throughout code.'),
+        ('C302', 'Design Conditions', 'Heating and cooling degree days, design temperatures per ASHRAE Fundamentals. Used for envelope and HVAC sizing calculations.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'C4'), [
+        ('C403', 'HVAC Systems', 'Min equipment efficiencies per Tables C403.3.2(1-14). Economizers required over 54,000 Btu/hr in CZ 3A. Duct sealing and insulation required. Controls per C403.4.'),
+        ('C403.1', 'New Equipment Efficiency', 'Unitary AC min 14 SEER/11.2 EER (<65k), 11.2 EER (65-135k). Heat pumps min 15 SEER/8.8 HSPF (<65k). Furnaces min 80% AFUE. Boilers min 82% Et.'),
+        ('C403.2', 'HVAC Controls', 'Programmable thermostats required. Deadband min 5°F between heating/cooling setpoints. Automatic setback/setup. Simultaneous heating/cooling prohibited except with controls.'),
+        ('C403.3', 'Economizers', 'Air economizers required for cooling systems ≥54,000 Btu/hr in CZ 3A. Must provide 100% outdoor air. High-limit shutoff per Table C403.5. Economizer fault detection required.'),
+        ('C403.4', 'Duct Sealing and Insulation', 'All ducts sealed per Section C403.11.2. Duct insulation R-6 for supply, R-3.5 for return in unconditioned spaces. Duct leakage testing required for systems over 5 tons.'),
+        ('C403.5', 'Piping Insulation', 'HVAC piping insulation per Table C403.11.3. Chilled water and refrigerant suction lines insulated. Steam and hot water pipe insulation by diameter and temperature.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'C5'), [
+        ('C501', 'Referenced Standards', 'ASHRAE 90.1, ASHRAE 62.1, AHRI standards for equipment ratings, SMACNA for duct construction, and ASTM testing standards.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'R1'), [
+        ('R101', 'Scope', 'Residential energy provisions apply to detached one/two-family, townhouses 3 stories or less. Covers envelope, mechanical, service water heating, and lighting.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'R2'), [
+        ('R201', 'General', 'Key residential definitions: CONDITIONED SPACE, FENESTRATION, R-VALUE, U-FACTOR, SEER, HSPF. Climate zone determines requirements.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'R3'), [
+        ('R301', 'Climate Zones', 'Oklahoma is Climate Zone 3A for residential. Table R301.1 lists zones by county. Determines insulation R-values, fenestration U-factors, SHGC.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'R4'), [
+        ('R403', 'Systems', 'HVAC equipment efficiency per federal minimums. Duct insulation min R-8 supply, R-6 return in unconditioned spaces. Duct sealing required. Programmable thermostats required.'),
+        ('R403.1', 'Controls', 'Programmable thermostat required for each separate HVAC system. Manual thermostat at each zone or per manufacturer instructions. Heat pump with auxiliary heat requires thermostat with backup lockout.'),
+        ('R403.3', 'Ducts', 'Duct sealing: mastic, listed tape, or aerosol sealant. Building cavities not used as supply ducts. Duct leakage tested ≤4 cfm25/100 sq ft total or ≤8 cfm25/100 sq ft to outside.'),
+        ('R403.6', 'Mechanical Ventilation', 'Whole-building mechanical ventilation per ASHRAE 62.2 or Section R403.6.1. Energy/heat recovery ventilation may be required in cold climates. Balanced ventilation preferred.'),
+    ])
+    _ins(conn, bid, _ch(conn, bid, 'R5'), [
+        ('R501', 'Referenced Standards', 'ASHRAE 62.2 for residential ventilation, ACCA Manual J for load calculations, ACCA Manual D for duct design. Federal equipment efficiency standards.'),
+    ])
+
+
+# ── IBC (International Building Code 2021) ───────────────────────
+
+def _seed_ibc(conn, bid):
+    for ch_num, secs in [
+        ('1', [('101','Scope','Applies to construction, alteration, relocation, enlargement, replacement, repair, equipment, use and occupancy of every building or structure.'),
+               ('104','Duties and Powers','Code official authorized to enforce code, conduct inspections, issue permits and certificates of occupancy.'),
+               ('105','Permits','Building permits required before construction. Exemptions for minor repairs and replacement not involving structural elements.')]),
+        ('2', [('201','General','Defines terms used throughout IBC including BUILDING, STRUCTURE, STORY, and construction-related terminology.')]),
+        ('3', [('302','Occupancy Classification','Buildings classified by use: A (Assembly), B (Business), E (Educational), F (Factory), H (High Hazard), I (Institutional), M (Mercantile), R (Residential), S (Storage), U (Utility).'),
+               ('303','Assembly Group A','Assembly uses with 50+ occupants. Subcategories A-1 through A-5 based on activity type.'),
+               ('308','Institutional Group I','Institutional occupancies where occupants are restrained or require care. Subcategories I-1 through I-4.')]),
+        ('4', [('402','Covered/Open Mall Buildings','Special requirements for mall buildings including travel distance, sprinkler requirements, and smoke control.'),
+               ('403','High-Rise Buildings','Buildings with occupied floor >75 ft above fire department access. Requires fire command center, standby power, emergency voice communication.')]),
+        ('5', [('503','General Height/Area Limits','Max building height and area per Table 503 based on construction type and occupancy. Sprinkler increases per Section 504.'),
+               ('504','Allowable Increases','Sprinkler increase: 1 additional story plus 20-foot height increase. Area increase: 200% for multi-story, 300% for single-story per Section 506.')]),
+        ('6', [('602','Construction Types','Types I-V based on fire-resistance ratings. Type I: noncombustible 3/2hr. Type V: any material 1/0hr. Table 601 ratings.'),]),
+        ('7', [('703','Fire-Resistance Ratings','Required ratings per Table 601. Testing per ASTM E119. Fire barriers, fire walls, fire partitions, and smoke barriers defined.'),
+               ('706','Fire Walls','Fire walls provide complete separation creating separate buildings. Min 2-hour for most, 3-4 hour for high hazard. Must extend to roof.'),
+               ('717','Fire/Smoke Dampers','Fire dampers required at duct penetrations through fire barriers, fire walls, and shaft enclosures. Smoke dampers at smoke barriers per Section 717.5.')]),
+        ('8', [('803','Interior Wall/Ceiling Finish','Flame spread and smoke development limits by occupancy per Table 803.13. Class A (0-25 FSI), Class B (26-75), Class C (76-200).')]),
+        ('9', [('903','Automatic Sprinkler Systems','Sprinklers required per Section 903.2 based on occupancy and area. NFPA 13 systems. Exempt areas per Section 903.3.1.'),
+               ('907','Fire Alarm Systems','Manual and automatic fire alarm per occupancy type. Smoke detectors, notification appliances, and fire command center requirements.'),
+               ('909','Smoke Control','Required in atriums, underground buildings, high-rise buildings, and certain assembly spaces. Per Section 909 and ASHRAE/ICC analysis.')]),
+        ('10', [('1004','Occupant Load','Max occupant load per Table 1004.5. Sq ft per occupant by use. Determines egress width and number of exits.'),
+                ('1005','Egress Width','Min 0.3 inches per occupant for stairways, 0.2 inches per occupant for other components. Absolute minimums: 44 inches for corridors >50 occupants.'),
+                ('1010','Doors/Gates','Exit doors min 32 inches clear width. Max 48 inches single leaf. Hardware operable with one hand, no tight grasping. Panic hardware for assembly >50 occupants.')]),
+        ('11', [('1103','Scoping','Accessibility per ICC A117.1. Applies to all buildings except detached dwellings and their accessory structures.'),
+                ('1107','Dwelling Units','Type A and Type B accessible dwelling units per Table 1107.6. Adaptable features, grab bar reinforcing, accessible routes.')]),
+        ('12', [('1202','Ventilation','Spaces must be ventilated naturally (openings ≥4% floor area) or mechanically per IMC. Bathrooms require mechanical exhaust.'),
+                ('1203','Temperature Control','Occupied spaces must maintain min 68°F during occupied hours. Cooling not mandated but systems must meet IECC efficiency.'),
+                ('1204','Lighting','Natural light (8% floor area glazing) or artificial light required. Min 10 fc at floor for most occupied spaces. Emergency lighting per 1008.'),
+                ('1205','Sound Transmission','STC 50 wall/floor/ceiling assemblies between dwelling units. STC 45 for impact (IIC). Air infiltration limits for exterior assemblies.'),
+                ('1207','Plumbing Fixtures','Min fixture counts per IPC Table 403.1. Accessible fixtures per ICC A117.1. Drinking fountains per occupant load.')]),
+        ('13', [('1301','Energy Efficiency','Buildings must comply with IECC (commercial or residential as applicable). Equipment efficiency per IECC Table C403.3.2.')]),
+        ('14', [('1403','Performance Requirements','Exterior walls must resist weather, prevent moisture penetration. Water-resistive barriers required behind exterior cladding. Flashing at penetrations and transitions.')]),
+        ('15', [('1504','Roof Materials','Roof covering fire classification per Table 1505.1. Class A, B, or C based on location and construction type. Wind resistance per Section 1504.1.')]),
+        ('16', [('1603','Design Loads','Dead, live, roof, snow, wind, earthquake loads per ASCE 7. Oklahoma design: wind speeds 115-120 mph (Risk Cat II), seismic Sds varies.'),
+                ('1607','Live Loads','Min floor live loads per Table 1607.1. Residential 40 psf, office 50 psf, corridors >100 occupants 100 psf, mechanical rooms 125 psf.')]),
+        ('17', [('1705','Structural Inspections','Special inspections for steel connections, concrete placement, masonry, wood shear walls. Inspection scope per Sections 1705.2-1705.14.')]),
+        ('18', [('1803','Geotechnical Investigations','Required for structures on sites with questionable soil conditions. Report must include bearing capacity, settlement estimates, and recommendations.')]),
+        ('19', [('1903','Specifications','Concrete per ACI 318. Min fc 2500 psi for structural, 3000 psi for drilled piers. Special inspections per Section 1705.3.')]),
+        ('20', [('2002','Materials','Aluminum structural members per AA ADM1. Alloy specifications and design per Aluminum Design Manual.')]),
+        ('21', [('2103','Masonry Construction','Masonry per TMS 402/602. Materials: concrete block, clay brick, mortar Types M/S/N. Grout per ASTM C476.')]),
+        ('22', [('2205','Steel Construction','Structural steel per AISC 360. Cold-formed steel per AISI S100. Steel joists per SJI standards.')]),
+        ('23', [('2303','Wood Construction','Wood per AWC NDS. Lumber grades, connections, diaphragms. Preservative treatment for ground contact or exposed conditions per Section 2304.12.')]),
+        ('24', [('2403','Safety Glazing','Safety glazing per CPSC 16 CFR 1201. Required in doors, tubs/showers, near walking surfaces, and near stairways per Section 2406.')]),
+        ('25', [('2503','Gypsum Board','Gypsum board per ASTM C1396. Fire-resistance assemblies per UL design listings. Type X for fire-rated assemblies.')]),
+        ('26', [('2603','Foam Plastic','Foam plastic insulation must have thermal barrier (1/2" gypsum) protecting from interior. Exceptions for attics, crawl spaces per Section 2603.4.1.')]),
+        ('27', [('2701','Electrical','Electrical systems per NFPA 70 (NEC). Emergency and standby power per NEC Articles 700-702. Service sizing per NEC Article 220.')]),
+        ('28', [('2801','General','Mechanical systems per IMC. Equipment rooms accessible. Rooftop equipment not counted in building height if meeting Section 1510.'),
+                ('2802','HVAC Systems','Design per IMC. Equipment listed and labeled. Duct systems per IMC Chapter 6. Fire/smoke dampers per IMC Section 607 and IBC Section 717.'),
+                ('2803','Elevators/Conveyors','Elevator machine rooms per IMC. Hoistway ventilation required. Mechanical equipment serving elevators per manufacturer and code requirements.'),
+                ('2804','Seismic Bracing','Mechanical equipment bracing per ASCE 7 Chapter 13. Equipment anchorage and pipe bracing for seismic forces. Vibration isolators with snubbers.'),
+                ('2805','Emergency Systems','Emergency HVAC for smoke control, stairway pressurization. Standby power per NEC 702 for life-safety systems. Generator fuel storage and ventilation.')]),
+        ('29', [('2901','Plumbing Systems','Plumbing per IPC. Fixture counts per Table 2902.1. Water efficiency per Section 2903.'),
+                ('2902','Minimum Fixtures','Min plumbing fixtures per IPC Table 403.1 based on occupancy type and occupant load. Separate facilities required for occupant loads >15.')]),
+        ('30', [('3001','Elevators','Elevators per ASME A17.1. Accessible elevators per ICC A117.1. Fire service access elevators in high-rises per Section 3007.')]),
+        ('31', [('3102','Membrane Structures','Temporary and permanent membrane structures. Air-supported and tensioned membrane. Fire-resistance per Section 3102.3.')]),
+        ('32', [('3201','Encroachments','Projections into public right-of-way regulated. Awnings, canopies min 8 ft above sidewalk. Structural elements generally prohibited.')]),
+        ('33', [('3303','Demolition','Demolition not endangering public. Pedestrian protection required. Dust and debris control. Utilities disconnected.')]),
+        ('34', [('3401','Existing Buildings','Alterations, repairs, additions per IEBC. Change of occupancy requires compliance with new occupancy requirements. Historic buildings per Section 3412.')]),
+        ('35', [('3501','Referenced Standards','All standards referenced throughout IBC listed by promulgating agency with effective edition year.')]),
+    ]:
+        pid = _ch(conn, bid, ch_num)
+        if pid:
+            _ins(conn, bid, pid, secs)
+
+
+# ── IRC (International Residential Code 2021) ────────────────────
+
+def _seed_irc(conn, bid):
+    for ch, secs in [
+        ('1', [('R101','Scope','Applies to detached one/two-family dwellings and townhouses 3 stories or less. Building, plumbing, mechanical, fuel gas, energy, and electrical provisions.'),
+               ('R105','Permits','Permits required for construction, alteration, repair. Exemptions: painting, papering, flooring, minor repairs not affecting structure or safety.')]),
+        ('2', [('R201','General','Definitions for residential construction including HABITABLE SPACE, CONDITIONED SPACE, ATTIC, BASEMENT, CRAWL SPACE.')]),
+        ('3', [('R302','Fire-Resistant Construction','Dwelling separation walls min 1-hour rated or per Table R302.1. Garage separation: 1/2" gypsum on garage side, 20-min door.'),
+               ('R303','Light/Ventilation','Habitable rooms require natural light (8% glazing) and ventilation (4% openable) or mechanical per IMC/IRC.'),
+               ('R310','Emergency Escape','Sleeping rooms require emergency escape openings: min 5.7 sq ft, 24-inch min height, 20-inch min width, sill max 44 inches above floor.')]),
+        ('4', [('R401','General','Foundation design per soil conditions. Footings below frost line (min 12 inches in Oklahoma). Drainage around foundation.')]),
+        ('5', [('R501','General','Floor construction: lumber, engineered wood, steel framing per this chapter. Live load 40 psf residential, 30 psf sleeping rooms.')]),
+        ('6', [('R601','General','Wall construction: wood studs 2x4 min @ 16" o.c., or 2x6 @ 24" o.c. Headers sized per span tables. Braced wall lines per R602.10.')]),
+        ('7', [('R701','General','Exterior wall covering: weather-resistant. Water-resistive barrier behind all cladding materials. Flashing at penetrations.')]),
+        ('8', [('R801','General','Roof-ceiling construction: rafters/trusses per span tables. Attic access min 22x30 inches. Ventilation per R806.')]),
+        ('9', [('R901','General','Roof covering: asphalt shingles, metal, tile per this chapter. Underlayment required. Ice barrier in cold climates.')]),
+        ('10', [('R1001','Fireplaces','Masonry fireplaces per Section R1001. Factory-built fireplaces listed per UL 127. Hearth extension min 16 inches front, 8 inches sides.'),
+                ('R1003','Masonry Chimneys','Masonry chimneys: min 4-inch thick, lined with fireclay flue liner. Clearance to combustibles min 2 inches. Cap with drip edge.')]),
+        ('11', [('R1101','General','Residential energy efficiency per IECC Residential or this chapter. Oklahoma CZ 3: Ceiling R-38, Wall R-20 or 13+5ci, Floor R-19.'),
+                ('R1103','Fenestration','Windows: max U-0.30, SHGC 0.25 in CZ 3. Total glazing area per Section R402.3.3. Air leakage max 0.3 cfm/sq ft.'),
+                ('R1104','Sealing','Air barrier and insulation inspection per Table R402.4.1.1. Duct sealing per R403.3. Blower door test ≤5 ACH50 in CZ 3.')]),
+        ('12', [('M1201','General','Mechanical system provisions for one/two-family. Equipment listed and labeled. Permits required. Inspections per Section M1201.3.'),
+                ('M1202','Appliance Access','Min 30-inch working space for equipment. Level service area. Attic units require permanent access opening min 22x30, walkway, light, receptacle.'),
+                ('M1203','Installation','Equipment installed per manufacturer instructions. Anchorage for seismic where required. Vibration isolation as needed.')]),
+        ('13', [('M1301','General','Mechanical equipment must maintain safe operation. Clearances to combustibles per listing. Protection from physical damage.'),
+                ('M1302','Interior Environment','Occupied spaces maintained at min 68°F. Ventilation per M1505 or natural per R303. Cooling systems per IECC efficiency.')]),
+        ('14', [('M1401','General','Heating and cooling equipment per this chapter. Furnaces listed to UL 795 or ANSI Z21.47. Heat pumps listed per UL 1995 or ARI/AHRI standards.'),
+                ('M1402','Central Furnaces','Warm air furnaces: clearances per listing. Return air not from garages, kitchens, bathrooms. Supply air to each habitable room.'),
+                ('M1403','Heat Pumps','Air-source heat pumps per listing. Supplemental heat sized per Manual J. Defrost controls required. Ground-source per IGSHPA standards.'),
+                ('M1407','Floor Furnaces','Floor furnaces per listing. Max 75,000 Btu/hr. Support for 150% weight plus 200 lb. Not in garages or hazardous locations.')]),
+        ('15', [('M1501','General','Exhaust systems required for bathrooms and kitchens. Dryer exhaust per M1502. Kitchen exhaust per M1503.'),
+                ('M1502','Clothes Dryer Exhaust','4-inch rigid metal duct. Max 35 ft length, reduced per elbows (Table M1502.4.5.1). Terminate outdoors with backdraft damper. No screens.'),
+                ('M1503','Range Hoods','Listed range hoods per UL 507. Ducted to outdoors or recirculating with filter. Min 100 cfm intermittent or 25 cfm continuous.'),
+                ('M1504','Bathroom Exhaust','Min 50 cfm intermittent or 20 cfm continuous per bathroom. Ducted to outdoors. Insulated duct in cold spaces to prevent condensation.')]),
+        ('16', [('M1601','Duct Construction','Supply ducts: galvanized steel per SMACNA, or listed duct board/flex. Flex duct max 5 ft runs preferred. Joints sealed with mastic or listed tape.'),
+                ('M1602','Return Air','Return air ducts per this section. Building cavities may serve as return plenums if sealed and free of combustibles per Section M1602.2.'),
+                ('M1603','Duct Insulation','Supply ducts R-8 in unconditioned spaces. Return ducts R-6 in unconditioned spaces. Vapor retarder on exterior of insulation in cooling climates.')]),
+        ('17', [('M1701','General','Combustion air per this chapter. Indoor air method: 50 cu ft per 1,000 Btu/hr for all appliances in space. Outdoor air: two openings per Section M1703.'),
+                ('M1702','Indoor Air','Confined spaces (less than 50 cu ft/1,000 Btu/hr) must have combustion air from outdoors. Unconfined spaces may use indoor air.'),
+                ('M1703','Outdoor Air','Two openings to outdoors: upper within 12 inches of top, lower within 12 inches of bottom. Direct opening: 1 sq in per 4,000 Btu/hr each opening.')]),
+        ('18', [('M1801','General','Venting per this chapter. Category I appliances: natural draft. Category III/IV: positive pressure, special vent materials.'),
+                ('M1803','Connector Design','Single-wall connectors: min 24-gauge. Max 75% of vertical vent height in horizontal length. Slope 1/4 inch per foot up. No combustible wall penetrations.'),
+                ('M1805','Vent Sizing','Size per Tables M1805.2(1-3). Based on appliance input, vent height, connector rise, and lateral length. Multiple appliances per Table M1805.3.')]),
+        ('19', [('M1901','General','Special appliances including infrared heaters, pool heaters, cooking appliances per manufacturer listing and this chapter.'),
+                ('M1904','Sauna Heaters','Sauna heaters listed per UL 875. Min clearances per listing. Time switch limiting operation to 1 hour. Wood-fired saunas per Chapter 10.')]),
+        ('20', [('M2001','General','Boilers listed per UL 795 or ASME. T&P relief, low-water cutoff required. Installation per listing. Hot water boilers max 250°F/160 psi.'),
+                ('M2002','Water Heaters','Water heaters per listing. T&P relief valve piped to within 6 inches of floor or to drain. Pan under water heater in locations where leakage causes damage.'),
+                ('M2005','Expansion Tanks','Closed loop systems require expansion tank sized per system volume. Pressure relief valve setting at or below vessel rating.')]),
+        ('21', [('M2101','Hydronic Piping Installation','Pipe materials: copper, CPVC, PEX, steel per listing. Support per Table M2101.9. Expansion provisions required. Insulation per M2103.'),
+                ('M2103','Hydronic Insulation','Piping insulation thickness per IECC Table C403.11.3. Chilled water always insulated with vapor retarder. Hot water >140°F requires insulation.')]),
+        ('22', [('M2201','General','Special piping for medical gas, oxygen, non-flammable compressed gases. Installed per NFPA 99. Storage per IFC.')]),
+        ('23', [('M2301','General','Solar thermal systems per SRCC standards. Collectors, piping, storage per this chapter. Freeze protection required. Double-wall heat exchanger for toxic fluids.')]),
+        ('24', [('G2401','General','Fuel gas (natural gas and LP) provisions. Piping, appliances, venting per this chapter. References IFGC for detailed requirements.'),
+                ('G2414','Pipe Sizing','Gas pipe sizing per longest length method using Tables G2413.4(1). Based on inlet pressure, pressure drop, pipe material, and demand.'),
+                ('G2415','Piping Installation','Min 12-inch cover for buried gas pipe. Tracer wire for PE pipe. Support per Table G2424.1. No concealed unions. Drip legs at equipment.'),
+                ('G2420','Gas Shutoff','Shutoff at each appliance within 6 ft. Individual shutoff accessible. Shutoff at meter for entire building.'),
+                ('G2421','Testing','Test all gas piping at 1.5x working pressure or min 3 psig for 10 min. No pressure drop. Air or nitrogen only.'),
+                ('G2427','Venting','Gas appliance venting per this section. Type B vents for Category I. Special venting for Category III/IV condensing appliances. Direct vent per listing.')]),
+        ('25', [('P2501','General','Plumbing administration for residential. Permits required for installation, alteration, repair of plumbing systems.')]),
+        ('26', [('P2601','General','Plumbing materials and installation per this chapter. Potable water protected from contamination. Backflow prevention at all cross-connections.')]),
+        ('27', [('P2701','Fixtures','Min residential fixtures: 1 water closet, 1 lavatory, 1 bathtub/shower, 1 kitchen sink per dwelling unit. Emergency floor drain in basements with plumbing.')]),
+        ('28', [('P2801','Water Heaters','Water heaters per listing. Energy factor per DOE standards. T&P relief valve required. Expansion tank required on closed systems.')]),
+        ('29', [('P2901','General','Water supply and distribution per this chapter. Service pipe sized for peak demand. Min 40 psi at fixtures. Max 80 psi at service (PRV required above).')]),
+        ('30', [('P3001','General','Sanitary drainage: gravity flow, min 1/4 inch per foot slope for 3-inch and smaller pipe, 1/8 inch for 4-inch and larger. Cleanouts at base of stacks.')]),
+        ('31', [('P3101','Vent Systems','Each fixture requires a vent. Individual, common, wet, circuit, and island venting methods allowed. Vent termination min 6 inches above roof, 10 ft from openable windows.')]),
+        ('32', [('P3201','Traps','Each fixture requires a trap. Min 2-inch for floor drains, 1-1/4 inch for lavatories. Water seal min 2 inches, max 4 inches. No double trapping.')]),
+        ('33', [('P3301','General','Storm drainage system separate from sanitary. Roof drains and secondary drainage required. Sizing per rainfall rate and roof area.')]),
+        ('34', [('E3401','General','Electrical provisions for residential per NEC. Service entrance, branch circuits, grounding per this part of the IRC.')]),
+        ('35', [('E3501','Definitions','Electrical definitions per NEC Article 100 applicable to residential. ACCESSIBLE, AMPACITY, BRANCH CIRCUIT, CIRCUIT BREAKER, CONDUCTOR, etc.')]),
+        ('36', [('E3601','Services','Service entrance equipment sized per Article 220. Min 100A for single dwelling. Service disconnect readily accessible. Grounding electrode system.')]),
+        ('37', [('E3701','Branch Circuits','Small appliance circuits: min 2 x 20A in kitchen. Bathroom: dedicated 20A. Laundry: dedicated 20A. General lighting: 3 VA per sq ft.')]),
+        ('38', [('E3801','Wiring Methods','NM cable (Romex) permitted in residential. MC cable, EMT, PVC allowed. NM cable protected where exposed. Bored holes centered in framing, nail plates where needed.')]),
+        ('39', [('E3901','Distribution','Receptacles per Section E3901. Spacing max 12 ft along walls, 6 ft in kitchen counters. GFCI required: bathrooms, kitchens (within 6 ft of sink), garages, outdoors, crawl spaces, basements.')]),
+        ('40', [('E4001','Devices/Luminaires','Switches, receptacles, luminaires per UL listings. Recessed lights: IC-rated if in contact with insulation. Wet-location fixtures rated for location.')]),
+        ('41', [('E4101','Appliance Installation','Fixed appliances on dedicated circuits where required. Range: 40A. Dryer: 30A. Dishwasher and disposal may share 20A circuit.')]),
+        ('42', [('E4201','Swimming Pools','Pool wiring per NEC Article 680. GFCI for all pool equipment. Bonding grid required. Min distances for receptacles and switches from pool edge.')]),
+        ('43', [('E4301','Class 2 Circuits','Low-voltage wiring for thermostats, doorbells, security systems. Separation from power wiring per NEC Article 725.')]),
+        ('44', [('4401','Referenced Standards','All referenced standards listed by agency: ICC, NFPA, UL, ASTM, ASME, ASHRAE, ACCA, SJI, TMS, ACI, AWC.')]),
+    ]:
+        pid = _ch(conn, bid, ch)
+        if pid:
+            _ins(conn, bid, pid, secs)
+
+
+# ── IPC (International Plumbing Code 2021) ────────────────────────
+
+def _seed_ipc(conn, bid):
+    for ch, secs in [
+        ('1', [('101','Scope','Regulates plumbing systems in buildings. Design, installation, alteration, repair, and maintenance of sanitary, storm drainage, and water supply systems.'),
+               ('106','Permits','Plumbing permits required. Work by licensed plumber or homeowner (owner-occupied). Inspections required before concealment.')]),
+        ('2', [('201','General','Plumbing definitions: BACKFLOW, CROSS-CONNECTION, FIXTURE UNIT, POTABLE WATER, SANITARY SEWER, VENT, WATER SERVICE.')]),
+        ('3', [('301','General','Plumbing materials must be third-party certified. Installation per manufacturer instructions. Protection from damage, corrosion, and freezing.'),
+               ('305','Protection of Pipes','Piping through concrete requires sleeve or wrap. Dissimilar metals require dielectric fittings. Underground piping min 12 inches below frost line.'),
+               ('312','Tests','DWV tested with 10 ft head of water or 5 psi air for 15 min. Water supply tested at working pressure for 15 min. No leakage allowed.')]),
+        ('4', [('401','General','Fixtures per ASME A112 series. Water closets max 1.28 gpf. Lavatory faucets max 0.5 gpm. Shower heads max 2.0 gpm.'),
+               ('403','Minimum Fixtures','Min fixture count per Table 403.1 based on occupancy type and occupant load. Separate facilities for each sex when occupant load >15.')]),
+        ('5', [('501','General','Water heaters per listing. T&P relief valve required. Discharge within 6 inches of floor or to drain. Expansion tank for closed systems.'),
+               ('502','Installation','Water heaters in garages elevated 18 inches (gas). Pan required where leakage causes damage. Gas water heaters vented per IFGC.')]),
+        ('6', [('601','General','Water supply system design per this chapter. Pipe sizing per Section 604. Min 40 psi at fixtures. Backflow prevention per Section 608.'),
+               ('604','Pipe Sizing','Water distribution sized per fixture unit method (Tables 604.3-604.5) or water supply fixture units. Velocity max 8 fps to reduce noise/erosion.'),
+               ('608','Backflow Prevention','Backflow prevention at every cross-connection. Air gaps, reduced pressure zone assemblies (RPZ), double check valves per hazard level.')]),
+        ('7', [('701','General','Sanitary drainage: min 1/4 inch/ft slope for pipe 3 inch and smaller. Materials: PVC, ABS, cast iron, copper DWV. Fittings per drainage pattern only.'),
+               ('702','Materials','PVC Schedule 40, ABS Schedule 40, cast iron service/extra heavy. No galvanized for underground. Hub and spigot or no-hub joints.'),
+               ('706','Fixture Connections','Each fixture drain connected to sanitary sewer through trap and vent. Max vertical drop 24 inches from trap weir to vent. Grade per Section 701.1.')]),
+        ('8', [('801','General','Indirect waste: food handling, commercial dishwashers, medical equipment discharge to floor drain through air gap or air break. No direct connection.'),
+               ('802','Indirect Waste','Air gap min 2x drain diameter above flood rim. Receptor accessible for cleaning. Grease interceptors for food service per Section 802.3.')]),
+        ('9', [('901','General','Vent system required for every trap. Protects trap seals, allows air circulation in drainage system. Individual, common, wet, circuit, island venting methods.'),
+               ('903','Vent Sizing','Vent sized per Table 916.1 based on fixture units and developed length. Min 1-1/4 inch for individual vents. Stack vent equals drain size.'),
+               ('906','Vent Termination','Vent termination min 6 inches above roof, 10 ft from openable windows/air intakes. Extended through roof per Section 906.1.')]),
+        ('10', [('1001','General','Every fixture requires a trap. P-traps standard. Trap seal 2-4 inches. No double trapping. Cleanout at base of each stack.'),
+                ('1003','Interceptors','Grease interceptors per PDI G101. Required for food service with grease-laden waste. Sized per flow rate and retention time. Maintenance schedule required.')]),
+        ('11', [('1101','General','Storm drainage per this chapter. Roof drains, conductors, and storm sewers sized per rainfall rate. Secondary drainage required for flat roofs.'),
+                ('1106','Sizing','Storm drain sizing per Tables 1106.2-1106.6 based on horizontal projected roof area and rainfall rate (in/hr). 100-year 1-hour rainfall rate for design.')]),
+        ('12', [('1201','General','Special piping for medical gas (NFPA 99), compressed air, vacuum, and non-flammable gases. Dedicated systems, labeled piping, testing required.')]),
+        ('13', [('1301','Referenced Standards','ASME, ASTM, ASSE, NSF, PDI, AWWA standards. All referenced editions are enforceable as part of the code.')]),
+    ]:
+        pid = _ch(conn, bid, ch)
+        if pid:
+            _ins(conn, bid, pid, secs)
+
+
+# ── NEC (National Electrical Code 2023) ──────────────────────────
+
+def _seed_nec(conn, bid):
+    for ch, secs in [
+        ('1', [('110', 'Requirements for Electrical Installations', 'General requirements: equipment listed/labeled, working space clearances (min 36 inches front of panels), dedicated equipment space, and 110°F ambient rating for conductors.'),
+               ('100', 'Definitions', 'Key definitions: ACCESSIBLE, AMPACITY, BONDING, BRANCH CIRCUIT, DEVICE, EQUIPMENT, FEEDER, GROUNDING, LISTED, QUALIFIED PERSON, RACEWAY, SERVICE.'),
+               ('90', 'Introduction', 'Purpose: practical safeguarding of persons and property from hazards arising from electrical use. Covers installation, not design. Applies to all premises wiring.'),
+               ('110.26', 'Working Space', 'Min 36-inch depth in front of panels (Condition 1). Min 30-inch width or equipment width. Min 6.5 ft headroom. Dedicated electrical space above panels to ceiling.')]),
+        ('2', [('200', 'Use of Grounded Conductors', 'Grounded conductor (neutral) identification: white or gray insulation. Not used as ungrounded conductor except specific exceptions per 200.7.'),
+               ('210', 'Branch Circuits', 'Branch circuit ratings: 15A, 20A, 30A, 40A, 50A. Receptacle ratings match circuit. GFCI required: bathrooms, kitchens, garages, outdoors, basements per 210.8.'),
+               ('220', 'Branch-Circuit/Feeder Calculations', 'Load calculations: general lighting 3 VA/sq ft (Table 220.12). Small appliance circuits 1500 VA each. Demand factors per Table 220.42.'),
+               ('225', 'Outside Branch Circuits', 'Feeders and branch circuits outside buildings. Clearances: 10 ft above finished grade, 12 ft over driveways, 18 ft over roadways.'),
+               ('250', 'Grounding and Bonding', 'Grounding electrode system: Ufer ground, ground rod, water pipe. Equipment grounding conductor sized per Table 250.122. Main bonding jumper required. CSST gas pipe bonding.')]),
+        ('3', [('300', 'General Requirements', 'Wiring methods general: protection from physical damage, temperature ratings of conductors in same raceway must match. Conductor sizing per Tables 310.16.'),
+               ('310', 'Conductors', 'Conductor ampacity per Table 310.16 (formerly 310.15(B)(16)). 14 AWG = 15A, 12 AWG = 20A, 10 AWG = 30A at 60°C column. Derating for conduit fill and ambient temp.'),
+               ('320-340', 'Cable Types', 'AC cable (BX), MC cable, NM cable (Romex), SE cable, UF cable. Each type has specific use limitations. NM cable not in commercial above 3 stories.'),
+               ('342-358', 'Raceways', 'IMC, RMC, EMT, PVC, LFMC raceways. Conduit fill per Table 1 Chapter 9. Max 360° bends between pull points. Derating required for >3 current-carrying conductors.')]),
+        ('4', [('410', 'Luminaires', 'Luminaires listed for location. Recessed fixtures: IC-rated for insulation contact. Min 3 inches clearance from insulation for non-IC. Wet location fixtures rated.'),
+               ('422', 'Appliances', 'Appliance branch circuit sizing: nameplate rating or 125% of continuous load. Dedicated circuits: ranges (40-50A), dryers (30A), dishwashers.'),
+               ('424', 'Fixed Electric Space Heating', 'Baseboard and radiant heating: branch circuit 125% of rated load. Thermostats rated for load. Min 12-inch clearance below outlet for baseboard units.'),
+               ('430', 'Motors', 'Motor circuit sizing: 125% of FLC per Table 430.248/250. Overload protection 115-125% of nameplate. Branch circuit protection per Table 430.52. Disconnects within sight.'),
+               ('440', 'Air Conditioning Equipment', 'A/C and heat pump circuit sizing per nameplate MCA (min circuit ampacity). MOCP (max overcurrent protection) per nameplate. Disconnect within sight and readily accessible.')]),
+        ('5', [('500', 'Hazardous Locations', 'Class I (flammable gases/vapors), Class II (combustible dust), Class III (fibers). Division 1 (normal) and Division 2 (abnormal) conditions. Zone system alternative.'),
+               ('501', 'Class I Locations', 'Explosionproof equipment in Division 1. Intrinsically safe systems. Sealing fittings at boundaries. Conduit and cable methods restricted.'),
+               ('511', 'Commercial Garages', 'Areas up to 18 inches above floor classified. Wiring above 18 inches may use general methods. GFCI for 15/20A 125V receptacles.')]),
+        ('6', [('600', 'Electric Signs', 'Signs and outline lighting: listed per UL 48. Dedicated branch circuit. Disconnects within sight of sign or lockable. Ground-fault protection.'),
+               ('620', 'Elevators', 'Elevator wiring per ASME A17.1 and NEC 620. Dedicated feeder. Machine room disconnects. Traveling cables rated for flexing duty. GFCI in pits and machine rooms.'),
+               ('625', 'EV Charging', 'Electric vehicle charging: Level 1 (120V 15/20A), Level 2 (240V up to 80A). EVSE listed per UL 2594. Dedicated circuit, GFCI protection. Load management per 625.42.'),
+               ('680', 'Swimming Pools', 'Pools, spas, hot tubs: GFCI for all equipment. Bonding per 680.26. Min distances: receptacles 6 ft, switches 5 ft from pool edge. Underwater luminaires 12V max.')]),
+        ('7', [('700', 'Emergency Systems', 'Emergency power for life safety: automatic transfer within 10 seconds. Separate wiring from normal. Annual testing. Fuel supply per Section 700.12.'),
+               ('701', 'Legally Required Standby', 'Standby power for building systems: automatic transfer within 60 seconds. Fire pumps, smoke control, elevators. May share raceway with normal wiring.'),
+               ('702', 'Optional Standby', 'Optional standby for convenience: manual or automatic transfer. Transfer switch prevents backfeed. Portable generators grounded per 250.34.')]),
+        ('8', [('800', 'Communications Circuits', 'Telephone, data, broadband wiring. Listed cables: CM, CMR (riser), CMP (plenum). Separation from power per 800.133. Grounding per 800.100.'),
+               ('820', 'CATV Systems', 'Cable TV and broadband coax. Listed cables, grounding at building entrance. Separation from power conductors per 820.133.')]),
+        ('9', [('Tables', 'Chapter 9 Tables', 'Table 1: conduit fill percentages (40% one conductor, 31% two, 40% three+). Table 4: conduit dimensions. Table 5: conductor dimensions. Table 8: conductor properties. Table 9: AC resistance.')]),
+    ]:
+        pid = _ch(conn, bid, ch)
+        if pid:
+            _ins(conn, bid, pid, secs)
+
+
+# ── OSHA (29 CFR 1926 Construction Standards) ────────────────────
+
+def _seed_osha(conn, bid):
+    for ch, secs in [
+        ('A', [('1926.1', 'Purpose and Scope', '29 CFR 1926 prescribes safety and health standards for the construction industry. Applies to all construction, alteration, repair, painting, and demolition work.'),
+               ('1926.6', 'Incorporation by Reference', 'References ANSI, NFPA, ASTM, and other consensus standards. Incorporated editions enforceable as OSHA standards.')]),
+        ('B', [('1926.10', 'Scope of Subpart', 'General interpretations of construction industry standards. Definition of "construction work" and employer responsibilities.')]),
+        ('C', [('1926.20', 'General Safety Provisions', 'Employer must initiate and maintain accident prevention programs. Frequent and regular inspections of job sites required. No employee exposed to unsafe conditions.'),
+               ('1926.21', 'Safety Training', 'Employer must instruct employees to recognize and avoid unsafe conditions. Training in regulations applicable to work environment. Competent person requirements.'),
+               ('1926.28', 'Personal Protective Equipment', 'Employer responsible for requiring PPE where hazards exist. Head, eye, face, hand, foot protection as appropriate. PPE must fit properly.')]),
+        ('D', [('1926.50', 'Medical Services', 'First aid kit on site. Emergency medical services available. At least one person with valid first aid training on each shift.'),
+               ('1926.51', 'Sanitation', 'Potable water, toilets (1 per 20 workers), handwashing facilities. Adequate ventilation in enclosed spaces. Heating in cold weather.'),
+               ('1926.55', 'Gases/Vapors/Dust', 'Employee exposure to airborne contaminants below PELs per Table Z-1. Engineering controls first, then PPE. Monitoring required for suspected overexposure.'),
+               ('1926.62', 'Lead', 'Lead exposure: PEL 50 µg/m³, action level 30 µg/m³. Medical surveillance, hygiene practices, respirators required above PEL.')]),
+        ('E', [('1926.95', 'Criteria for PPE', 'PPE provided, used, and maintained when hazards exist. Hazard assessment required. Training on proper use. Employer pays for required PPE.'),
+               ('1926.100', 'Head Protection', 'Hard hats required where falling/flying objects or electrical hazards. ANSI Z89.1 compliant. Type I (top) or Type II (top and sides).'),
+               ('1926.102', 'Eye/Face Protection', 'Safety glasses, goggles, face shields for hazards per Table E-1. Welding: shade numbers per operation. Side shields required for impact hazards.'),
+               ('1926.104', 'Safety Belts/Nets', 'Safety belts, lifelines, and lanyards for fall protection. Safety nets where fall protection impractical. Nets within 30 ft of working surface.')]),
+        ('F', [('1926.150', 'Fire Protection', 'Fire extinguisher within 100 ft travel distance. Site fire prevention plan. No smoking near flammables. Fire watch during and 30 min after hot work.'),
+               ('1926.152', 'Flammable Liquids', 'Storage in approved containers. Max 25 gallons in one area outside storage room. Grounding and bonding for dispensing. No open flames within 50 ft.')]),
+        ('G', [('1926.200', 'Signs and Tags', 'Danger, warning, caution, safety instruction signs per ANSI Z535. Danger signs: immediate hazard. Warning signs: potential hazard. Tags for defective equipment.')]),
+        ('H', [('1926.250', 'Material Storage', 'Materials stored to prevent sliding, falling, or collapse. Aisles and passageways clear. Stack height limits. Housekeeping maintained.'),
+               ('1926.251', 'Rigging Equipment', 'Wire rope, chains, slings inspected before each use. Rated capacity known and not exceeded. Defective rigging removed from service immediately.')]),
+        ('I', [('1926.300', 'General Hand/Power Tools', 'Tools maintained in safe condition. Guards in place during operation. Personal tools meet same standards as employer-provided. Damaged tools removed from service.'),
+               ('1926.302', 'Power Tools', 'Electric tools grounded or double-insulated. Pneumatic tools: safety clips on hose connections. Powder-actuated tools: trained operators only.'),
+               ('1926.304', 'Woodworking Tools', 'Guards on saws, jointers, shapers. Anti-kickback devices on table saws. Push sticks for narrow stock. Disconnect before blade changes.')]),
+        ('J', [('1926.350', 'Gas Welding', 'Cylinders stored upright, secured. Caps on when not in use. 20 ft separation between oxygen and fuel gas or 5 ft firewall. Flashback arrestors required.'),
+               ('1926.351', 'Arc Welding', 'Arc welding equipment per NEMA EW-1. Welding cables insulated and in good repair. Electrode holders insulated. Fire watch during and after welding.')]),
+        ('K', [('1926.400', 'Electrical - General', 'Electrical work per NEC and this subpart. Listed equipment. Working space clearances. GFCI protection for all 120V 15/20A receptacles on construction sites.'),
+               ('1926.404', 'Wiring Design', 'Branch circuits with GFCI or assured equipment grounding conductor program. Temporary wiring protected from damage. Extension cords: 3-wire grounded type.'),
+               ('1926.416', 'Safety-Related Work Practices', 'Only qualified persons work on energized parts. Lockout/tagout for de-energized work. Overhead power line clearances: 10 ft for ≤50kV.')]),
+        ('L', [('1926.450', 'Scaffolds - General', 'Scaffolds designed by competent person. Platforms min 18 inches wide. Full decking. Max 14-inch gap from face of work. Capacity 4x intended load.'),
+               ('1926.451', 'Scaffold Requirements', 'Guardrails: 38-45 inches top rail, midrail, toeboard. Access: ladders, stairs, or ramps. Foundation on sound footing. Base plates and mudsills.'),
+               ('1926.454', 'Training', 'All scaffold users trained by competent person. Recognize hazards: electrical, falling objects, structural stability. Erectors/dismantlers additional training.')]),
+        ('M', [('1926.500', 'Fall Protection - General', 'Fall protection required at 6 ft in general construction. Leading edge work, holes, and formwork per specific sections. Written fall protection plan required.'),
+               ('1926.501', 'Fall Protection Systems', 'Guardrails, safety nets, or personal fall arrest systems. Guardrails 42 inches top rail. Personal fall arrest: 6 ft max freefall, 1800 lb max arrest force.'),
+               ('1926.502', 'Fall Protection Criteria', 'Guardrail: 200 lb top rail load. Safety net: tested or certified. Full body harness required (belts prohibited for fall arrest). Anchorage: 5000 lb per person.'),
+               ('1926.503', 'Training', 'Employees trained to recognize fall hazards. Training on proper setup and use of fall protection. Retaining when deficiencies observed. Competent person supervises.')]),
+        ('N', [('1926.550', 'Cranes and Hoists', 'Annual inspection by competent person. Load charts posted. Outriggers fully extended. No hoisting over people. Taglines for load control.')]),
+        ('O', [('1926.600', 'Equipment', 'Equipment operators trained and competent. Seatbelts required. Rollover protection (ROPS) on applicable equipment. Daily pre-use inspections.')]),
+        ('P', [('1926.650', 'Excavations - General', 'Competent person inspects daily and after weather events. Utilities located before digging (811). Access (ladder, ramp) within 25 ft of workers.'),
+               ('1926.652', 'Protective Systems', 'Trenches 5+ ft deep require sloping, shoring, or trench box. Soil classification by competent person: Type A (1.5:1 slope), B (1:1), C (1.5:1). Spoil pile min 2 ft from edge.')]),
+        ('Q', [('1926.700', 'Concrete - General', 'Formwork designed by qualified person. Shoring/reshoring per design loads. No employees under forms being stripped. Protruding rebar capped.'),
+               ('1926.702', 'Equipment', 'Concrete equipment guarded. Bull float handles non-conductive near power lines. Concrete pumps per manufacturer. Masonry saw wet cutting preferred.')]),
+        ('R', [('1926.750', 'Steel Erection', 'Fall protection at 15 ft in steel erection (Subpart R exception). Column anchorage with 4 anchor bolts per column. Connections secured before releasing load.'),
+               ('1926.760', 'Falling Object Protection', 'Controlled decking zone (CDZ) limited to 90 ft from erection point. Hard hats required. No loose items on steel members. Perimeter safety cable.')]),
+        ('S', [('1926.800', 'Underground Construction', 'Special provisions for tunnels, shafts, caissons. Atmospheric monitoring for oxygen, flammable gases, toxic gases. Emergency plans and rescue procedures.')]),
+        ('T', [('1926.850', 'Demolition', 'Engineering survey before demolition. Utilities disconnected and capped. Floors shored to support debris weight. Walls not left standing above safe height.')]),
+        ('U', [('1926.900', 'Blasting', 'Licensed blasters only. Blast area security. Warning signals before blasting. Misfires handled per established procedures. Storage per ATF regulations.')]),
+        ('V', [('1926.950', 'Power Transmission', 'Line-clearance work by qualified employees. Minimum approach distances per Table V-2. De-energize and ground when possible. Personal protective grounding.')]),
+        ('W', [('1926.1000', 'ROPS', 'Rollover protective structures on equipment per SAE J1040. Seatbelts used with ROPS. Overhead protection for falling objects where hazard exists.')]),
+        ('X', [('1926.1050', 'Stairways and Ladders', 'Stairway or ladder required at 19-inch elevation change. Stairway: 30-50 degree angle, 6.5 ft headroom, handrails. Portable ladders: 3 ft above landing, 4:1 angle.'),
+               ('1926.1053', 'Ladders', 'Ladder capacity: Type I 250 lb, Type IA 300 lb, Type IAA 375 lb. Inspect before use. No metal ladders near electrical. Extension ladder: 3 ft above landing.')]),
+        ('Z', [('1926.1100', 'Toxic Substances', 'Specific standards for asbestos (1926.1101), lead (1926.62), cadmium (1926.1127), benzene, and other substances. PELs, monitoring, medical surveillance, training required.'),
+               ('1926.1101', 'Asbestos', 'PEL 0.1 f/cc TWA. Competent person required. Regulated areas. Negative exposure assessment or monitoring. Specific work practices for removal, repair, encapsulation.')]),
+        ('AA', [('1926.1200', 'Reserved', 'Subpart AA is reserved for future use.')]),
+        ('CC', [('1926.1400', 'Cranes and Derricks', 'Comprehensive crane safety: operator certification, load charts, annual inspections by competent person. Assembly/disassembly by qualified rigger. Power line safety: Table A.'),
+                ('1926.1408', 'Power Line Safety', 'Min clearance 20 ft from power lines during operation. Dedicated spotter or proximity alarm when closer approach needed. De-energize and ground preferred.'),
+                ('1926.1412', 'Inspections', 'Shift inspection by operator. Monthly inspection documented. Annual comprehensive inspection by competent person. Critical items: hooks, wire rope, brakes, structural members.')]),
+    ]:
+        pid = _ch(conn, bid, ch)
+        if pid:
+            _ins(conn, bid, pid, secs)

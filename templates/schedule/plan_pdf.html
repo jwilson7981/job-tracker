@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter;
+    margin: 0.6in 0.75in;
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 9px;
+        color: #666;
+    }
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11px; color: #222; line-height: 1.5; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 3px solid #1a5276; padding-bottom: 16px; }
+.header-logo img { max-height: 80px; }
+.header-info { text-align: right; font-size: 10px; color: #444; }
+.header-info .company { font-size: 14px; font-weight: 700; color: #1a5276; margin-bottom: 4px; }
+h1 { font-size: 22px; color: #1a5276; text-align: center; margin: 20px 0 24px; letter-spacing: 1px; }
+h2 { font-size: 13px; color: #1a5276; border-bottom: 1.5px solid #1a5276; padding-bottom: 4px; margin: 20px 0 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+h3 { font-size: 12px; color: #1a5276; margin: 14px 0 6px; }
+h4 { font-size: 11px; color: #333; margin: 10px 0 6px; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 16px; }
+.meta-block { padding: 8px 0; }
+.meta-block strong { display: block; font-size: 10px; color: #1a5276; text-transform: uppercase; margin-bottom: 2px; }
+.crew-box { background: #f0f5fa; border: 1.5px solid #1a5276; border-radius: 6px; padding: 14px 18px; margin: 16px 0; text-align: center; }
+.crew-box .crew-main { font-size: 18px; font-weight: 700; color: #1a5276; }
+.crew-box .crew-detail { font-size: 10px; color: #555; margin-top: 4px; }
+.override-box { background: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 6px; padding: 10px 14px; margin: 8px 0; font-size: 10px; color: #92400E; }
+.summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
+.summary-item { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px; text-align: center; }
+.summary-item .val { font-size: 18px; font-weight: 700; color: #1a5276; }
+.summary-item .label { font-size: 9px; color: #666; margin-top: 2px; }
+table.schedule { width: 100%; border-collapse: collapse; font-size: 10px; margin: 8px 0; }
+table.schedule th { background: #1a5276; color: #fff; padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; }
+table.schedule td { padding: 5px 8px; border-bottom: 1px solid #eee; }
+table.schedule tr:nth-child(even) { background: #f8f9fa; }
+table.schedule tr.complete { opacity: 0.5; }
+.warning { color: #DC2626; font-size: 9px; }
+.weather-section { margin-top: 16px; }
+.weather-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.weather-chip { background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 4px; padding: 3px 8px; font-size: 9px; color: #92400E; }
+.footer-contact { margin-top: 24px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 8px; }
+.page-break { page-break-before: always; }
+
+/* Benchmark styles */
+.phase-card { border: 1.5px solid #1a5276; border-radius: 6px; margin-bottom: 16px; overflow: hidden; page-break-inside: avoid; }
+.phase-header { background: #1a5276; color: #fff; padding: 12px 16px; }
+.phase-header h3 { color: #fff; margin: 0; font-size: 14px; border: none; padding: 0; text-transform: none; }
+.phase-header .phase-detail { font-size: 10px; opacity: 0.85; margin-top: 3px; }
+.phase-header .phase-hours { text-align: right; }
+.phase-header .phase-hours .big { font-size: 18px; font-weight: 700; }
+.phase-header .phase-hours .small { font-size: 9px; opacity: 0.75; }
+.progress-bar { background: rgba(255,255,255,0.2); border-radius: 4px; height: 6px; margin-top: 8px; overflow: hidden; }
+.progress-fill { background: #22C55E; height: 100%; border-radius: 4px; }
+.targets-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 16px; background: #EFF6FF; }
+.target-box { background: #fff; border-radius: 4px; padding: 8px 10px; border-left: 3px solid #3B82F6; }
+.target-box.green { border-left-color: #10B981; }
+.target-box.purple { border-left-color: #8B5CF6; }
+.target-box .tval { font-size: 16px; font-weight: 700; color: #1E40AF; }
+.target-box.green .tval { color: #047857; }
+.target-box.purple .tval { color: #6D28D9; }
+.target-box .tlabel { font-size: 9px; color: #666; }
+.warnings-box { padding: 8px 16px; background: #FEF2F2; border-top: 1px solid #eee; }
+.warnings-box h4 { color: #991B1B; margin: 0 0 4px; }
+.warnings-box ul { margin: 0; padding: 0 0 0 16px; font-size: 10px; color: #7F1D1D; }
+.warnings-box li { margin-bottom: 2px; }
+.tasks-box { padding: 8px 16px; background: #F0FDF4; border-top: 1px solid #eee; }
+.tasks-box h4 { color: #166534; margin: 0 0 4px; }
+.tasks-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; font-size: 10px; color: #14532D; }
+.milestone-box { padding: 8px 16px; background: #f8f9fa; border-top: 1px solid #eee; font-size: 10px; }
+.milestone-box strong { color: #1a5276; }
+
+/* Weekly breakdown */
+.week-card { border: 1px solid #dee2e6; border-radius: 4px; margin: 8px 0; overflow: hidden; page-break-inside: avoid; }
+.week-header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #f8f9fa; border-bottom: 1px solid #eee; font-size: 10px; }
+.week-header strong { font-size: 11px; }
+.week-status { padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 600; }
+.week-body { padding: 8px 12px; font-size: 10px; }
+.week-tasks { margin-bottom: 8px; }
+.week-tasks ul { margin: 0; padding: 0 0 0 14px; }
+.week-tasks li { margin-bottom: 1px; }
+.day-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 3px; margin-bottom: 2px; font-size: 9px; }
+.day-work { background: #F0FDF4; border: 1px solid #BBF7D0; }
+.day-risk { background: #FEF2F2; border: 1px solid #FECACA; }
+.day-off { background: #F9FAFB; border: 1px solid #E5E7EB; }
+.day-row strong { min-width: 65px; }
+.day-row .day-date { min-width: 70px; color: #666; }
+.checkpoint { margin-top: 6px; padding: 6px 10px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 4px; font-size: 9px; color: #92400E; }
+.checkpoint .behind { color: #DC2626; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+    <div class="header-logo">
+        <img src="{{ logo_path }}" alt="LGHVAC">
+    </div>
+    <div class="header-info">
+        <div class="company">LGHVAC Mechanical, LLC</div>
+        3616 Utica Square Dr.<br>
+        Edmond, OK 73034<br>
+        Phone: 918-351-3092<br>
+        Email: lgsqoffice@gmail.com
+    </div>
+</div>
+
+<h1>SCHEDULE PLAN</h1>
+
+<!-- JOB INFO -->
+<div class="meta-grid">
+    <div class="meta-block">
+        <strong>Project</strong>
+        {{ job.name or 'Untitled Job' }}<br>
+        {% if job.city or job.state %}{{ job.city or '' }}{% if job.city and job.state %}, {% endif %}{{ job.state or '' }} {{ job.zip_code or '' }}{% endif %}
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>Plan Details</strong>
+        Date: {{ today }}<br>
+        Deadline: {{ summary.deadline or 'N/A' }}<br>
+        Hours/Day: {{ summary.hours_per_day or 10 }}
+    </div>
+</div>
+
+<!-- CREW REQUIREMENTS -->
+<h2>Crew Requirements</h2>
+<div class="crew-box">
+    <div class="crew-main">{{ crew_recommendation }}</div>
+    <div class="crew-detail">
+        {{ summary.total_remaining_hours or 0 }} total remaining hours across {{ plan|selectattr('remaining_hours', 'gt', 0)|list|length }} active phases
+    </div>
+</div>
+
+{% if override_impact %}
+<div class="override-box">
+    <strong>Override Impact:</strong>
+    Auto-calculated {{ override_impact.auto_crew }} men / {{ override_impact.auto_days }} days at {{ override_impact.auto_hours_per_day }}hr/day
+    &rarr; Override {{ override_impact.override_crew }} men / {{ override_impact.override_days }} days at {{ override_impact.override_hours_per_day }}hr/day
+    {% if override_impact.hours_delta > 0 %}
+    <br><em>Extended hours required: {{ override_impact.override_hours_per_day }}hr days</em>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- SUMMARY -->
+<h2>Summary</h2>
+<div class="summary-grid">
+    <div class="summary-item">
+        <div class="val">{{ summary.total_remaining_hours or 0 }}</div>
+        <div class="label">Remaining Hours</div>
+    </div>
+    <div class="summary-item">
+        <div class="val">{{ summary.calendar_days or 0 }}</div>
+        <div class="label">Calendar Days</div>
+    </div>
+    <div class="summary-item">
+        <div class="val">{{ summary.business_days or 0 }}</div>
+        <div class="label">Business Days</div>
+    </div>
+    <div class="summary-item">
+        <div class="val">{{ summary.available_work_days or 0 }}</div>
+        <div class="label">Available Days (minus weather)</div>
+    </div>
+    <div class="summary-item">
+        <div class="val">{{ summary.weather_risk_days or 0 }}</div>
+        <div class="label">Weather Risk Days</div>
+    </div>
+    <div class="summary-item">
+        <div class="val">{{ summary.total_systems or '-' }}</div>
+        <div class="label">Total Systems</div>
+    </div>
+</div>
+
+{% if summary.commercial %}
+<div class="summary-grid" style="grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));">
+    {% if summary.commercial.ptac_count %}<div class="summary-item"><div class="val">{{ summary.commercial.ptac_count }}</div><div class="label">PTACs</div></div>{% endif %}
+    {% if summary.commercial.vtac_count %}<div class="summary-item"><div class="val">{{ summary.commercial.vtac_count }}</div><div class="label">VTACs</div></div>{% endif %}
+    {% if summary.commercial.split_count %}<div class="summary-item"><div class="val">{{ summary.commercial.split_count }}</div><div class="label">Splits (Common)</div></div>{% endif %}
+    {% if summary.commercial.rtu_count %}<div class="summary-item"><div class="val">{{ summary.commercial.rtu_count }}</div><div class="label">RTUs</div></div>{% endif %}
+    {% if summary.commercial.metal_duct_lf %}<div class="summary-item"><div class="val">{{ summary.commercial.metal_duct_lf }}</div><div class="label">Metal Duct LF</div></div>{% endif %}
+</div>
+{% endif %}
+
+<!-- PHASE SCHEDULE -->
+<h2>Phase Schedule</h2>
+<table class="schedule">
+    <thead>
+        <tr>
+            <th>Phase</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Work Days</th>
+            <th>Remaining Hrs</th>
+            <th>Crew</th>
+            <th>Weather Risk</th>
+            <th>Notes</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in plan %}
+        <tr{% if p.remaining_hours <= 0 %} class="complete"{% endif %}>
+            <td><strong>{{ p.phase_name }}</strong></td>
+            <td>{{ p.start_date or '-' }}</td>
+            <td>{{ p.end_date or '-' }}</td>
+            <td>{{ p.work_days }}</td>
+            <td>{{ p.remaining_hours }}h of {{ p.total_hours }}h</td>
+            <td><strong>{{ p.crew_needed }}</strong>{% if p.hours_per_day_needed and p.hours_per_day_needed > (summary.hours_per_day or 10) %} <span class="warning">({{ p.hours_per_day_needed }}hr/day)</span>{% endif %}</td>
+            <td>{% if p.weather_risk_days > 0 %}{{ p.weather_risk_days }} days{% else %}None{% endif %}</td>
+            <td>{% if p.warning %}<span class="warning">{{ p.warning }}</span>{% elif p.remaining_hours <= 0 %}Complete{% else %}-{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- WEATHER RISK -->
+{% set risk_days = weather|selectattr('delay_risk')|list %}
+{% if risk_days %}
+<div class="weather-section">
+    <h2>Weather Risk Days</h2>
+    <div class="weather-chips">
+        {% for w in risk_days %}
+        <div class="weather-chip">
+            {{ w.date }} — {{ w.risk_reasons|join(', ') }}
+            (H:{{ w.high }}&deg;F L:{{ w.low }}&deg;F{% if w.precip %} Rain:{{ w.precip }}in{% endif %}{% if w.wind_gust > 20 %} Wind:{{ w.wind_gust }}mph{% endif %})
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- DETAILED BENCHMARKS & DAILY/WEEKLY TARGETS -->
+{% if benchmarks %}
+<div class="page-break"></div>
+
+<h1 style="font-size:18px;">DETAILED BENCHMARKS &amp; DAILY/WEEKLY TARGETS</h1>
+
+{% for bm in benchmarks %}
+<div class="phase-card">
+    <!-- Phase Header -->
+    <div class="phase-header">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h3>{{ bm.phase_name }}</h3>
+                <div class="phase-detail">{{ bm.start_date }} &rarr; {{ bm.end_date }} &bull; {{ bm.work_days }} work days &bull; {{ bm.crew_needed }} crew</div>
+            </div>
+            <div class="phase-hours">
+                <div class="big">{{ bm.remaining_hours }}h</div>
+                <div class="small">remaining of {{ bm.total_hours }}h</div>
+            </div>
+        </div>
+        {% if bm.existing_pct_complete and bm.existing_pct_complete > 0 %}
+        <div style="margin-top:6px;font-size:9px;">
+            Progress: {{ bm.existing_pct_complete }}% complete | Remaining: {{ 100 - bm.existing_pct_complete }}%
+        </div>
+        <div class="progress-bar">
+            <div class="progress-fill" style="width:{{ bm.existing_pct_complete }}%;"></div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Daily Production Targets -->
+    <div class="targets-grid">
+        <div class="target-box">
+            <div class="tval">{{ bm.units_per_day }}</div>
+            <div class="tlabel">Units per day</div>
+        </div>
+        <div class="target-box green">
+            <div class="tval">{{ bm.daily_target_hours or (bm.crew_needed * bm.hours_per_day) }}h</div>
+            <div class="tlabel">Man-hours/day ({{ bm.crew_needed }} x {{ bm.hours_per_day }}hr)</div>
+        </div>
+        <div class="target-box purple">
+            <div class="tval">{{ bm.hours_per_day }}hr</div>
+            <div class="tlabel">Hours/day per man</div>
+        </div>
+    </div>
+
+    <!-- Early Warnings -->
+    {% if bm.early_warnings %}
+    <div class="warnings-box">
+        <h4>Early Warning Signs</h4>
+        <ul>
+            {% for w in bm.early_warnings %}
+            <li>{{ w }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Phase Deliverables -->
+    {% if bm.tasks_overview %}
+    <div class="tasks-box">
+        <h4>Phase Deliverables Checklist</h4>
+        <div class="tasks-grid">
+            {% for t in bm.tasks_overview %}
+            <div>{{ loop.index }}. {{ t }}</div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Weekly Breakdown -->
+    {% if bm.weeks %}
+    <div style="padding:10px 16px;">
+        <h4 style="margin:0 0 8px;color:#1a5276;">Weekly Breakdown</h4>
+        {% for wk in bm.weeks %}
+        {% set status_colors = {'early':'#3B82F6','mid_early':'#10B981','mid_late':'#F59E0B','final':'#EF4444'} %}
+        {% set status_labels = {'early':'Getting Started','mid_early':'Building Momentum','mid_late':'Pushing Through','final':'Final Push'} %}
+        {% set sc = status_colors.get(wk.checkpoint_status, '#6B7280') %}
+        {% set sl = status_labels.get(wk.checkpoint_status, '') %}
+        <div class="week-card">
+            <div class="week-header">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <strong>Week {{ wk.week_num }}</strong>
+                    <span style="color:#666;">{{ wk.start_date }} &mdash; {{ wk.end_date }}</span>
+                    {% if sl %}<span class="week-status" style="background:{{ sc }}15;color:{{ sc }};">{{ sl }}</span>{% endif %}
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-weight:600;color:{{ sc }};">{{ wk.target_pct_complete }}% target</span>
+                    {% if bm.total_systems %}<span style="color:#666;">{{ wk.target_units_complete }} of {{ bm.total_systems }} units</span>{% endif %}
+                </div>
+            </div>
+            <div class="week-body">
+                {% if wk.tasks %}
+                <div class="week-tasks">
+                    <div style="font-size:9px;font-weight:600;color:#666;margin-bottom:2px;text-transform:uppercase;">This Week's Focus:</div>
+                    <ul>
+                        {% for t in wk.tasks %}
+                        <li>{{ t }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                <div style="font-size:9px;font-weight:600;color:#666;margin-bottom:2px;text-transform:uppercase;">Daily Schedule:</div>
+                {% for day in wk.daily_plan %}
+                <div class="day-row {% if day.weather_risk %}day-risk{% elif day.is_work_day %}day-work{% else %}day-off{% endif %}">
+                    {% if day.weather_risk %}&#x26A0;{% elif day.is_work_day %}&#x2705;{% else %}&nbsp;{% endif %}
+                    <strong>{{ day.day_name }}</strong>
+                    <span class="day-date">{{ day.date }}</span>
+                    {% if day.is_work_day %}
+                    <span style="color:#166534;">Target: {{ wk.daily_target_units }} units &bull; {{ wk.daily_target_hours }}hrs</span>
+                    {% elif day.weather_risk %}
+                    {% set wi = day.weather_info or {} %}
+                    <span style="color:#991B1B;">Weather risk{% if wi.risk_reasons %}: {{ wi.risk_reasons|join(', ') }}{% endif %}</span>
+                    {% endif %}
+                    {% set wi = day.weather_info or {} %}
+                    {% if wi.high is defined and wi.high is not none %}
+                    <span style="color:#999;margin-left:auto;">{{ wi.high }}&deg;/{{ wi.low }}&deg;F</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+
+                <div class="checkpoint">
+                    <strong>End-of-Week Checkpoint:</strong> {{ wk.target_pct_complete }}% complete{% if bm.total_systems %} ({{ wk.target_units_complete }} units done){% endif %} &bull; {{ wk.target_hours_burned }}h of {{ bm.remaining_hours }}h burned<br>
+                    {% if wk.behind_warning %}<span class="behind">{{ wk.behind_warning }}</span>{% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Phase Milestone -->
+    {% if bm.key_milestone %}
+    <div class="milestone-box">
+        <strong>Phase Milestone:</strong> {{ bm.key_milestone }}
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<div class="footer-contact">
+    LGHVAC Mechanical, LLC &bull; 918-351-3092 &bull; lgsqoffice@gmail.com
+</div>
+
+</body>
+</html>

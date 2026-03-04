@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+{% block title %}Plans - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Plans</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Plans','plansBody','Plans')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Plans','plansBody','Plans')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="showAddPlan()">+ Upload Plan</button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="planSummary">
+    <div class="kpi-card" style="border-left: 4px solid #6366F1;">
+        <div class="kpi-value" id="sumTotal">0</div>
+        <div class="kpi-label">Total Plans</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #9CA3AF;">
+        <div class="kpi-value" id="sumUploaded">0</div>
+        <div class="kpi-label">Uploaded</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #3B82F6;">
+        <div class="kpi-value" id="sumReviewed">0</div>
+        <div class="kpi-label">Reviewed</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="sumTakeoff">0</div>
+        <div class="kpi-label">Takeoff Complete</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="loadPlans()" style="max-width:240px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="loadPlans()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Uploaded">Uploaded</option>
+        <option value="Reviewing">Reviewing</option>
+        <option value="Reviewed">Reviewed</option>
+        <option value="Takeoff Complete">Takeoff Complete</option>
+    </select>
+    <select id="filterType" class="form-select" onchange="loadPlans()" style="max-width:180px;">
+        <option value="">All Types</option>
+        <option value="Mechanical">Mechanical</option>
+        <option value="Architectural">Architectural</option>
+        <option value="Structural">Structural</option>
+        <option value="Plumbing">Plumbing</option>
+        <option value="Electrical">Electrical</option>
+        <option value="Site">Site</option>
+        <option value="Full Set">Full Set</option>
+    </select>
+    <span id="planCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Plans Table -->
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Pages</th>
+                <th>Upload Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="plansBody">
+            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- AI Review Results Panel -->
+<div id="reviewPanel" style="display:none;margin-top:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <h2 style="margin:0;">Plan Data Extraction</h2>
+        <button class="btn btn-secondary btn-small" onclick="document.getElementById('reviewPanel').style.display='none'">Close</button>
+    </div>
+    <div id="reviewContent" class="card" style="padding:20px;background:var(--gray-50);border-radius:8px;"></div>
+</div>
+
+<!-- Takeoff Questions Modal -->
+<div class="modal-overlay" id="takeoffQuestionsModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:1050px;">
+        <div class="modal-header">
+            <h2>Takeoff Calculator</h2>
+            <button class="modal-close" onclick="document.getElementById('takeoffQuestionsModal').style.display='none'">&times;</button>
+        </div>
+        <div style="padding:0 4px;max-height:80vh;overflow-y:auto;">
+
+            <form onsubmit="submitTakeoffQuestions(event)" id="takeoffQuestionsForm">
+
+                <!-- SECTION 1: Unit Types Matrix -->
+                <div style="background:var(--gray-50);border-radius:8px;padding:16px;margin-bottom:16px;">
+                    <h3 style="margin:0 0 4px;font-size:15px;color:var(--primary);">Unit Types</h3>
+                    <p style="margin:0 0 12px;font-size:12px;color:var(--gray-500);">Enter the quantity and equipment sizing for each unit type in the build.</p>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%;font-size:13px;border-collapse:collapse;" id="unitTypesTable">
+                            <thead>
+                                <tr style="background:var(--gray-100);">
+                                    <th style="padding:8px 4px;text-align:left;white-space:nowrap;">Unit Type</th>
+                                    <th style="padding:8px 4px;text-align:center;width:60px;">Qty</th>
+                                    <th style="padding:8px 4px;text-align:center;">Tonnage</th>
+                                    <th style="padding:8px 4px;text-align:center;">Heat Strip</th>
+                                    <th style="padding:8px 4px;text-align:center;width:60px;">6" Drops</th>
+                                    <th style="padding:8px 4px;text-align:center;width:60px;">8" Drops</th>
+                                    <th style="padding:8px 4px;text-align:center;width:60px;">10" Drops</th>
+                                    <th style="padding:8px 4px;text-align:center;width:60px;">Returns</th>
+                                    <th style="padding:8px 4px;text-align:center;width:70px;" title="Override default line set length for this unit type">LS ft</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr data-unit="1-1">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">1 Bed / 1 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="1.5">1.5T</option><option value="2" selected>2T</option><option value="2.5">2.5T</option><option value="3">3T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5" selected>5kW</option><option value="8">8kW</option><option value="10">10kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="2" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                                <tr data-unit="1-2">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">1 Bed / 2 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="1.5">1.5T</option><option value="2" selected>2T</option><option value="2.5">2.5T</option><option value="3">3T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5" selected>5kW</option><option value="8">8kW</option><option value="10">10kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="2" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                                <tr data-unit="2-1">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">2 Bed / 1 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="1.5">1.5T</option><option value="2" selected>2T</option><option value="2.5">2.5T</option><option value="3">3T</option><option value="3.5">3.5T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5">5kW</option><option value="8" selected>8kW</option><option value="10">10kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="3" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                                <tr data-unit="2-2">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">2 Bed / 2 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="1.5">1.5T</option><option value="2">2T</option><option value="2.5" selected>2.5T</option><option value="3">3T</option><option value="3.5">3.5T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5">5kW</option><option value="8" selected>8kW</option><option value="10">10kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="3" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="2" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                                <tr data-unit="3-1">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">3 Bed / 1 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="2">2T</option><option value="2.5">2.5T</option><option value="3" selected>3T</option><option value="3.5">3.5T</option><option value="4">4T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5">5kW</option><option value="8">8kW</option><option value="10" selected>10kW</option><option value="15">15kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="4" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="2" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                                <tr data-unit="3-2">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">3 Bed / 2 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="2">2T</option><option value="2.5">2.5T</option><option value="3" selected>3T</option><option value="3.5">3.5T</option><option value="4">4T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5">5kW</option><option value="8">8kW</option><option value="10" selected>10kW</option><option value="15">15kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="4" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="2" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="1" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                                <tr data-unit="3-3">
+                                    <td style="padding:4px;font-weight:600;white-space:nowrap;">3 Bed / 3 Bath</td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uQty" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><select class="form-select uTon" style="padding:4px;font-size:12px;"><option value="2.5">2.5T</option><option value="3">3T</option><option value="3.5" selected>3.5T</option><option value="4">4T</option><option value="5">5T</option></select></td>
+                                    <td style="padding:3px;"><select class="form-select uHS" style="padding:4px;font-size:12px;"><option value="0">None</option><option value="5">5kW</option><option value="8">8kW</option><option value="10" selected>10kW</option><option value="15">15kW</option><option value="20">20kW</option></select></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop6" min="0" step="any" value="4" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop8" min="0" step="any" value="3" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uDrop10" min="0" step="any" value="0" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uRet" min="0" step="any" value="2" style="width:55px;text-align:center;padding:4px;"></td>
+                                    <td style="padding:3px;"><input type="number" class="form-input uLS" min="0" step="any" value="" placeholder="--" style="width:55px;text-align:center;padding:4px;font-size:12px;" title="Leave blank to use building default"></td>
+                                </tr>
+                            </tbody>
+                            <tfoot>
+                                <tr style="background:var(--gray-100);font-weight:600;">
+                                    <td style="padding:8px 4px;">Total Units:</td>
+                                    <td style="padding:8px 4px;text-align:center;" id="tqTotalUnitsDisplay">0</td>
+                                    <td colspan="7"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-small" onclick="addUnitTypeRow()" style="margin-top:8px;">+ Add Custom Row</button>
+                    <span style="font-size:11px;color:var(--gray-400);margin-left:8px;">Use for same bed/bath combo with different tonnage</span>
+                </div>
+
+                <!-- SECTION 2: Building & Equipment -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+                    <div style="background:var(--gray-50);border-radius:8px;padding:16px;">
+                        <h3 style="margin:0 0 12px;font-size:15px;color:var(--primary);">Building Info</h3>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Number of Stories</label>
+                            <input type="number" id="tqStories" class="form-input" min="1" max="20" value="3">
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">System Type</label>
+                            <select id="tqSystemType" class="form-select" onchange="toggleGasOptions()">
+                                <option value="heat_pump" selected>Heat Pump</option>
+                                <option value="condenser">AC Condenser</option>
+                                <option value="gas_furnace">Gas Furnace + Condenser</option>
+                                <option value="mini_split">Mini Split</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Thermostat</label>
+                            <select id="tqThermostat" class="form-select">
+                                <option value="programmable" selected>Programmable</option>
+                                <option value="wifi">WiFi</option>
+                                <option value="smart">Smart (Ecobee/Nest)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Avg Line Set Length (ft)</label>
+                            <input type="number" id="tqLineSetLength" class="form-input" min="0" max="500" step="any" value="25">
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Bags of Flex per Drop</label>
+                            <input type="number" id="tqFlexPerDrop" class="form-input" min="0" max="10" step="any" value="1">
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">R8 Flex Floors <span style="font-size:11px;color:var(--gray-400);">(IRC: top floor = R8)</span></label>
+                            <input type="number" id="tqR8Floors" class="form-input" min="0" max="20" value="1" title="Number of top floors requiring R8 flex (code requirement)">
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Fresh Air Intakes per Unit</label>
+                            <input type="number" id="tqFreshAirPerUnit" class="form-input" min="0" max="10" step="any" value="1" title="Number of fresh air intakes per unit (for round CRDs)">
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Corridor / Common Area Units</label>
+                            <input type="number" id="tqCorridorUnits" class="form-input" min="0" max="50" value="0" title="Separate HVAC systems for corridors (commercial multi-family)">
+                        </div>
+                    </div>
+
+                    <div style="background:var(--gray-50);border-radius:8px;padding:16px;">
+                        <h3 style="margin:0 0 12px;font-size:15px;color:var(--primary);">Installation Questions</h3>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Outdoor Units</label>
+                            <select id="tqOutdoorLoc" class="form-select">
+                                <option value="ground" selected>On Ground</option>
+                                <option value="roof">On Roof</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Unit Orientation</label>
+                            <select id="tqOrientation" class="form-select">
+                                <option value="horizontal" selected>Horizontal</option>
+                                <option value="vertical">Vertical</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Installed Location</label>
+                            <select id="tqInstallLoc" class="form-select">
+                                <option value="attic" selected>Attic</option>
+                                <option value="closet">Closet</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Indoor Unit Mounting</label>
+                            <select id="tqMounting" class="form-select">
+                                <option value="hanger" selected>Wall Hanger Style</option>
+                                <option value="shelf">Set on Shelf</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Exhaust Fan Type</label>
+                            <select id="tqExhaustType" class="form-select">
+                                <option value="ceiling" selected>Ceiling</option>
+                                <option value="sidewall">Sidewall</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Thermostat Wire Gauge</label>
+                            <select id="tqTstatWireGauge" class="form-select">
+                                <option value="18/5" selected>18/5 (Standard Heat Pump)</option>
+                                <option value="18/8">18/8 (2-stage / Communicating)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Line Set Insulation Type</label>
+                            <select id="tqLineInsulType" class="form-select">
+                                <option value="armaflex" selected>Armaflex (Rubber)</option>
+                                <option value="fiberglass">Fiberglass Pipe Wrap</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0 0 10px;">
+                            <label class="form-label">Condensate Line Material</label>
+                            <select id="tqCondensateMat" class="form-select">
+                                <option value="pvc" selected>PVC</option>
+                                <option value="cpvc">CPVC</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;display:none;" id="tqGasLineSizeWrap">
+                            <label class="form-label">Gas Line Size</label>
+                            <select id="tqGasLineSize" class="form-select">
+                                <option value="1/2" selected>1/2"</option>
+                                <option value="3/4">3/4"</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECTION 3: Yes/No Build Questions -->
+                <div style="background:var(--gray-50);border-radius:8px;padding:16px;margin-bottom:16px;">
+                    <h3 style="margin:0 0 12px;font-size:15px;color:var(--primary);">Build Options</h3>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;">
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqDuctboard"> Built with Ductboard?
+                        </label>
+                        <div id="tqDuctboardQtyWrap" style="display:none;">
+                            <label class="form-label" style="font-size:12px;">Sheets per Unit</label>
+                            <input type="number" id="tqDuctboardQty" class="form-input" min="0" max="50" step="any" value="2" style="width:70px;padding:4px;">
+                        </div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqZoning"> Built with Zoning?
+                        </label>
+                        <div></div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqFireWrap"> Fire Wrap Required? <span style="font-size:11px;color:var(--gray-400);">(Columbia MO build)</span>
+                        </label>
+                        <div></div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqCRDs" checked> Built with CRDs?
+                        </label>
+                        <div id="tqCRDKitchenWrap" style="display:none;">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding-left:20px;">
+                                <input type="checkbox" id="tqCRDKitchen"> CRD exhaust fans in kitchens too?
+                            </label>
+                        </div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqDrainPans" checked> Drain Pans Needed?
+                        </label>
+                        <div></div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqOutsideAir"> Outside Air Required? <span style="font-size:11px;color:var(--gray-400);">(ASHRAE 62.2)</span>
+                        </label>
+                        <div></div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqWrapDryersBoots"> Wrapping Dryers and Boots?
+                        </label>
+                        <div></div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqPassthroughs"> Passthroughs?
+                        </label>
+                        <div></div>
+
+                        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+                            <input type="checkbox" id="tqFreight" checked> Include Freight?
+                        </label>
+                        <div></div>
+                    </div>
+                </div>
+
+                <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-bottom:8px;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('takeoffQuestionsModal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn btn-primary" style="min-width:160px;">Calculate Takeoff</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Takeoff Editor Panel -->
+<div id="takeoffPanel" style="display:none;margin-top:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <h2 style="margin:0;">Material Takeoff</h2>
+        <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-small" onclick="showTakeoffQuestions(currentTakeoffPlanId)">Recalculate</button>
+            <button class="btn btn-secondary btn-small" onclick="exportTakeoff()">Export CSV</button>
+            <button class="btn btn-primary btn-small" id="saveTakeoffBtn" onclick="saveTakeoff()">Save Takeoff</button>
+            <button class="btn btn-secondary btn-small" onclick="document.getElementById('takeoffPanel').style.display='none'">Close</button>
+        </div>
+    </div>
+
+    <!-- Takeoff Inputs Summary -->
+    <div id="takeoffInputsSummary" style="margin-bottom:16px;padding:12px;background:#EFF6FF;border-radius:6px;border-left:4px solid #3B82F6;display:none;">
+    </div>
+
+    <!-- Detected Info (legacy) -->
+    <div id="takeoffDetected" style="margin-bottom:16px;padding:12px;background:#EFF6FF;border-radius:6px;border-left:4px solid #3B82F6;display:none;">
+    </div>
+
+    <!-- Takeoff Sections -->
+    <div id="takeoffContent"></div>
+
+    <!-- Summary Footer -->
+    <div id="takeoffSummary" class="card" style="margin-top:16px;padding:20px;background:var(--gray-50);border-radius:8px;">
+    </div>
+</div>
+
+<!-- Add/Edit Plan Modal -->
+<div class="modal-overlay" id="planModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="planModalTitle">Upload Plan</h2>
+            <button class="modal-close" onclick="document.getElementById('planModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="savePlan(event)" id="planForm">
+            <div class="form-group">
+                <label class="form-label">Job</label>
+                <select id="planJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input type="text" id="planTitle" class="form-input" required placeholder="e.g., Mechanical Floor Plan - Building A">
+            </div>
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Plan Type</label>
+                    <select id="planType" class="form-select" required>
+                        <option value="Mechanical">Mechanical</option>
+                        <option value="Architectural">Architectural</option>
+                        <option value="Structural">Structural</option>
+                        <option value="Plumbing">Plumbing</option>
+                        <option value="Electrical">Electrical</option>
+                        <option value="Site">Site</option>
+                        <option value="Full Set">Full Set</option>
+                    </select>
+                </div>
+                <div class="form-group" id="planStatusGroup" style="display:none;">
+                    <label class="form-label">Status</label>
+                    <select id="planStatus" class="form-select">
+                        <option value="Uploaded">Uploaded</option>
+                        <option value="Reviewing">Reviewing</option>
+                        <option value="Reviewed">Reviewed</option>
+                        <option value="Takeoff Complete">Takeoff Complete</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea id="planNotes" class="form-input" rows="3" placeholder="Additional notes..." style="resize:vertical;min-height:80px;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Plan File (PDF)</label>
+                <input type="file" id="planFile" class="form-input" accept=".pdf">
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('planModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Plan</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View Plan Detail Modal -->
+<div class="modal-overlay" id="planDetailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:750px;">
+        <div class="modal-header">
+            <h2 id="detailTitle">Plan Details</h2>
+            <button class="modal-close" onclick="document.getElementById('planDetailModal').style.display='none'">&times;</button>
+        </div>
+        <div id="detailContent" style="padding:0 4px;max-height:70vh;overflow-y:auto;">
+        </div>
+        <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('planDetailModal').style.display='none'">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Drop Zone Overlay -->
+<div id="dropOverlay" style="display:none;position:fixed;inset:0;background:rgba(26,82,118,0.85);z-index:9999;display:none;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;">
+    <div style="border:3px dashed #fff;border-radius:16px;padding:60px 80px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:16px;">&#128196;</div>
+        <div style="font-size:24px;font-weight:700;color:#fff;margin-bottom:8px;">Drop Plan Files Here</div>
+        <div style="font-size:14px;color:rgba(255,255,255,0.8);">PDF files will be uploaded to the selected job</div>
+    </div>
+</div>
+
+<!-- Quick Upload Modal (shown after drop) -->
+<div class="modal-overlay" id="dropUploadModal" style="display:none;" onclick="if(event.target===this)cancelDropUpload()">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2 id="dropUploadTitle">Upload Dropped Files</h2>
+            <button class="modal-close" onclick="cancelDropUpload()">&times;</button>
+        </div>
+        <div id="dropFileList" style="margin-bottom:16px;"></div>
+        <form onsubmit="submitDropUpload(event)">
+            <div class="form-group">
+                <label class="form-label">Job *</label>
+                <select id="dropJob" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Plan Type</label>
+                <select id="dropType" class="form-select">
+                    <option value="Mechanical">Mechanical</option>
+                    <option value="Architectural">Architectural</option>
+                    <option value="Structural">Structural</option>
+                    <option value="Plumbing">Plumbing</option>
+                    <option value="Electrical">Electrical</option>
+                    <option value="Site">Site</option>
+                    <option value="Full Set">Full Set</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="cancelDropUpload()">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="dropSubmitBtn">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/plans.js?v={{ range(10000, 99999) | random }}"></script>
+{% endblock %}
