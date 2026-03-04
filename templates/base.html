@@ -20,6 +20,69 @@
     <script src="/static/export_utils.js"></script>
     {% block scripts %}{% endblock %}
     {% if current_user %}
+    <!-- Floating Calculator Widget -->
+    <div class="calc-widget" id="calcWidget">
+        <div class="calc-widget-header" onclick="toggleCalc()">
+            <span>&#128290; Calculator</span>
+            <span class="calc-widget-toggle" id="calcToggle">&#9650;</span>
+        </div>
+        <div class="calc-widget-body" id="calcBody">
+            <input type="text" id="calcDisplay" class="calc-display" readonly value="0">
+            <div class="calc-buttons">
+                <button class="calc-btn calc-fn" onclick="calcClear()">C</button>
+                <button class="calc-btn calc-fn" onclick="calcBackspace()">&#9003;</button>
+                <button class="calc-btn calc-fn" onclick="calcPercent()">%</button>
+                <button class="calc-btn calc-op" onclick="calcOp('/')">&divide;</button>
+                <button class="calc-btn" onclick="calcDigit('7')">7</button>
+                <button class="calc-btn" onclick="calcDigit('8')">8</button>
+                <button class="calc-btn" onclick="calcDigit('9')">9</button>
+                <button class="calc-btn calc-op" onclick="calcOp('*')">&times;</button>
+                <button class="calc-btn" onclick="calcDigit('4')">4</button>
+                <button class="calc-btn" onclick="calcDigit('5')">5</button>
+                <button class="calc-btn" onclick="calcDigit('6')">6</button>
+                <button class="calc-btn calc-op" onclick="calcOp('-')">&minus;</button>
+                <button class="calc-btn" onclick="calcDigit('1')">1</button>
+                <button class="calc-btn" onclick="calcDigit('2')">2</button>
+                <button class="calc-btn" onclick="calcDigit('3')">3</button>
+                <button class="calc-btn calc-op" onclick="calcOp('+')">+</button>
+                <button class="calc-btn calc-zero" onclick="calcDigit('0')">0</button>
+                <button class="calc-btn" onclick="calcDigit('.')">.</button>
+                <button class="calc-btn calc-eq" onclick="calcEquals()">=</button>
+            </div>
+        </div>
+    </div>
+    <script>
+    let _calcVal='', _calcPrev='', _calcOp='', _calcReset=false;
+    function toggleCalc(){
+        const b=document.getElementById('calcBody'), t=document.getElementById('calcToggle');
+        if(b.style.display==='none'){b.style.display='';t.innerHTML='&#9650;';}
+        else{b.style.display='none';t.innerHTML='&#9660;';}
+    }
+    function calcUpdate(){document.getElementById('calcDisplay').value=_calcVal||'0';}
+    function calcDigit(d){
+        if(_calcReset){_calcVal='';_calcReset=false;}
+        if(d==='.'&&_calcVal.includes('.'))return;
+        _calcVal+=d;calcUpdate();
+    }
+    function calcOp(op){
+        if(_calcVal&&_calcPrev&&_calcOp)calcEquals();
+        _calcPrev=_calcVal||_calcPrev;_calcOp=op;_calcVal='';
+    }
+    function calcEquals(){
+        if(!_calcPrev||!_calcOp)return;
+        const a=parseFloat(_calcPrev),b=parseFloat(_calcVal||'0');
+        let r=0;
+        if(_calcOp==='+')r=a+b;else if(_calcOp==='-')r=a-b;
+        else if(_calcOp==='*')r=a*b;else if(_calcOp==='/')r=b!==0?a/b:0;
+        _calcVal=parseFloat(r.toFixed(10)).toString();_calcPrev='';_calcOp='';_calcReset=true;calcUpdate();
+    }
+    function calcClear(){_calcVal='';_calcPrev='';_calcOp='';_calcReset=false;calcUpdate();}
+    function calcBackspace(){_calcVal=_calcVal.slice(0,-1);calcUpdate();}
+    function calcPercent(){if(_calcVal)_calcVal=(parseFloat(_calcVal)/100).toString();calcUpdate();}
+    document.getElementById('calcBody').style.display='none';
+    document.getElementById('calcToggle').innerHTML='&#9660;';
+    </script>
+
     <!-- Floating Chat Widget -->
     <div class="chat-widget" id="chatWidget">
         <div class="chat-widget-header" id="chatWidgetHeader">
