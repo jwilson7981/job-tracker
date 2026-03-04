@@ -556,6 +556,10 @@ def update_job(job_id):
         if field in data:
             val = (data[field] or '').strip()
             conn.execute(f'UPDATE jobs SET {field} = ?, updated_at = datetime("now","localtime") WHERE id = ?', (val, job_id))
+    if 'project_manager_id' in data:
+        pm_id = data['project_manager_id']
+        conn.execute('UPDATE jobs SET project_manager_id = ?, updated_at = datetime("now","localtime") WHERE id = ?',
+                     (int(pm_id) if pm_id else None, job_id))
     if 'tax_rate' in data:
         conn.execute('UPDATE jobs SET tax_rate = ?, updated_at = datetime("now","localtime") WHERE id = ?',
                      (float(data['tax_rate'] or 0), job_id))
@@ -12614,7 +12618,7 @@ MODULE_LINKS = {
     'bid_followups': '/bids', 'contracts': '/contracts', 'coi': '/coi',
     'payapps': '/payapps', 'projects': '/projects/{job_id}',
     'permits': '/permits', 'submittals': '/submittals',
-    'precon': '/projects/{job_id}',
+    'precon': '/projects/{job_id}?tab=precon',
     'rfis': '/rfis', 'materials': '/materials/job/{job_id}',
     'receiving': '/receiving', 'inventory': '/inventory',
     'invoices': '/invoices', 'shipments': '/material-shipments',

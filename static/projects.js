@@ -8,7 +8,13 @@ if (document.getElementById('projectsBody') && !window.JOB_ID) {
 
 // Detail page
 if (window.JOB_ID) {
-    loadProjectDetail();
+    loadProjectDetail().then(() => {
+        const tabParam = new URLSearchParams(window.location.search).get('tab');
+        if (tabParam) {
+            const tabBtn = document.querySelector(`.tab-bar .tab[onclick*="'${tabParam}'"]`);
+            switchProjectTab(tabParam, tabBtn);
+        }
+    });
 }
 
 var _allProjects = [];
@@ -104,10 +110,26 @@ async function loadProjectDetail() {
     const totalInvoiced = data.invoices.reduce((s, i) => s + (i.amount || 0), 0);
     const totalLabor = data.time_entries.reduce((s, t) => s + (t.hours || 0) * (t.hourly_rate || 0), 0);
 
-    // Supplier account info
-    if (data.job.supplier_account) {
-        const infoEl = document.getElementById('projectInfo');
-        if (infoEl) infoEl.innerHTML = `<span class="text-muted">Supplier Account:</span> <strong>${data.job.supplier_account}</strong>`;
+    // Project info bar (supplier account + PM assignment)
+    const infoEl = document.getElementById('projectInfo');
+    if (infoEl) {
+        let infoHtml = '';
+        if (data.job.supplier_account) {
+            infoHtml += `<span><span class="text-muted">Supplier Account:</span> <strong>${data.job.supplier_account}</strong></span>`;
+        }
+        infoHtml += `<span><span class="text-muted">Project Manager:</span> <select id="pmSelect" class="form-select" style="display:inline-block;width:auto;margin-left:6px;padding:2px 8px;font-size:13px;" onchange="assignPM(this.value)"><option value="">-- Unassigned --</option></select></span>`;
+        infoEl.innerHTML = infoHtml;
+        // Populate PM dropdown
+        fetch('/api/users/list').then(r => r.json()).then(users => {
+            const sel = document.getElementById('pmSelect');
+            users.filter(u => ['owner','admin','project_manager'].includes(u.role)).forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = u.display_name || u.username;
+                if (data.job.project_manager_id == u.id) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        });
     }
 
     // KPIs
@@ -144,6 +166,15 @@ async function loadProjectDetail() {
     document.getElementById('pLabor').innerHTML = data.time_entries.length ?
         data.time_entries.map(t => `<tr><td>${t.work_date||'-'}</td><td>${t.employee_name||'-'}</td><td>${t.hours}h</td><td>${fmt(t.hourly_rate)}</td><td class="cell-computed">${fmt(t.hours*t.hourly_rate)}</td><td>${t.description||'-'}</td></tr>`).join('') :
         '<tr><td colspan="6" class="empty-state">No time entries.</td></tr>';
+}
+
+async function assignPM(userId) {
+    const res = await fetch(`/api/job/${JOB_ID}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_manager_id: userId || null })
+    });
+    if (!res.ok) alert('Failed to assign PM');
 }
 
 function switchProjectTab(tab, btn) {
