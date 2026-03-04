@@ -21,7 +21,7 @@ const TRAINING_MODULES = [
                 title: 'Logging In & Your Account',
                 summary: 'How to log in, change your password, and understand your role.',
                 steps: [
-                    'Open your web browser and go to the app URL provided by your administrator (e.g. http://192.168.1.x:5001).',
+                    'Open your web browser and go to <strong>app.lghvac.net</strong> — this works from anywhere (office, home, job site, or cellular data).',
                     'Enter your <strong>username</strong> and <strong>password</strong> on the login screen. Default credentials are provided by your admin.',
                     'If this is your first login, you may be prompted to <strong>change your password</strong>. Choose a strong password and confirm it.',
                     'Once logged in, you\'ll see the <strong>sidebar navigation</strong> on the left with your name and role displayed at the bottom.',
@@ -32,15 +32,15 @@ const TRAINING_MODULES = [
             {
                 key: 'gs-home-screen',
                 title: 'Add App Icon to Your Device',
-                summary: 'Add a shortcut icon to your phone, iPad, or computer for quick access.',
+                summary: 'Add the LGHVAC icon to your phone, iPad, or computer so it works like a regular app.',
                 steps: [
-                    'You can add the app as an <strong>icon on your home screen</strong> so it opens like a regular app — no need to type the URL each time.',
-                    '<strong>iPhone / iPad:</strong> Open <strong>Safari</strong> (must be Safari, not Chrome) and go to the app URL. Tap the <strong>Share button</strong> (square with an arrow pointing up). Scroll down and tap <strong>"Add to Home Screen"</strong>. Tap <strong>Add</strong> — the CM icon will appear on your home screen.',
-                    '<strong>Android:</strong> Open <strong>Chrome</strong> and go to the app URL. Tap the <strong>three-dot menu</strong> in the top-right corner. Tap <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong>. Tap <strong>Add</strong> — the icon will appear on your home screen.',
-                    '<strong>Mac:</strong> Open <strong>Chrome</strong> and go to the app URL. Look for the <strong>install icon</strong> in the address bar (a monitor with a down arrow), or click the three-dot menu and select <strong>"Install app"</strong>.',
-                    '<strong>Windows:</strong> Open <strong>Chrome</strong> or <strong>Edge</strong> and go to the app URL. Click the <strong>install icon</strong> in the address bar, or use the three-dot menu and select <strong>"Install app"</strong>.',
-                    'Once installed, the app opens in its <strong>own window</strong> without browser tabs or address bars — it looks and feels like a native app.',
-                    'Ask your administrator for the <strong>app URL</strong> if you don\'t have it yet.'
+                    'You can add the app as an <strong>icon on your home screen</strong> so it opens like a regular app — no need to type the URL each time. The app URL is <strong>app.lghvac.net</strong> and works from anywhere.',
+                    '<strong>iPhone / iPad:</strong> Open <strong>Safari</strong> (you MUST use Safari, not Chrome). Tap the address bar and type <strong>app.lghvac.net</strong>. Log in with your username and password.',
+                    '<strong>iPhone / iPad (continued):</strong> Tap the <strong>Share button</strong> (square with an arrow pointing up ⬆️ — it\'s at the bottom on iPhone, top on iPad). Scroll down and tap <strong>"Add to Home Screen"</strong>. You\'ll see the LGHVAC logo — tap <strong>Add</strong>. The icon now appears on your home screen like any other app.',
+                    '<strong>Android:</strong> Open <strong>Chrome</strong> and type <strong>app.lghvac.net</strong> in the address bar. Log in, then tap the <strong>three dots ⋮</strong> in the top-right corner. Tap <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong>. Tap <strong>Add</strong>. The LGHVAC icon will appear on your home screen.',
+                    '<strong>Mac:</strong> Open <strong>Chrome</strong> (not Safari) and go to <strong>app.lghvac.net</strong>. Log in, then look for a small <strong>install icon</strong> on the right side of the address bar (a monitor with a down arrow ⬇️). Click it and click <strong>Install</strong>. The app opens in its own window and appears in your Dock.',
+                    '<strong>Windows:</strong> Open <strong>Chrome</strong> or <strong>Edge</strong> and go to <strong>app.lghvac.net</strong>. Log in, then look for the <strong>install icon</strong> on the right side of the address bar (a monitor with a down arrow ⬇️). Click it and click <strong>Install</strong>. You can then pin it to your taskbar from the Start Menu.',
+                    'Once installed, the app opens in its <strong>own window</strong> without browser tabs or address bars — it looks and feels like a real app on your device.'
                 ]
             },
             {
