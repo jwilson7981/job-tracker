@@ -89,11 +89,14 @@
                 <input type="text" id="bidTotalSystems" class="form-input calc-field" value="0" readonly></div>
             <div class="bid-field"><label class="form-label">Total Tons (non-mini)</label>
                 <input type="number" id="bidTotalTons" class="form-input" value="0" min="0" step="0.5"></div>
+            {% if current_user.role == 'owner' %}
             <div class="bid-field"><label class="form-label">Price Per Ton</label>
                 <input type="number" id="bidPricePerTon" class="form-input" value="0" min="0" step="0.01"></div>
+            {% endif %}
         </div>
     </div>
 
+    {% if current_user.role == 'owner' %}
     <!-- Materials -->
     <div class="bid-section">
         <h3>Equipment / Material Cost</h3>
@@ -213,6 +216,7 @@
             <button class="btn btn-secondary btn-small" onclick="addPersonnelManual()">+ Add Manual</button>
         </div>
     </div>
+    {% endif %}
 
     <!-- Inclusions / Exclusions -->
     <div class="bid-row-2col">
@@ -238,6 +242,7 @@
         <textarea id="bidNotes" class="form-textarea" rows="3" placeholder="Additional notes..."></textarea>
     </div>
 
+    {% if current_user.role == 'owner' %}
     <!-- Summary -->
     <div class="bid-summary-card">
         <h3>Bid Summary</h3>
@@ -262,6 +267,7 @@
             <div class="cost-row"><span class="cost-label">Labor Cost / System</span><span class="cost-value" id="sumLaborPerSys">$0.00</span></div>
         </div>
     </div>
+    {% endif %}
 </div>
 
 <!-- Email Modal -->
@@ -327,6 +333,6 @@
 </div>
 {% endif %}
 
-<script>window.BID_ID = {{ bid_id }};</script>
+<script>window.BID_ID = {{ bid_id }}; window.USER_ROLE = '{{ current_user.role }}';</script>
 <script src="/static/bids.js"></script>
 {% endblock %}

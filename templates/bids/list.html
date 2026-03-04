@@ -32,12 +32,14 @@
             <th class="sortable" data-col="contracting_gc">GC / Developer</th>
             <th class="sortable" data-col="job_name">Job</th>
             <th class="sortable" data-col="project_type">Type</th>
+            {% if current_user.role == 'owner' %}
             <th class="sortable" data-col="total_bid">Total Bid</th>
+            {% endif %}
             <th class="sortable" data-col="status">Status</th>
             <th>Proposal</th>
             <th class="sortable active-sort" data-col="bid_date">Bid Date</th>
         </tr></thead>
-        <tbody id="bidsBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+        <tbody id="bidsBody"><tr><td colspan="{% if current_user.role == 'owner' %}8{% else %}7{% endif %}" class="loading">Loading...</td></tr></tbody>
     </table>
 </div>
 <style>
@@ -48,6 +50,8 @@
     th.sortable.sort-desc::after { content: '↓'; opacity: 0.8; }
 </style>
 <script>
+const _isOwner = '{{ current_user.role }}' === 'owner';
+const _colSpan = _isOwner ? 8 : 7;
 let allBids = [];
 let currentSort = { col: 'bid_date', dir: 'desc' };
 
@@ -108,7 +112,7 @@ function filterBids() {
 function renderBids(bids) {
     const tbody = document.getElementById('bidsBody');
     if (!bids.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No bids match your filters.</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="${_colSpan}" class="empty-state">No bids match your filters.</td></tr>`;
         return;
     }
     tbody.innerHTML = bids.map(b => {
@@ -117,12 +121,15 @@ function renderBids(bids) {
             ? `<a href="${b.proposal_pdf}" target="_blank" class="link" style="font-size:13px;">View PDF</a>`
             : `<span style="color:var(--gray-400);font-size:13px;">—</span>`;
         const bidDate = b.bid_date || '';
+        const totalCol = _isOwner
+            ? `<td style="text-align:right;font-weight:600;">$${(b.total_bid || 0).toLocaleString('en-US', {minimumFractionDigits:2})}</td>`
+            : '';
         return `<tr onclick="window.location='/bids/${b.id}'" style="cursor:pointer;">
             <td><a href="/bids/${b.id}" class="link">${b.bid_name || 'Untitled'}</a></td>
             <td>${b.contracting_gc || '-'}</td>
             <td>${b.job_name || '-'}</td>
             <td>${b.project_type || '-'}</td>
-            <td style="text-align:right;font-weight:600;">$${(b.total_bid || 0).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
+            ${totalCol}
             <td><span class="status-badge ${statusClass}">${b.status || 'Draft'}</span></td>
             <td style="text-align:center;" onclick="event.stopPropagation()">${proposalCol}</td>
             <td style="font-size:13px;color:var(--gray-500);">${bidDate}</td>

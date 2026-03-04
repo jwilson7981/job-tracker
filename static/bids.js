@@ -1,10 +1,11 @@
 /* Bids JS — LGHVAC Bid Form */
 let bidPartners = [];
 let bidPersonnel = [];
+const isOwner = (window.USER_ROLE === 'owner');
 
 if (window.BID_ID !== undefined) {
     loadJobs();
-    loadUsers();
+    if (isOwner) loadUsers();
     if (window.BID_ID > 0) loadBid();
 }
 
@@ -60,6 +61,7 @@ function autoPerDiem() {
 }
 
 function recalculate() {
+    if (!isOwner) return; // Non-owners don't have cost fields
     // System counts
     const numApt = ival('bidNumApt');
     const numNonApt = ival('bidNumNonApt');
@@ -226,41 +228,43 @@ async function loadBid() {
     $('bidClubSystems').value = bid.clubhouse_systems || 0;
     $('bidClubTons').value = bid.clubhouse_tons || 0;
     $('bidTotalTons').value = bid.total_tons || 0;
-    $('bidPricePerTon').value = bid.price_per_ton || 0;
+    if (isOwner && $('bidPricePerTon')) $('bidPricePerTon').value = bid.price_per_ton || 0;
     toggleClubhouse();
 
-    $('bidMaterialCost').value = bid.material_cost || 0;
+    if (isOwner) {
+        $('bidMaterialCost').value = bid.material_cost || 0;
 
-    $('bidRoughIn').value = bid.rough_in_hours ?? 15;
-    $('bidAHU').value = bid.ahu_install_hours ?? 1;
-    $('bidCondenser').value = bid.condenser_install_hours ?? 1;
-    $('bidTrimOut').value = bid.trim_out_hours ?? 1;
-    $('bidStartup').value = bid.startup_hours ?? 2;
-    $('bidCrewSize').value = bid.crew_size || 4;
-    $('bidHoursPerDay').value = bid.hours_per_day || 8;
-    $('bidLaborRate').value = bid.labor_rate_per_hour || 37;
-    $('bidLaborPerUnit').value = bid.labor_cost_per_unit || 0;
+        $('bidRoughIn').value = bid.rough_in_hours ?? 15;
+        $('bidAHU').value = bid.ahu_install_hours ?? 1;
+        $('bidCondenser').value = bid.condenser_install_hours ?? 1;
+        $('bidTrimOut').value = bid.trim_out_hours ?? 1;
+        $('bidStartup').value = bid.startup_hours ?? 2;
+        $('bidCrewSize').value = bid.crew_size || 4;
+        $('bidHoursPerDay').value = bid.hours_per_day || 8;
+        $('bidLaborRate').value = bid.labor_rate_per_hour || 37;
+        $('bidLaborPerUnit').value = bid.labor_cost_per_unit || 0;
 
-    $('bidMileage').value = bid.job_mileage || 0;
-    $('bidPerDiemRate').value = bid.per_diem_rate || 0;
+        $('bidMileage').value = bid.job_mileage || 0;
+        $('bidPerDiemRate').value = bid.per_diem_rate || 0;
 
-    $('bidInsurance').value = bid.insurance_cost || 0;
-    $('bidPermits').value = bid.permit_cost || 0;
-    $('bidMgmtFee').value = bid.management_fee || 0;
-    $('bidPaySchedule').value = Math.round((bid.pay_schedule_pct || 0.33) * 100);
+        $('bidInsurance').value = bid.insurance_cost || 0;
+        $('bidPermits').value = bid.permit_cost || 0;
+        $('bidMgmtFee').value = bid.management_fee || 0;
+        $('bidPaySchedule').value = Math.round((bid.pay_schedule_pct || 0.33) * 100);
 
-    $('bidProfitPct').value = bid.company_profit_pct || 0;
+        $('bidProfitPct').value = bid.company_profit_pct || 0;
+
+        bidPartners = bid.partners || [];
+        renderPartners();
+
+        bidPersonnel = bid.personnel || [];
+        renderPersonnel();
+    }
 
     $('bidInclusions').value = bid.inclusions || '';
     $('bidExclusions').value = bid.exclusions || '';
     $('bidDescription').value = bid.bid_description || '';
     $('bidNotes').value = bid.notes || '';
-
-    bidPartners = bid.partners || [];
-    renderPartners();
-
-    bidPersonnel = bid.personnel || [];
-    renderPersonnel();
 
     // Show proposal buttons if a PDF already exists
     if (bid.proposal_pdf) {
@@ -372,9 +376,6 @@ function collectPersonnelFromDOM() {
 }
 
 async function saveBid() {
-    const partners = collectPartnersFromDOM();
-    const personnel = collectPersonnelFromDOM();
-
     const data = {
         bid_name: $('bidName').value,
         job_id: $('bidJob').value || null,
@@ -398,35 +399,36 @@ async function saveBid() {
         clubhouse_systems: ival('bidClubSystems'),
         clubhouse_tons: val('bidClubTons'),
         total_tons: val('bidTotalTons'),
-        price_per_ton: val('bidPricePerTon'),
-
-        material_cost: val('bidMaterialCost'),
-
-        rough_in_hours: val('bidRoughIn'),
-        ahu_install_hours: val('bidAHU'),
-        condenser_install_hours: val('bidCondenser'),
-        trim_out_hours: val('bidTrimOut'),
-        startup_hours: val('bidStartup'),
-        crew_size: ival('bidCrewSize'),
-        hours_per_day: val('bidHoursPerDay'),
-        labor_rate_per_hour: val('bidLaborRate'),
-        labor_cost_per_unit: val('bidLaborPerUnit'),
-
-        job_mileage: val('bidMileage'),
-        per_diem_rate: val('bidPerDiemRate'),
-
-        insurance_cost: val('bidInsurance'),
-        permit_cost: val('bidPermits'),
-        management_fee: val('bidMgmtFee'),
-        pay_schedule_pct: val('bidPaySchedule') / 100,
-
-        company_profit_pct: val('bidProfitPct'),
 
         inclusions: $('bidInclusions').value,
         exclusions: $('bidExclusions').value,
         bid_description: $('bidDescription').value,
         notes: $('bidNotes').value,
     };
+
+    // Only include cost/financial fields for owners
+    if (isOwner) {
+        Object.assign(data, {
+            price_per_ton: val('bidPricePerTon'),
+            material_cost: val('bidMaterialCost'),
+            rough_in_hours: val('bidRoughIn'),
+            ahu_install_hours: val('bidAHU'),
+            condenser_install_hours: val('bidCondenser'),
+            trim_out_hours: val('bidTrimOut'),
+            startup_hours: val('bidStartup'),
+            crew_size: ival('bidCrewSize'),
+            hours_per_day: val('bidHoursPerDay'),
+            labor_rate_per_hour: val('bidLaborRate'),
+            labor_cost_per_unit: val('bidLaborPerUnit'),
+            job_mileage: val('bidMileage'),
+            per_diem_rate: val('bidPerDiemRate'),
+            insurance_cost: val('bidInsurance'),
+            permit_cost: val('bidPermits'),
+            management_fee: val('bidMgmtFee'),
+            pay_schedule_pct: val('bidPaySchedule') / 100,
+            company_profit_pct: val('bidProfitPct'),
+        });
+    }
 
     let bidId = window.BID_ID;
     if (bidId > 0) {
@@ -445,29 +447,33 @@ async function saveBid() {
         history.replaceState(null, '', `/bids/${bidId}`);
     }
 
-    // Sync partners
-    for (const p of partners) {
-        if (p.id) {
-            await fetch(`/api/bids/${bidId}/partners/${p.id}`, { method: 'DELETE' });
-        }
-        if (p.partner_name.trim()) {
-            await fetch(`/api/bids/${bidId}/partners`, {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify(p)
-            });
-        }
-    }
+    // Sync partners + personnel (owner only)
+    if (isOwner) {
+        const partners = collectPartnersFromDOM();
+        const personnel = collectPersonnelFromDOM();
 
-    // Sync personnel
-    for (const p of personnel) {
-        if (p.id) {
-            await fetch(`/api/bids/${bidId}/personnel/${p.id}`, { method: 'DELETE' });
+        for (const p of partners) {
+            if (p.id) {
+                await fetch(`/api/bids/${bidId}/partners/${p.id}`, { method: 'DELETE' });
+            }
+            if (p.partner_name.trim()) {
+                await fetch(`/api/bids/${bidId}/partners`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(p)
+                });
+            }
         }
-        if (p.name.trim()) {
-            await fetch(`/api/bids/${bidId}/personnel`, {
-                method: 'POST', headers: {'Content-Type':'application/json'},
-                body: JSON.stringify(p)
-            });
+
+        for (const p of personnel) {
+            if (p.id) {
+                await fetch(`/api/bids/${bidId}/personnel/${p.id}`, { method: 'DELETE' });
+            }
+            if (p.name.trim()) {
+                await fetch(`/api/bids/${bidId}/personnel`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(p)
+                });
+            }
         }
     }
 

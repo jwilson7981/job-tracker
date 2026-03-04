@@ -2846,6 +2846,28 @@ def calculate_bid(data):
         'suggested_clubhouse_bid': suggested_clubhouse_bid,
     }
 
+# ─── Bid Cost Stripping (non-owner) ──────────────────────────
+_BID_COST_KEYS = {
+    'total_bid', 'subtotal', 'labor_rate_per_hour', 'labor_cost_per_unit',
+    'labor_cost', 'labor_cost_per_apartment', 'labor_cost_per_system',
+    'company_profit_pct', 'company_profit', 'net_profit',
+    'material_cost', 'total_cost_to_build', 'cost_per_apartment', 'cost_per_system',
+    'insurance_cost', 'permit_cost', 'management_fee', 'pay_schedule_pct',
+    'per_diem_rate', 'per_diem_days', 'per_diem_total', 'job_mileage',
+    'rough_in_hours', 'ahu_install_hours', 'condenser_install_hours',
+    'trim_out_hours', 'startup_hours', 'man_hours_per_system', 'total_man_hours',
+    'crew_size', 'hours_per_day', 'duration_days', 'num_weeks',
+    'suggested_apartment_bid', 'suggested_clubhouse_bid', 'price_per_ton',
+}
+
+def _strip_bid_costs(bid_dict):
+    """Remove all financial/cost fields from a bid dict for non-owner roles."""
+    for key in _BID_COST_KEYS:
+        bid_dict.pop(key, None)
+    bid_dict.pop('partners', None)
+    bid_dict.pop('personnel', None)
+    return bid_dict
+
 @app.route('/bids')
 @role_required('owner', 'admin', 'project_manager')
 def bids_list():
@@ -2873,6 +2895,7 @@ def api_bids():
     conn.close()
 
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    is_owner = session.get('role') == 'owner'
     results = []
     for b in bids:
         d = dict(b)
@@ -2880,6 +2903,8 @@ def api_bids():
             pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{b["id"]}.pdf' in f])
             if pdf_files:
                 d['proposal_pdf'] = f'/api/bids/{b["id"]}/proposal/{pdf_files[-1]}'
+        if not is_owner:
+            _strip_bid_costs(d)
         results.append(d)
 
     return jsonify(results)
@@ -2977,6 +3002,9 @@ def api_bid_detail(bid_id):
         if pdf_files:
             result['proposal_pdf'] = f'/api/bids/{bid_id}/proposal/{pdf_files[-1]}'
 
+    if session.get('role') != 'owner':
+        _strip_bid_costs(result)
+
     return jsonify(result)
 
 @app.route('/api/bids/<int:bid_id>', methods=['PUT'])
@@ -3006,14 +3034,14 @@ def api_delete_bid(bid_id):
     return jsonify({'ok': True})
 
 @app.route('/api/bids/<int:bid_id>/calculate', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner')
 def api_bid_calculate(bid_id):
     data = request.get_json()
     calcs = calculate_bid(data)
     return jsonify(calcs)
 
 @app.route('/api/bids/<int:bid_id>/partners', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner')
 def api_add_bid_partner(bid_id):
     data = request.get_json()
     conn = get_db()
@@ -3028,7 +3056,7 @@ def api_add_bid_partner(bid_id):
     return jsonify({'ok': True, 'id': pid}), 201
 
 @app.route('/api/bids/<int:bid_id>/partners/<int:pid>', methods=['DELETE'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner')
 def api_delete_bid_partner(bid_id, pid):
     conn = get_db()
     conn.execute('DELETE FROM bid_partners WHERE id = ? AND bid_id = ?', (pid, bid_id))
@@ -3037,7 +3065,7 @@ def api_delete_bid_partner(bid_id, pid):
     return jsonify({'ok': True})
 
 @app.route('/api/bids/<int:bid_id>/personnel', methods=['POST'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner')
 def api_add_bid_personnel(bid_id):
     data = request.get_json()
     conn = get_db()
@@ -3052,7 +3080,7 @@ def api_add_bid_personnel(bid_id):
     return jsonify({'ok': True, 'id': pid}), 201
 
 @app.route('/api/bids/<int:bid_id>/personnel/<int:pid>', methods=['DELETE'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner')
 def api_delete_bid_personnel(bid_id, pid):
     conn = get_db()
     conn.execute('DELETE FROM bid_personnel WHERE id = ? AND bid_id = ?', (pid, bid_id))
