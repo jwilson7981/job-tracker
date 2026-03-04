@@ -281,6 +281,7 @@ async function loadBid() {
     if (bid.error) return;
 
     $('pageTitle').textContent = bid.bid_name || 'Edit Bid';
+    if ($('sumJobName')) $('sumJobName').textContent = bid.bid_name || '';
     $('bidName').value = bid.bid_name || '';
     $('bidJob').value = bid.job_id || '';
     $('bidProjectType').value = bid.project_type || 'Multi-Family';

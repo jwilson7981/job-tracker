@@ -3086,7 +3086,8 @@ tr[data-submittal-resubmit] .badge {
 /* ─── Print Styles ──────────────────────────────────────────── */
 @media print {
     /* Hide everything by default */
-    body, html { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    @page { margin: 10mm; }
+    body, html { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; overflow: hidden !important; }
     .sidebar, .page-header, .chat-widget, .calc-widget,
     .notif-bell-wrapper, .notif-panel, #chatWidget,
     .bid-form > *:not(:last-child),
@@ -3094,7 +3095,7 @@ tr[data-submittal-resubmit] .badge {
     #followupsSection, #awardSection,
     script, style { display: none !important; }
     /* Show the summary card and its parent chain */
-    .app-main, .app-main .container, .bid-form { display: block !important; margin: 0 !important; padding: 0 !important; }
+    .app-main, .app-main .container, .bid-form { display: block !important; margin: 0 !important; padding: 0 !important; height: auto !important; overflow: hidden !important; }
     .bid-summary-card {
         display: block !important;
         position: relative; left: 0; top: 0;
