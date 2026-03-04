@@ -39,6 +39,7 @@
             </div>
         </div>
     </div>
+    <script>fetch('/api/heartbeat',{method:'POST'});setInterval(()=>fetch('/api/heartbeat',{method:'POST'}),60000);</script>
     <script src="/static/chat_widget.js"></script>
     <script src="/static/duplicate_check.js"></script>
     <script src="/static/drag_drop.js"></script>

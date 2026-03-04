@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Activity Log - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Activity Log</h1>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="autoRefresh"> Auto-refresh
+        </label>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" style="margin-bottom:16px;">
+    <button class="tab-btn active" onclick="switchTab('feed',this)">Activity Feed</button>
+    <button class="tab-btn" onclick="switchTab('stats',this)">User Stats</button>
+</div>
+
+<!-- Activity Feed Tab -->
+<div id="tabFeed">
+    <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+        <select id="filterUser" class="form-select" style="min-width:140px;">
+            <option value="">All Users</option>
+        </select>
+        <select id="filterAction" class="form-select" style="min-width:130px;">
+            <option value="">All Actions</option>
+            <option value="login">Login</option>
+            <option value="logout">Logout</option>
+            <option value="create">Create</option>
+            <option value="update">Update</option>
+            <option value="delete">Delete</option>
+            <option value="approve">Approve</option>
+            <option value="submit">Submit</option>
+            <option value="generate_pdf">Generate PDF</option>
+            <option value="email">Email</option>
+        </select>
+        <select id="filterEntity" class="form-select" style="min-width:140px;">
+            <option value="">All Types</option>
+            <option value="job">Job</option>
+            <option value="bid">Bid</option>
+            <option value="change_order">Change Order</option>
+            <option value="pay_app">Pay App</option>
+            <option value="rfi">RFI</option>
+            <option value="submittal">Submittal</option>
+            <option value="contract">Contract</option>
+            <option value="invoice">Invoice</option>
+            <option value="expense">Expense</option>
+            <option value="schedule">Schedule</option>
+            <option value="service_call">Service Call</option>
+            <option value="warranty">Warranty</option>
+            <option value="user">User</option>
+            <option value="session">Session</option>
+        </select>
+        <input type="date" id="filterDateFrom" class="form-input" style="width:150px;" placeholder="From">
+        <input type="date" id="filterDateTo" class="form-input" style="width:150px;" placeholder="To">
+        <button class="btn btn-primary btn-small" onclick="loadActivityFeed()">Filter</button>
+        <button class="btn btn-secondary btn-small" onclick="clearFilters()">Clear</button>
+    </div>
+
+    <div class="module-table-wrapper">
+        <table class="data-table">
+            <thead><tr>
+                <th>Time</th><th>User</th><th>Action</th><th>Type</th><th>Description</th><th>IP</th>
+            </tr></thead>
+            <tbody id="feedBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- User Stats Tab -->
+<div id="tabStats" style="display:none;">
+    <div id="statsGrid" class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;">
+        <p class="loading">Loading...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/activity_log.js"></script>
+{% endblock %}

@@ -82,6 +82,75 @@ def inject_user():
         }
     return {'current_user': None}
 
+# ─── Auto Activity Logging Hook ──────────────────────────────────
+
+_ROUTE_ENTITY_MAP = {
+    '/api/jobs': 'job', '/api/change-orders': 'change_order', '/api/payapps': 'pay_app',
+    '/api/bids': 'bid', '/api/rfis': 'rfi', '/api/submittals': 'submittal',
+    '/api/accounting': 'accounting', '/api/payroll': 'payroll', '/api/warranties': 'warranty',
+    '/api/service-calls': 'service_call', '/api/admin/users': 'user',
+    '/api/howtos': 'howto', '/api/manuals': 'manual', '/api/codebooks': 'codebook',
+    '/api/expenses': 'expense', '/api/payments': 'payment', '/api/invoices': 'invoice',
+    '/api/contracts': 'contract', '/api/documents': 'document', '/api/transmittals': 'transmittal',
+    '/api/licenses': 'license', '/api/recurring-expenses': 'recurring_expense',
+    '/api/schedule': 'schedule', '/api/material-requests': 'material_request',
+    '/api/inventory': 'inventory', '/api/plans': 'plan', '/api/permits': 'permit',
+    '/api/photos': 'photo', '/api/lien-waivers': 'lien_waiver',
+    '/api/supplier-quotes': 'supplier_quote', '/api/coi': 'coi',
+    '/api/customers': 'customer', '/api/vendors': 'vendor',
+    '/api/material-shipments': 'material_shipment', '/api/receiving': 'receiving',
+    '/api/feedback': 'feedback', '/api/team-pay': 'team_pay',
+}
+
+_SKIP_PREFIXES = ('/api/heartbeat', '/api/notifications', '/static', '/api/chat', '/login', '/logout', '/change-password')
+
+@app.after_request
+def _auto_log_activity(response):
+    if request.method not in ('POST', 'PUT', 'DELETE'):
+        return response
+    if not 200 <= response.status_code < 300:
+        return response
+    if 'user_id' not in session:
+        return response
+    path = request.path
+    if any(path.startswith(p) for p in _SKIP_PREFIXES):
+        return response
+    # Determine action
+    action = {'POST': 'create', 'PUT': 'update', 'DELETE': 'delete'}.get(request.method, 'action')
+    parts = path.rstrip('/').split('/')
+    for suffix, act in (('approve', 'approve'), ('generate-pdf', 'generate_pdf'), ('email', 'email'),
+                        ('submit', 'submit'), ('reject', 'reject')):
+        if suffix in parts:
+            action = act
+            break
+    # Determine entity_type and entity_id
+    entity_type, entity_id = '', None
+    for prefix, etype in _ROUTE_ENTITY_MAP.items():
+        if path.startswith(prefix):
+            entity_type = etype
+            remainder = path[len(prefix):].strip('/')
+            if remainder:
+                first_segment = remainder.split('/')[0]
+                if first_segment.isdigit():
+                    entity_id = int(first_segment)
+            break
+    desc = f"{action.replace('_', ' ').title()} {entity_type.replace('_', ' ')}"
+    if entity_id:
+        desc += f" #{entity_id}"
+    try:
+        from database import get_db as _gdb
+        conn = _gdb()
+        conn.execute(
+            '''INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description, ip_address)
+               VALUES (?,?,?,?,?,?)''',
+            (session['user_id'], action, entity_type, entity_id, desc, request.remote_addr or '')
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return response
+
 # ─── Auth Routes ─────────────────────────────────────────────────
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -98,6 +167,7 @@ def login():
             session['display_name'] = user['display_name']
             session['role'] = user['role']
             session['must_change_password'] = bool(user['must_change_password'])
+            log_activity(user['id'], 'login', 'session', None, f"{user['display_name'] or user['username']} logged in")
             if user['must_change_password']:
                 return redirect('/change-password')
             return redirect(url_for('index'))
@@ -106,6 +176,9 @@ def login():
 
 @app.route('/logout')
 def logout():
+    if 'user_id' in session:
+        log_activity(session['user_id'], 'logout', 'session', None,
+                     f"{session.get('display_name') or session.get('username', '')} logged out")
     session.clear()
     return redirect(url_for('login'))
 
@@ -2668,6 +2741,138 @@ def api_delete_user(uid):
     conn.close()
     return jsonify({'ok': True})
 
+# ─── Session Heartbeat ───────────────────────────────────────────
+
+@app.route('/api/heartbeat', methods=['POST'])
+@api_login_required
+def api_heartbeat():
+    conn = get_db()
+    today = datetime.now().strftime('%Y-%m-%d')
+    conn.execute(
+        '''INSERT INTO user_sessions (user_id, session_date, first_seen, last_seen, page_views)
+           VALUES (?, ?, datetime('now','localtime'), datetime('now','localtime'), 1)
+           ON CONFLICT(user_id, session_date) DO UPDATE SET
+               last_seen = datetime('now','localtime'),
+               page_views = page_views + 1''',
+        (session['user_id'], today)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Activity Log (Owner Only) ──────────────────────────────────
+
+@app.route('/admin/activity-log')
+@role_required('owner')
+def admin_activity_log():
+    return render_template('admin/activity_log.html')
+
+@app.route('/api/admin/activity-log')
+@api_role_required('owner')
+def api_admin_activity_log():
+    user_id = request.args.get('user_id')
+    action = request.args.get('action')
+    entity_type = request.args.get('entity_type')
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
+    limit = min(int(request.args.get('limit', 500)), 2000)
+
+    where, params = ['1=1'], []
+    if user_id:
+        where.append('a.user_id = ?'); params.append(int(user_id))
+    if action:
+        where.append('a.action = ?'); params.append(action)
+    if entity_type:
+        where.append('a.entity_type = ?'); params.append(entity_type)
+    if date_from:
+        where.append('a.created_at >= ?'); params.append(date_from)
+    if date_to:
+        where.append('a.created_at <= ?'); params.append(date_to + ' 23:59:59')
+    params.append(limit)
+
+    conn = get_db()
+    rows = conn.execute(
+        f'''SELECT a.*, u.display_name, u.username
+            FROM activity_logs a
+            JOIN users u ON u.id = a.user_id
+            WHERE {' AND '.join(where)}
+            ORDER BY a.created_at DESC
+            LIMIT ?''',
+        params
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/admin/user-stats')
+@api_role_required('owner')
+def api_admin_user_stats():
+    conn = get_db()
+    today = datetime.now().strftime('%Y-%m-%d')
+    week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    users = conn.execute(
+        'SELECT id, username, display_name, role FROM users WHERE is_active = 1 ORDER BY display_name'
+    ).fetchall()
+
+    stats = []
+    for u in users:
+        uid = u['id']
+        total_actions = conn.execute('SELECT COUNT(*) FROM activity_logs WHERE user_id = ?', (uid,)).fetchone()[0]
+        today_actions = conn.execute(
+            "SELECT COUNT(*) FROM activity_logs WHERE user_id = ? AND created_at >= ?", (uid, today)
+        ).fetchone()[0]
+        week_actions = conn.execute(
+            "SELECT COUNT(*) FROM activity_logs WHERE user_id = ? AND created_at >= ?", (uid, week_ago)
+        ).fetchone()[0]
+
+        # Time today from user_sessions
+        s_today = conn.execute(
+            'SELECT first_seen, last_seen, page_views FROM user_sessions WHERE user_id = ? AND session_date = ?',
+            (uid, today)
+        ).fetchone()
+        time_today_min = 0
+        if s_today:
+            try:
+                fs = datetime.strptime(s_today['first_seen'], '%Y-%m-%d %H:%M:%S')
+                ls = datetime.strptime(s_today['last_seen'], '%Y-%m-%d %H:%M:%S')
+                time_today_min = max(int((ls - fs).total_seconds() / 60), 0)
+            except Exception:
+                pass
+
+        # Time this week
+        week_sessions = conn.execute(
+            'SELECT first_seen, last_seen FROM user_sessions WHERE user_id = ? AND session_date >= ?',
+            (uid, week_ago)
+        ).fetchall()
+        time_week_min = 0
+        for ws in week_sessions:
+            try:
+                fs = datetime.strptime(ws['first_seen'], '%Y-%m-%d %H:%M:%S')
+                ls = datetime.strptime(ws['last_seen'], '%Y-%m-%d %H:%M:%S')
+                time_week_min += max(int((ls - fs).total_seconds() / 60), 0)
+            except Exception:
+                pass
+
+        last_active = conn.execute(
+            'SELECT created_at FROM activity_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', (uid,)
+        ).fetchone()
+
+        stats.append({
+            'user_id': uid,
+            'username': u['username'],
+            'display_name': u['display_name'],
+            'role': u['role'],
+            'total_actions': total_actions,
+            'today_actions': today_actions,
+            'week_actions': week_actions,
+            'time_today_min': time_today_min,
+            'time_week_min': time_week_min,
+            'last_active': last_active['created_at'] if last_active else None,
+        })
+
+    conn.close()
+    return jsonify(stats)
+
 # Helper: list of users for dropdowns
 @app.route('/api/users/list')
 @api_login_required
@@ -2686,6 +2891,22 @@ def api_jobs_list():
     jobs = conn.execute('SELECT id, name, status FROM jobs ORDER BY name').fetchall()
     conn.close()
     return jsonify([dict(j) for j in jobs])
+
+# ─── Activity Logging ────────────────────────────────────────
+
+def log_activity(user_id, action, entity_type='', entity_id=None, description=''):
+    """Log a user action to the activity_logs table."""
+    try:
+        conn = get_db()
+        conn.execute(
+            '''INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description, ip_address)
+               VALUES (?,?,?,?,?,?)''',
+            (user_id, action, entity_type, entity_id, description, request.remote_addr or '')
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 # ─── Notifications ──────────────────────────────────────────
 
@@ -3882,6 +4103,29 @@ def api_payapps_contracts():
     conn.close()
     return jsonify([dict(r) for r in rows])
 
+@app.route('/api/jobs/<int:job_id>/customer-info')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_job_customer_info(job_id):
+    """Get customer info linked to a job for auto-filling pay app contracts."""
+    conn = get_db()
+    job = conn.execute('SELECT customer_id FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if not job or not job['customer_id']:
+        conn.close()
+        return jsonify({})
+    cust = conn.execute('SELECT * FROM customers WHERE id = ?', (job['customer_id'],)).fetchone()
+    conn.close()
+    if not cust:
+        return jsonify({})
+    addr_parts = [cust['address'] or '', (cust['city'] or '') + ' ' + (cust['state'] or '') + ' ' + (cust['zip_code'] or '')]
+    full_addr = ', '.join(p.strip() for p in addr_parts if p.strip())
+    return jsonify({
+        'company_name': cust['company_name'] or '',
+        'address': full_addr,
+        'primary_contact': cust['primary_contact'] or '',
+        'contact_email': cust['contact_email'] or '',
+        'contact_phone': cust['contact_phone'] or '',
+    })
+
 @app.route('/api/payapps/contracts', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
 def api_payapps_contracts_create():
@@ -3893,13 +4137,14 @@ def api_payapps_contracts_create():
     cursor = conn.execute(
         '''INSERT INTO pay_app_contracts (job_id, gc_name, gc_address, project_name, project_address,
            project_no, contract_for, contract_date, original_contract_sum,
-           retainage_work_pct, retainage_stored_pct, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+           retainage_work_pct, retainage_stored_pct, gc_contact, gc_email, gc_phone, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (data.get('job_id'), data.get('gc_name', ''), data.get('gc_address', ''),
          project_name, project_address,
          data.get('project_no', ''), data.get('contract_for', ''), data.get('contract_date', ''),
          data.get('original_contract_sum', 0),
          data.get('retainage_work_pct', 10), data.get('retainage_stored_pct', 0),
+         data.get('gc_contact', ''), data.get('gc_email', ''), data.get('gc_phone', ''),
          session['user_id'])
     )
     conn.commit()
@@ -4068,16 +4313,41 @@ def api_payapps_app_detail(aid):
         ).fetchall():
             from_previous[row['sov_item_id']] = row['total_prev'] or 0
 
-    # Prior change orders
-    prior_co_add = 0
-    prior_co_ded = 0
+    # Auto-calculate CO additions/deductions from change_orders table
+    # Determine cutoff: period_to of previous application (or None if first app)
+    co_cutoff = None
     if prior_ids:
-        placeholders = ','.join('?' * len(prior_ids))
-        co = conn.execute(
-            f'SELECT SUM(co_additions) as a, SUM(co_deductions) as d FROM pay_applications WHERE id IN ({placeholders})', prior_ids
+        prev_app = conn.execute(
+            'SELECT period_to FROM pay_applications WHERE contract_id = ? AND application_number = ?',
+            (contract['id'], app_row['application_number'] - 1)
         ).fetchone()
-        prior_co_add = co['a'] or 0
-        prior_co_ded = co['d'] or 0
+        if prev_app and prev_app['period_to']:
+            co_cutoff = prev_app['period_to']
+
+    # Query all non-Void COs for this contract
+    all_cos = conn.execute(
+        "SELECT amount, created_at FROM change_orders WHERE pay_app_contract_id = ? AND status != 'Void'",
+        (contract['id'],)
+    ).fetchall()
+
+    co_this_add = 0
+    co_this_ded = 0
+    co_prev_add = 0
+    co_prev_ded = 0
+    for co_row in all_cos:
+        amt = co_row['amount'] or 0
+        created = (co_row['created_at'] or '')[:10]
+        is_previous = co_cutoff and created <= co_cutoff
+        if is_previous:
+            if amt >= 0:
+                co_prev_add += amt
+            else:
+                co_prev_ded += abs(amt)
+        else:
+            if amt >= 0:
+                co_this_add += amt
+            else:
+                co_this_ded += abs(amt)
 
     # Previous Line 6
     prev_line_6 = 0
@@ -4133,8 +4403,10 @@ def api_payapps_app_detail(aid):
         'lines': lines,
         'totals': t,
         'g702': {
-            'co_prev_additions': prior_co_add,
-            'co_prev_deductions': prior_co_ded,
+            'co_this_additions': co_this_add,
+            'co_this_deductions': co_this_ded,
+            'co_prev_additions': co_prev_add,
+            'co_prev_deductions': co_prev_ded,
             'previous_certificates': prev_line_6,
         }
     })
@@ -4217,15 +4489,39 @@ def api_payapps_generate_pdf(aid):
         ).fetchall():
             from_previous[row['sov_item_id']] = row['total_prev'] or 0
 
+    # Auto-calculate CO additions/deductions from change_orders table
+    co_cutoff = None
+    if prior_ids:
+        prev_app = conn.execute(
+            'SELECT period_to FROM pay_applications WHERE contract_id = ? AND application_number = ?',
+            (contract['id'], app_row['application_number'] - 1)
+        ).fetchone()
+        if prev_app and prev_app['period_to']:
+            co_cutoff = prev_app['period_to']
+
+    all_cos = conn.execute(
+        "SELECT amount, created_at FROM change_orders WHERE pay_app_contract_id = ? AND status != 'Void'",
+        (contract['id'],)
+    ).fetchall()
+
+    co_this_add = 0
+    co_this_ded = 0
     prior_co_add = 0
     prior_co_ded = 0
-    if prior_ids:
-        placeholders = ','.join('?' * len(prior_ids))
-        co = conn.execute(
-            f'SELECT SUM(co_additions) as a, SUM(co_deductions) as d FROM pay_applications WHERE id IN ({placeholders})', prior_ids
-        ).fetchone()
-        prior_co_add = co['a'] or 0
-        prior_co_ded = co['d'] or 0
+    for co_row in all_cos:
+        amt = co_row['amount'] or 0
+        created = (co_row['created_at'] or '')[:10]
+        is_previous = co_cutoff and created <= co_cutoff
+        if is_previous:
+            if amt >= 0:
+                prior_co_add += amt
+            else:
+                prior_co_ded += abs(amt)
+        else:
+            if amt >= 0:
+                co_this_add += amt
+            else:
+                co_this_ded += abs(amt)
 
     prev_line_6 = 0
     if prior_ids:
@@ -4271,9 +4567,9 @@ def api_payapps_generate_pdf(aid):
 
     t['retainage'] = round(t['retainage'], 2)
 
-    # Calculate G702 values
-    co_add = app_row['co_additions'] or 0
-    co_ded = app_row['co_deductions'] or 0
+    # Calculate G702 values using auto-calculated CO data
+    co_add = co_this_add
+    co_ded = co_this_ded
     net_co = (prior_co_add + co_add) - (prior_co_ded + co_ded)
 
     l1 = contract['original_contract_sum'] or 0
@@ -4298,10 +4594,21 @@ def api_payapps_generate_pdf(aid):
         'l1': l1, 'l2': l2, 'l3': l3, 'l4': l4, 'l5': l5, 'l5a': ret_work, 'l5b': ret_stored,
         'l6': l6, 'l7': l7, 'l8': l8, 'l9': l9,
         'co_prev_add': prior_co_add, 'co_prev_ded': prior_co_ded,
+        'co_this_add': co_this_add, 'co_this_ded': co_this_ded,
     }
 
     def fmt_money(n):
         return '${:,.2f}'.format(n or 0)
+
+    def fmt_date(d):
+        """Convert YYYY-MM-DD to M-D-YYYY (e.g. 2026-03-03 → 3-3-2026)."""
+        if not d or len(d) < 10:
+            return d or ''
+        try:
+            parts = d[:10].split('-')
+            return f"{int(parts[1])}-{int(parts[2])}-{parts[0]}"
+        except (ValueError, IndexError):
+            return d
 
     logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
 
@@ -4311,11 +4618,16 @@ def api_payapps_generate_pdf(aid):
     total_lines = non_header_count + header_count + 1  # +1 for grand totals row
     total_pages = 1 + max(1, -(-total_lines // 35))  # ceil division, ~35 lines per G703 page
 
+    # Check for contractor signature image
+    sig_dir = os.path.join(os.path.dirname(__file__), 'data', 'signatures')
+    sig_path = os.path.join(sig_dir, 'contractor_signature.png')
+    signature_file_url = 'file://' + os.path.abspath(sig_path) if os.path.exists(sig_path) else None
+
     html = render_template('payapps/payapp_pdf.html',
         application=dict(app_row), contract=dict(contract), job_name=job_name,
         lines=lines, totals=t, g702=g702,
-        fmt=fmt_money, logo_path='file://' + logo_path,
-        total_pages=total_pages
+        fmt=fmt_money, fmt_date=fmt_date, logo_path='file://' + logo_path,
+        total_pages=total_pages, signature_path=signature_file_url
     )
 
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
@@ -4371,6 +4683,141 @@ def api_payapps_download_pdf(aid, filename):
         return send_file(filepath, as_attachment=True, download_name=filename)
     return send_file(filepath, mimetype='application/pdf')
 
+
+@app.route('/api/settings/signature', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_upload_signature():
+    """Upload a contractor signature image (PNG/JPG)."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    sig_dir = os.path.join(os.path.dirname(__file__), 'data', 'signatures')
+    os.makedirs(sig_dir, exist_ok=True)
+    sig_path = os.path.join(sig_dir, 'contractor_signature.png')
+    f.save(sig_path)
+    return jsonify({'ok': True})
+
+@app.route('/api/settings/signature')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_get_signature():
+    """Serve the contractor signature image."""
+    sig_dir = os.path.join(os.path.dirname(__file__), 'data', 'signatures')
+    sig_path = os.path.join(sig_dir, 'contractor_signature.png')
+    if not os.path.exists(sig_path):
+        return jsonify({'error': 'No signature uploaded'}), 404
+    return send_file(sig_path, mimetype='image/png')
+
+@app.route('/api/settings/signature', methods=['DELETE'])
+@api_role_required('owner', 'admin')
+def api_delete_signature():
+    """Delete the contractor signature image."""
+    sig_dir = os.path.join(os.path.dirname(__file__), 'data', 'signatures')
+    sig_path = os.path.join(sig_dir, 'contractor_signature.png')
+    if os.path.exists(sig_path):
+        os.remove(sig_path)
+    return jsonify({'ok': True})
+
+@app.route('/api/payapps/applications/<int:aid>/email', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_email(aid):
+    """Email pay app PDF to specified recipients."""
+    data = request.get_json()
+    recipients = [e.strip() for e in data.get('recipients', []) if e.strip()]
+    subject = data.get('subject', 'Pay Application')
+    body_text = data.get('body', '')
+
+    if not recipients:
+        return jsonify({'error': 'No recipients specified'}), 400
+
+    # Load saved SMTP settings
+    saved_settings = {}
+    settings_path = os.path.join(os.path.dirname(__file__), 'data', 'email_settings.json')
+    if os.path.exists(settings_path):
+        with open(settings_path) as f:
+            saved_settings = json.load(f)
+
+    smtp_host = saved_settings.get('smtp_host', '')
+    smtp_port = int(saved_settings.get('smtp_port', 587) or 587)
+    smtp_user = saved_settings.get('smtp_user', '')
+    smtp_pass = saved_settings.get('smtp_pass', '')
+    from_email = saved_settings.get('from_email', '') or smtp_user
+
+    if not smtp_host or not smtp_user:
+        return jsonify({'error': 'SMTP not configured. Go to Settings to set up email.'}), 400
+
+    # Find the PDF
+    conn = get_db()
+    app_row = conn.execute('SELECT pdf_file FROM pay_applications WHERE id = ?', (aid,)).fetchone()
+    conn.close()
+    if not app_row or not app_row['pdf_file']:
+        return jsonify({'error': 'No PDF generated yet. Generate the PDF first.'}), 404
+
+    proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
+    pdf_path = os.path.join(proposals_dir, app_row['pdf_file'])
+    if not os.path.exists(pdf_path):
+        return jsonify({'error': 'PDF file not found on disk.'}), 404
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_text, 'plain'))
+
+        with open(pdf_path, 'rb') as f:
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(pdf_path)}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        return jsonify({'ok': True, 'sent_to': recipients})
+    except Exception as e:
+        return jsonify({'error': f'Email failed: {str(e)}'}), 500
+
+@app.route('/api/payapps/applications/<int:aid>/signed', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_upload_signed(aid):
+    """Upload a signed/notarized pay app document."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': 'No file selected'}), 400
+
+    signed_dir = os.path.join(os.path.dirname(__file__), 'data', 'payapps_signed')
+    os.makedirs(signed_dir, exist_ok=True)
+
+    ext = os.path.splitext(f.filename)[1].lower() or '.pdf'
+    filename = f"signed_app_{aid}{ext}"
+    filepath = os.path.join(signed_dir, filename)
+    f.save(filepath)
+
+    conn = get_db()
+    conn.execute('UPDATE pay_applications SET signed_file = ? WHERE id = ?', (filename, aid))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'ok': True, 'filename': filename})
+
+@app.route('/api/payapps/applications/<int:aid>/signed/<filename>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_view_signed(aid, filename):
+    """View a signed/notarized pay app document."""
+    signed_dir = os.path.join(os.path.dirname(__file__), 'data', 'payapps_signed')
+    filepath = os.path.join(signed_dir, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    ext = os.path.splitext(filename)[1].lower()
+    mime = 'application/pdf' if ext == '.pdf' else 'image/png' if ext == '.png' else 'image/jpeg'
+    return send_file(filepath, mimetype=mime)
 
 @app.route('/payapps/analytics')
 @role_required('owner', 'admin', 'project_manager')
@@ -6695,17 +7142,55 @@ def api_create_change_order():
     conn = get_db()
     max_num = conn.execute('SELECT MAX(co_number) FROM change_orders WHERE job_id = ?',
                            (data['job_id'],)).fetchone()[0] or 0
+    co_number = max_num + 1
+    co_title = data.get('title', '')
+    co_amount = float(data.get('amount', 0))
     cursor = conn.execute(
         '''INSERT INTO change_orders (job_id, co_number, title, scope_description, reason,
            amount, gc_name, created_by)
            VALUES (?,?,?,?,?,?,?,?)''',
-        (data['job_id'], max_num + 1, data.get('title', ''), data.get('scope_description', ''),
-         data.get('reason', ''), float(data.get('amount', 0)),
+        (data['job_id'], co_number, co_title, data.get('scope_description', ''),
+         data.get('reason', ''), co_amount,
          data.get('gc_name', ''), session.get('user_id'))
     )
+    co_id = cursor.lastrowid
+
+    # Immediately create SOV line item so CO is billable right away
+    contract = conn.execute(
+        'SELECT id FROM pay_app_contracts WHERE job_id = ? ORDER BY id LIMIT 1',
+        (data['job_id'],)
+    ).fetchone()
+
+    sov_item_id = None
+    if contract:
+        cid = contract['id']
+        max_item = conn.execute('SELECT MAX(item_number) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
+        max_sort = conn.execute('SELECT MAX(sort_order) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
+        sov_cursor = conn.execute(
+            '''INSERT INTO pay_app_sov_items (contract_id, item_number, description, scheduled_value, sort_order)
+               VALUES (?,?,?,?,?)''',
+            (cid, max_item + 1, f"CO #{co_number}: {co_title}", co_amount, max_sort + 1)
+        )
+        sov_item_id = sov_cursor.lastrowid
+
+        # Backfill existing pay apps with 0 entries
+        existing_apps = conn.execute(
+            'SELECT id FROM pay_applications WHERE contract_id = ?', (cid,)
+        ).fetchall()
+        for pa in existing_apps:
+            conn.execute(
+                'INSERT OR IGNORE INTO pay_app_line_entries (pay_app_id, sov_item_id, work_this_period, materials_stored) VALUES (?,?,0,0)',
+                (pa['id'], sov_item_id)
+            )
+
+        conn.execute(
+            'UPDATE change_orders SET pay_app_contract_id = ?, sov_item_id = ? WHERE id = ?',
+            (cid, sov_item_id, co_id)
+        )
+
     conn.commit()
     conn.close()
-    return jsonify({'ok': True, 'id': cursor.lastrowid}), 201
+    return jsonify({'ok': True, 'id': co_id, 'sov_item_id': sov_item_id}), 201
 
 @app.route('/api/change-orders/<int:coid>', methods=['PUT'])
 @api_role_required('owner', 'admin', 'project_manager')
@@ -6723,6 +7208,16 @@ def api_update_change_order(coid):
         fields.append("updated_at = datetime('now','localtime')")
         values.append(coid)
         conn.execute(f"UPDATE change_orders SET {', '.join(fields)} WHERE id = ?", values)
+
+        # Sync SOV line item if amount or title changed
+        if 'amount' in data or 'title' in data:
+            co = conn.execute('SELECT co_number, title, amount, sov_item_id FROM change_orders WHERE id = ?', (coid,)).fetchone()
+            if co and co['sov_item_id']:
+                conn.execute(
+                    'UPDATE pay_app_sov_items SET description = ?, scheduled_value = ? WHERE id = ?',
+                    (f"CO #{co['co_number']}: {co['title']}", co['amount'], co['sov_item_id'])
+                )
+
         conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -6731,6 +7226,14 @@ def api_update_change_order(coid):
 @api_role_required('owner', 'admin', 'project_manager')
 def api_delete_change_order(coid):
     conn = get_db()
+    # Remove linked SOV line item and its line entries
+    co = conn.execute('SELECT sov_item_id FROM change_orders WHERE id = ?', (coid,)).fetchone()
+    if co and co['sov_item_id']:
+        sov_id = co['sov_item_id']
+        # Clear FK reference before deleting SOV item
+        conn.execute('UPDATE change_orders SET sov_item_id = NULL, pay_app_contract_id = NULL WHERE id = ?', (coid,))
+        conn.execute('DELETE FROM pay_app_line_entries WHERE sov_item_id = ?', (sov_id,))
+        conn.execute('DELETE FROM pay_app_sov_items WHERE id = ?', (sov_id,))
     conn.execute('DELETE FROM change_orders WHERE id = ?', (coid,))
     conn.commit()
     conn.close()
@@ -6822,42 +7325,9 @@ def api_approve_change_order(coid):
         (today, session.get('display_name', session.get('username', '')), coid)
     )
 
-    # Pay App Integration: add SOV line item
-    contract = conn.execute(
-        'SELECT id FROM pay_app_contracts WHERE job_id = ? ORDER BY id LIMIT 1',
-        (co['job_id'],)
-    ).fetchone()
-
-    sov_item_id = None
-    if contract:
-        cid = contract['id']
-        max_num = conn.execute('SELECT MAX(item_number) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
-        max_sort = conn.execute('SELECT MAX(sort_order) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
-        cursor = conn.execute(
-            '''INSERT INTO pay_app_sov_items (contract_id, item_number, description, scheduled_value, sort_order)
-               VALUES (?,?,?,?,?)''',
-            (cid, max_num + 1, f"CO #{co['co_number']}: {co['title']}", co['amount'], max_sort + 1)
-        )
-        sov_item_id = cursor.lastrowid
-
-        # Backfill existing pay apps with 0 entries
-        existing_apps = conn.execute(
-            'SELECT id FROM pay_applications WHERE contract_id = ?', (cid,)
-        ).fetchall()
-        for pa in existing_apps:
-            conn.execute(
-                'INSERT OR IGNORE INTO pay_app_line_entries (pay_app_id, sov_item_id, work_this_period, materials_stored) VALUES (?,?,0,0)',
-                (pa['id'], sov_item_id)
-            )
-
-        conn.execute(
-            'UPDATE change_orders SET pay_app_contract_id = ?, sov_item_id = ? WHERE id = ?',
-            (cid, sov_item_id, coid)
-        )
-
     conn.commit()
     conn.close()
-    return jsonify({'ok': True, 'sov_item_id': sov_item_id})
+    return jsonify({'ok': True})
 
 # ─── Submittals ──────────────────────────────────────────────────
 

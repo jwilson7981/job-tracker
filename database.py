@@ -1470,6 +1470,38 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_employee_profiles_user ON employee_profiles(user_id);
         CREATE INDEX IF NOT EXISTS idx_employee_profiles_status ON employee_profiles(employment_status);
+
+        /* ─── Activity Log ─── */
+
+        CREATE TABLE IF NOT EXISTS activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            action TEXT NOT NULL DEFAULT '',
+            entity_type TEXT DEFAULT '',
+            entity_id INTEGER,
+            description TEXT DEFAULT '',
+            ip_address TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id);
+        CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at);
+
+        /* ─── User Sessions (daily heartbeat tracking) ─── */
+
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            session_date TEXT NOT NULL,
+            first_seen TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            last_seen TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            page_views INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, session_date)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user_date ON user_sessions(user_id, session_date);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -1866,6 +1898,21 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_permit_inspections_permit ON permit_inspections(permit_id);
             CREATE INDEX IF NOT EXISTS idx_permit_inspections_status ON permit_inspections(status);
         ''')
+
+    # Migration: add gc_contact, gc_email, gc_phone to pay_app_contracts
+    pac_cols = [row[1] for row in conn.execute("PRAGMA table_info(pay_app_contracts)").fetchall()]
+    for col, typedef in [
+        ('gc_contact', "TEXT DEFAULT ''"),
+        ('gc_email', "TEXT DEFAULT ''"),
+        ('gc_phone', "TEXT DEFAULT ''"),
+    ]:
+        if col not in pac_cols:
+            conn.execute(f"ALTER TABLE pay_app_contracts ADD COLUMN {col} {typedef}")
+
+    # Migration: add signed_file to pay_applications (for uploaded signed/notarized copies)
+    pa_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(pay_applications)").fetchall()]
+    if 'signed_file' not in pa_cols2:
+        conn.execute("ALTER TABLE pay_applications ADD COLUMN signed_file TEXT DEFAULT ''")
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
