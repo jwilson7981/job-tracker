@@ -1,6 +1,20 @@
 __pycache__/
 *.pyc
-data/jobs.db
 *.xlsx
 .DS_Store
 .env
+
+# Database files
+*.db
+data/jobs.db
+
+# Uploaded/generated data files
+data/contracts/
+data/email_settings.json
+data/invoices/
+data/manuals/
+data/photos/
+data/plans/
+data/proposals/
+data/submittals/
+data/supplier_quotes/
