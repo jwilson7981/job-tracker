@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Construction Management{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css?v={{ sv }}">
+    <link rel="stylesheet" href="/static/style.css?v=20260304b">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,8 +22,8 @@
             {% block content %}{% endblock %}
         </main>
     </div>
-    <script src="/static/app.js?v={{ sv }}"></script>
-    <script src="/static/export_utils.js?v={{ sv }}"></script>
+    <script src="/static/app.js?v=20260304b"></script>
+    <script src="/static/export_utils.js?v=20260304b"></script>
     {% block scripts %}{% endblock %}
     {% if current_user %}
     <!-- Floating Calculator Widget -->
@@ -109,9 +109,9 @@
         </div>
     </div>
     <script>fetch('/api/heartbeat',{method:'POST'});setInterval(()=>fetch('/api/heartbeat',{method:'POST'}),60000);</script>
-    <script src="/static/chat_widget.js?v={{ sv }}"></script>
-    <script src="/static/duplicate_check.js?v={{ sv }}"></script>
-    <script src="/static/drag_drop.js?v={{ sv }}"></script>
+    <script src="/static/chat_widget.js?v=20260304b"></script>
+    <script src="/static/duplicate_check.js?v=20260304b"></script>
+    <script src="/static/drag_drop.js?v=20260304b"></script>
     {% endif %}
 </body>
 </html>
