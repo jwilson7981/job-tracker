@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Reminders - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Reminders</h1>
+    <button class="btn btn-primary" onclick="showAddReminder()">+ Add Reminder</button>
+</div>
+
+<!-- Summary Cards -->
+<div class="kpi-grid" id="reminderSummary">
+    <div class="kpi-card" style="border-left: 4px solid #3B82F6;">
+        <div class="kpi-value" id="summaryActive">0</div>
+        <div class="kpi-label">Active</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #F59E0B;">
+        <div class="kpi-value" id="summaryDueToday">0</div>
+        <div class="kpi-label">Due Today</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #EF4444;">
+        <div class="kpi-value" id="summaryOverdue">0</div>
+        <div class="kpi-label">Overdue</div>
+    </div>
+    <div class="kpi-card" style="border-left: 4px solid #22C55E;">
+        <div class="kpi-value" id="summaryCompleted">0</div>
+        <div class="kpi-label">Completed</div>
+    </div>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <select id="filterStatus" class="form-select" onchange="applyFilters()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Active" selected>Active</option>
+        <option value="Completed">Completed</option>
+        <option value="Dismissed">Dismissed</option>
+    </select>
+    <span id="reminderCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Reminders Table -->
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="remindersBody">
+            <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Reminder Modal -->
+<div id="reminderModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="reminderModalTitle">Add Reminder</h2>
+            <button class="modal-close" onclick="document.getElementById('reminderModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveReminder(event)" id="reminderForm">
+            <input type="hidden" id="reminderId" value="">
+            <div class="form-group">
+                <label class="form-label">Title *</label>
+                <input type="text" id="remTitle" class="form-input" required placeholder="What do you need to remember?">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea id="remDescription" class="form-input" rows="3" placeholder="Optional details..." style="resize:vertical;min-height:60px;font-family:inherit;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Due Date</label>
+                <input type="date" id="remDueDate" class="form-input">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('reminderModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Reminder</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script src="/static/reminders.js"></script>
+{% endblock %}

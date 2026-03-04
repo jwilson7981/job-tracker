@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Training - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Training Center</h1>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <span id="overallProgress" style="font-size:14px;color:var(--gray-500);"></span>
+        <button class="btn btn-secondary btn-small" onclick="resetProgress()">Reset Progress</button>
+    </div>
+</div>
+
+<!-- Progress Bar -->
+<div style="margin-bottom:24px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:13px;font-weight:600;color:var(--gray-700);">Your Training Progress</span>
+        <span id="progressPercent" style="font-size:13px;font-weight:600;color:var(--blue-primary);">0%</span>
+    </div>
+    <div style="height:10px;background:var(--gray-200);border-radius:5px;overflow:hidden;">
+        <div id="progressBar" style="height:100%;background:linear-gradient(90deg,#3B82F6,#22C55E);border-radius:5px;transition:width 0.4s ease;width:0%;"></div>
+    </div>
+</div>
+
+<!-- Search -->
+<div style="margin-bottom:20px;">
+    <input type="text" id="trainingSearch" class="form-input" placeholder="Search training topics..." oninput="filterTraining()" style="max-width:400px;">
+</div>
+
+<!-- Training Modules -->
+<div id="trainingModules">
+    <p class="loading">Loading training content...</p>
+</div>
+
+<!-- Lesson Detail Modal -->
+<div id="lessonModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;max-height:85vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h2 id="lessonTitle">Lesson</h2>
+            <button class="modal-close" onclick="document.getElementById('lessonModal').style.display='none'">&times;</button>
+        </div>
+        <div id="lessonBody" style="padding:0 24px 24px;line-height:1.7;"></div>
+        <div class="modal-actions" style="padding:0 24px 24px;">
+            <button class="btn btn-secondary" onclick="document.getElementById('lessonModal').style.display='none'">Close</button>
+            <button class="btn btn-primary" id="lessonCompleteBtn" onclick="markCurrentLesson()">Mark as Complete</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/training.js"></script>
+{% endblock %}

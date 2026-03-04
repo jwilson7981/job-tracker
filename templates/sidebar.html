@@ -235,6 +235,12 @@
                     <span class="sidebar-icon">&#128203;</span> Licenses
                 </a>
                 {% endif %}
+                <a href="/reminders" class="sidebar-link {% if request.path == '/reminders' %}active{% endif %}">
+                    <span class="sidebar-icon">&#128276;</span> Reminders
+                </a>
+                <a href="/training" class="sidebar-link {% if request.path == '/training' %}active{% endif %}">
+                    <span class="sidebar-icon">&#127891;</span> Training
+                </a>
             </div>
         </div>
 

@@ -14645,6 +14645,162 @@ def api_tc_unread_total():
     conn.close()
     return jsonify({'total': ch_unread + dm_unread})
 
+# ─── Training ────────────────────────────────────────────────────
+
+@app.route('/training')
+@login_required
+def training_page():
+    return render_template('training/index.html')
+
+@app.route('/api/training/progress')
+@api_login_required
+def api_training_progress():
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT lesson_key FROM training_progress WHERE user_id = ?',
+        (session['user_id'],)
+    ).fetchall()
+    conn.close()
+    return jsonify({'completed': [r['lesson_key'] for r in rows]})
+
+@app.route('/api/training/progress', methods=['POST'])
+@api_login_required
+def api_training_complete():
+    data = request.get_json(force=True)
+    lesson_key = data.get('lesson_key', '')
+    if not lesson_key:
+        return jsonify({'error': 'Missing lesson_key'}), 400
+    conn = get_db()
+    conn.execute(
+        'INSERT OR IGNORE INTO training_progress (user_id, lesson_key) VALUES (?,?)',
+        (session['user_id'], lesson_key)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/training/progress', methods=['DELETE'])
+@api_login_required
+def api_training_reset():
+    conn = get_db()
+    conn.execute('DELETE FROM training_progress WHERE user_id = ?', (session['user_id'],))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Reminders ────────────────────────────────────────────────────
+
+@app.route('/reminders')
+@login_required
+def reminders_page():
+    return render_template('reminders/list.html')
+
+@app.route('/api/reminders')
+@api_login_required
+def api_reminders_list():
+    conn = get_db()
+    uid = session['user_id']
+    rows = conn.execute(
+        "SELECT * FROM reminders WHERE user_id = ? ORDER BY CASE WHEN due_date = '' THEN 1 ELSE 0 END, due_date ASC",
+        (uid,)
+    ).fetchall()
+    result = [dict(r) for r in rows]
+    _check_reminder_notifications(result, uid, conn)
+    conn.close()
+    return jsonify(result)
+
+def _check_reminder_notifications(reminders, user_id, conn):
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    tomorrow = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+    for r in reminders:
+        if r['status'] != 'Active' or not r.get('due_date'):
+            continue
+        due = r['due_date']
+        if due > tomorrow:
+            continue
+        # Check if notification already sent today for this reminder
+        existing = conn.execute(
+            "SELECT id FROM notifications WHERE user_id = ? AND type = 'reminder' AND message LIKE ? AND created_at >= ?",
+            (user_id, f'%reminder#{r["id"]}%', today_str)
+        ).fetchone()
+        if existing:
+            continue
+        if due < today_str:
+            label = 'is overdue'
+        elif due == today_str:
+            label = 'is due today'
+        else:
+            label = 'is due tomorrow'
+        conn.execute(
+            'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+            (user_id, 'reminder', f'Reminder: {r["title"]}',
+             f'"{r["title"]}" {label} (reminder#{r["id"]})',
+             '/reminders')
+        )
+    conn.commit()
+
+@app.route('/api/reminders', methods=['POST'])
+@api_login_required
+def api_create_reminder():
+    data = request.get_json(force=True)
+    conn = get_db()
+    conn.execute(
+        'INSERT INTO reminders (user_id, title, description, due_date) VALUES (?,?,?,?)',
+        (session['user_id'], data.get('title', ''), data.get('description', ''), data.get('due_date', ''))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/reminders/<int:rid>', methods=['PUT'])
+@api_login_required
+def api_update_reminder(rid):
+    conn = get_db()
+    row = conn.execute('SELECT * FROM reminders WHERE id = ? AND user_id = ?', (rid, session['user_id'])).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    data = request.get_json(force=True)
+    conn.execute(
+        '''UPDATE reminders SET title = ?, description = ?, due_date = ?, status = ?,
+           updated_at = datetime('now','localtime') WHERE id = ?''',
+        (data.get('title', row['title']), data.get('description', row['description']),
+         data.get('due_date', row['due_date']), data.get('status', row['status']), rid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/reminders/<int:rid>/complete', methods=['PUT'])
+@api_login_required
+def api_complete_reminder(rid):
+    conn = get_db()
+    row = conn.execute('SELECT * FROM reminders WHERE id = ? AND user_id = ?', (rid, session['user_id'])).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    conn.execute(
+        "UPDATE reminders SET status = 'Completed', updated_at = datetime('now','localtime') WHERE id = ?",
+        (rid,)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/reminders/<int:rid>', methods=['DELETE'])
+@api_login_required
+def api_delete_reminder(rid):
+    conn = get_db()
+    row = conn.execute('SELECT * FROM reminders WHERE id = ? AND user_id = ?', (rid, session['user_id'])).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    conn.execute('DELETE FROM reminders WHERE id = ?', (rid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 # ─── Startup ────────────────────────────────────────────────────
 
 def get_local_ip():

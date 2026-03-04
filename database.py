@@ -1561,6 +1561,30 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_tc_messages_dm ON tc_messages(dm_recipient_id);
         CREATE INDEX IF NOT EXISTS idx_tc_messages_created ON tc_messages(created_at);
         CREATE INDEX IF NOT EXISTS idx_tc_read_status_user ON tc_read_status(user_id);
+
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            description TEXT DEFAULT '',
+            due_date TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'Active' CHECK(status IN ('Active','Completed','Dismissed')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id);
+        CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
+
+        CREATE TABLE IF NOT EXISTS training_progress (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            lesson_key TEXT NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, lesson_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_training_progress_user ON training_progress(user_id);
     ''')
 
     # Migration: add total_net_price column if missing
