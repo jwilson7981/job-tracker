@@ -36,7 +36,7 @@
 
 <!-- New Request Modal -->
 <div id="newRequestModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeNewRequest()">
-    <div class="modal-box" style="max-width:900px;">
+    <div class="modal-box" style="max-width:950px;">
         <div class="modal-header">
             <h3>New Material Request</h3>
             <button onclick="closeNewRequest()" class="modal-close">&times;</button>
@@ -44,9 +44,9 @@
         <div class="modal-body">
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
                 <div class="bid-field"><label class="form-label">Job *</label>
-                    <select id="reqJob" class="form-select" onchange="loadImportGrid()"></select></div>
+                    <select id="reqJob" class="form-select" onchange="onJobChange()"></select></div>
                 <div class="bid-field"><label class="form-label">Phase</label>
-                    <select id="reqPhase" class="form-select" onchange="loadImportGrid()">
+                    <select id="reqPhase" class="form-select">
                         <option value="">All Phases</option>
                         <option value="Rough-In">Rough-In</option>
                         <option value="Trim Out">Trim Out</option>
@@ -64,37 +64,71 @@
             <div class="bid-field" style="margin-bottom:16px;"><label class="form-label">Notes</label>
                 <input type="text" id="reqNotes" class="form-input"></div>
 
-            <!-- Import Grid -->
-            <div id="importSection" style="display:none;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                    <h4 style="margin:0;">Import from Material List</h4>
-                    <div style="display:flex;gap:6px;">
-                        <button class="btn btn-secondary btn-small" onclick="selectAllImport()">Select All</button>
-                        <button class="btn btn-secondary btn-small" onclick="selectInStockOnly()">In Stock Only</button>
-                        <button class="btn btn-secondary btn-small" onclick="deselectAllImport()">Deselect All</button>
-                    </div>
-                </div>
-                <div style="max-height:300px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
-                    <table class="data-table" style="margin:0;">
-                        <thead style="position:sticky;top:0;z-index:1;"><tr>
-                            <th style="width:36px;"><input type="checkbox" id="importCheckAll" onchange="toggleAllImport(this.checked)"></th>
-                            <th>SKU</th><th>Description</th><th>Needed</th><th>Stock</th><th>Status</th><th>Qty</th><th>Order?</th>
-                        </tr></thead>
-                        <tbody id="importBody"></tbody>
-                    </table>
-                </div>
-            </div>
-            <div id="noItemsMsg" style="display:none;padding:16px;text-align:center;color:var(--gray-500);font-size:13px;">
-                No line items found for this job. Use manual entry below.
+            <!-- Tab Bar -->
+            <div style="display:flex;gap:0;border-bottom:2px solid var(--gray-200);margin-bottom:16px;">
+                <button class="import-tab active" data-tab="job" onclick="switchImportSource('job')">Import from Job</button>
+                <button class="import-tab" data-tab="file" onclick="switchImportSource('file')">Import from File</button>
+                <button class="import-tab" data-tab="manual" onclick="switchImportSource('manual')">Manual Entry</button>
             </div>
 
-            <!-- Manual Items -->
-            <h4 style="margin-top:16px;">Manual Items</h4>
-            <table class="data-table" style="margin-top:8px;">
-                <thead><tr><th>SKU</th><th>Description</th><th>Qty</th><th>Unit</th><th></th></tr></thead>
-                <tbody id="reqItemsBody"></tbody>
-            </table>
-            <button class="btn btn-secondary btn-small" style="margin-top:8px;" onclick="addRequestItem()">+ Add Manual Item</button>
+            <!-- Tab: Import from Job (phase-grouped) -->
+            <div id="tabJob" class="import-tab-content">
+                <div id="importSection" style="display:none;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span id="importSummary" style="font-size:13px;color:var(--gray-500);"></span>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-secondary btn-small" onclick="selectAllImport()">Select All</button>
+                            <button class="btn btn-secondary btn-small" onclick="selectInStockOnly()">In Stock Only</button>
+                            <button class="btn btn-secondary btn-small" onclick="deselectAllImport()">Deselect All</button>
+                        </div>
+                    </div>
+                    <div id="phaseGroupsContainer"></div>
+                </div>
+                <div id="noItemsMsg" style="display:none;padding:16px;text-align:center;color:var(--gray-500);font-size:13px;">
+                    No line items found for this job. Use manual entry or file import.
+                </div>
+                <div id="selectJobMsg" style="padding:16px;text-align:center;color:var(--gray-500);font-size:13px;">
+                    Select a job to import materials.
+                </div>
+            </div>
+
+            <!-- Tab: Import from File -->
+            <div id="tabFile" class="import-tab-content" style="display:none;">
+                <div style="margin-bottom:12px;">
+                    <p style="font-size:13px;color:var(--gray-500);margin:0 0 8px 0;">Upload a CSV or Excel file with columns: SKU, Description, Quantity, Unit (optional)</p>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="file" id="fileImportInput" accept=".csv,.xlsx,.xls" class="form-input" style="max-width:320px;" onchange="handleFileImport()">
+                        <span id="fileImportStatus" style="font-size:13px;color:var(--gray-500);"></span>
+                    </div>
+                </div>
+                <div id="fileImportSection" style="display:none;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span id="fileSummary" style="font-size:13px;color:var(--gray-500);"></span>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-secondary btn-small" onclick="selectAllFile()">Select All</button>
+                            <button class="btn btn-secondary btn-small" onclick="deselectAllFile()">Deselect All</button>
+                        </div>
+                    </div>
+                    <div style="max-height:300px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:6px;">
+                        <table class="data-table" style="margin:0;">
+                            <thead style="position:sticky;top:0;z-index:1;"><tr>
+                                <th style="width:36px;"><input type="checkbox" id="fileCheckAll" onchange="toggleAllFile(this.checked)"></th>
+                                <th>SKU</th><th>Description</th><th>Qty</th><th>Unit</th><th>Stock</th><th>Status</th><th>Order?</th>
+                            </tr></thead>
+                            <tbody id="fileImportBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Manual Entry -->
+            <div id="tabManual" class="import-tab-content" style="display:none;">
+                <table class="data-table" style="margin-top:8px;">
+                    <thead><tr><th>SKU</th><th>Description</th><th>Qty</th><th>Unit</th><th></th></tr></thead>
+                    <tbody id="reqItemsBody"></tbody>
+                </table>
+                <button class="btn btn-secondary btn-small" style="margin-top:8px;" onclick="addRequestItem()">+ Add Manual Item</button>
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn btn-secondary" onclick="closeNewRequest()">Cancel</button>
@@ -115,10 +149,62 @@
     </div>
 </div>
 
+<style>
+.import-tab {
+    padding: 8px 18px;
+    border: none;
+    background: none;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-500);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.import-tab:hover { color: var(--gray-700); }
+.import-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.phase-group { margin-bottom: 8px; }
+.phase-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    gap: 10px;
+}
+.phase-group-header:hover { opacity: 0.85; }
+.phase-group-chevron { font-size: 12px; transition: transform 0.2s; }
+.phase-group.open .phase-group-chevron { transform: rotate(180deg); }
+.phase-group-body { display: none; }
+.phase-group.open .phase-group-body { display: block; }
+.phase-group-summary { font-size: 12px; font-weight: 400; opacity: 0.8; }
+.stock-badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.stock-badge.in-stock { background: #dcfce7; color: #166534; }
+.stock-badge.low-stock { background: #fef3c7; color: #92400e; }
+.stock-badge.out-of-stock { background: #fef2f2; color: #991b1b; }
+</style>
+
 <script>
 let allRequests = [];
 let importItems = [];
+let fileImportItems = [];
+let groupedData = null;
 const userRole = document.body.dataset.role || 'employee';
+
+const PHASE_COLORS = {
+    'Rough-In': { bg: '#dbeafe', text: '#1e40af' },
+    'Trim Out': { bg: '#e0e7ff', text: '#3730a3' },
+    'Equipment': { bg: '#fef3c7', text: '#92400e' },
+    'Startup':   { bg: '#dcfce7', text: '#166534' },
+    'Unassigned':{ bg: '#f3f4f6', text: '#6b7280' }
+};
 
 async function loadJobs() {
     const res = await fetch('/api/projects');
@@ -164,39 +250,77 @@ async function loadRequests() {
     }).join('');
 }
 
+// ─── Tab Switching ────────────────────────────────────
+
+function switchImportSource(tab) {
+    document.querySelectorAll('.import-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.getElementById('tabJob').style.display = tab === 'job' ? '' : 'none';
+    document.getElementById('tabFile').style.display = tab === 'file' ? '' : 'none';
+    document.getElementById('tabManual').style.display = tab === 'manual' ? '' : 'none';
+}
+
 // ─── New Request Modal ────────────────────────────────
 
 function showNewRequest() {
     document.getElementById('newRequestModal').style.display = 'flex';
     document.getElementById('importSection').style.display = 'none';
     document.getElementById('noItemsMsg').style.display = 'none';
+    document.getElementById('selectJobMsg').style.display = '';
     importItems = [];
-    loadImportGrid();
+    fileImportItems = [];
+    groupedData = null;
+    switchImportSource('job');
+    onJobChange();
 }
 function closeNewRequest() {
     document.getElementById('newRequestModal').style.display = 'none';
     document.getElementById('reqItemsBody').innerHTML = '';
-    document.getElementById('importBody').innerHTML = '';
+    document.getElementById('phaseGroupsContainer').innerHTML = '';
+    document.getElementById('fileImportBody').innerHTML = '';
+    document.getElementById('fileImportSection').style.display = 'none';
+    document.getElementById('fileImportInput').value = '';
+    document.getElementById('fileImportStatus').textContent = '';
     document.getElementById('reqPhase').value = '';
     importItems = [];
+    fileImportItems = [];
+    groupedData = null;
 }
 
-async function loadImportGrid() {
+function onJobChange() {
+    loadGroupedImportGrid();
+}
+
+// ─── Phase-Grouped Import Grid (Job tab) ─────────────
+
+async function loadGroupedImportGrid() {
     const jobId = document.getElementById('reqJob').value;
-    const phase = document.getElementById('reqPhase').value;
     const importSection = document.getElementById('importSection');
     const noItemsMsg = document.getElementById('noItemsMsg');
-    const importBody = document.getElementById('importBody');
+    const selectJobMsg = document.getElementById('selectJobMsg');
+    const container = document.getElementById('phaseGroupsContainer');
+
     if (!jobId) {
         importSection.style.display = 'none';
         noItemsMsg.style.display = 'none';
+        selectJobMsg.style.display = '';
         importItems = [];
+        groupedData = null;
         return;
     }
-    let url = `/api/jobs/${jobId}/line-items-for-request`;
-    if (phase) url += `?phase=${encodeURIComponent(phase)}`;
-    const res = await fetch(url);
-    importItems = await res.json();
+    selectJobMsg.style.display = 'none';
+
+    const res = await fetch(`/api/jobs/${jobId}/line-items-for-request?grouped=1`);
+    groupedData = await res.json();
+
+    // Flatten all items for submitRequest reference
+    importItems = [];
+    (groupedData.phases || []).forEach(p => {
+        p.items.forEach(item => {
+            item._phase = p.phase;
+            importItems.push(item);
+        });
+    });
+
     if (!importItems.length) {
         importSection.style.display = 'none';
         noItemsMsg.style.display = 'block';
@@ -204,44 +328,138 @@ async function loadImportGrid() {
     }
     noItemsMsg.style.display = 'none';
     importSection.style.display = 'block';
-    importBody.innerHTML = importItems.map((item, idx) => {
-        const inStock = item.in_stock;
-        const statusBadge = inStock
-            ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">In Stock</span>'
-            : '<span style="background:#fef2f2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">Order Needed</span>';
-        const preChecked = phase ? item.has_phase_shipment : (item.qty_still_needed > 0);
-        const orderChecked = !inStock;
-        return `<tr>
-            <td style="text-align:center;"><input type="checkbox" class="import-check" data-idx="${idx}" ${preChecked ? 'checked' : ''}></td>
-            <td style="font-size:13px;font-family:monospace;">${item.sku || '-'}</td>
-            <td style="font-size:13px;">${item.description}</td>
-            <td style="text-align:center;">${item.qty_still_needed}</td>
-            <td style="text-align:center;">${item.stock_on_hand}</td>
-            <td style="text-align:center;">${statusBadge}</td>
-            <td><input type="number" class="form-input import-qty" data-idx="${idx}" value="${item.qty_still_needed}" min="0" step="0.5" style="width:70px;"></td>
-            <td style="text-align:center;"><input type="checkbox" class="import-order" data-idx="${idx}" ${orderChecked ? 'checked' : ''} title="Mark as Order Needed"></td>
-        </tr>`;
+
+    // Summary
+    const totalItems = importItems.length;
+    const inStockCount = importItems.filter(i => i.stock_status === 'In Stock').length;
+    document.getElementById('importSummary').textContent = `${totalItems} items total — ${inStockCount} in stock, ${totalItems - inStockCount} need ordering`;
+
+    // Render phase groups
+    let globalIdx = 0;
+    container.innerHTML = (groupedData.phases || []).map(phase => {
+        const colors = PHASE_COLORS[phase.phase] || PHASE_COLORS['Unassigned'];
+        const s = phase.summary;
+        const headerHtml = `
+            <div class="phase-group open" data-phase="${phase.phase}">
+                <button class="phase-group-header" style="background:${colors.bg};color:${colors.text};" onclick="this.parentElement.classList.toggle('open')">
+                    <span style="display:flex;align-items:center;gap:8px;">
+                        <span class="phase-group-chevron">&#9660;</span>
+                        <span>${phase.phase}</span>
+                        <span class="phase-group-summary">${s.total_items} items — ${s.in_stock} in stock, ${s.need_ordering} need ordering</span>
+                    </span>
+                    <span><input type="checkbox" class="phase-select-all" data-phase="${phase.phase}" onclick="event.stopPropagation();togglePhaseAll(this)" checked></span>
+                </button>
+                <div class="phase-group-body">
+                    <div style="max-height:250px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:0 0 6px 6px;">
+                        <table class="data-table" style="margin:0;">
+                            <thead style="position:sticky;top:0;z-index:1;"><tr>
+                                <th style="width:36px;"></th>
+                                <th>SKU</th><th>Description</th><th>Needed</th><th>Stock</th><th>Status</th><th>Qty</th><th>Order?</th>
+                            </tr></thead>
+                            <tbody>${phase.items.map(item => {
+                                const idx = globalIdx++;
+                                const badge = stockBadge(item.stock_status, item.stock_on_hand);
+                                const preChecked = item.qty_still_needed > 0;
+                                const orderChecked = item.stock_status !== 'In Stock';
+                                return `<tr>
+                                    <td style="text-align:center;"><input type="checkbox" class="import-check" data-idx="${idx}" data-phase="${phase.phase}" ${preChecked ? 'checked' : ''}></td>
+                                    <td style="font-size:13px;font-family:monospace;">${item.sku || '-'}</td>
+                                    <td style="font-size:13px;">${item.description}</td>
+                                    <td style="text-align:center;">${item.qty_still_needed}</td>
+                                    <td style="text-align:center;">${item.stock_on_hand}${item.reorder_point ? ' <span style="font-size:11px;color:var(--gray-400);">(RP:'+item.reorder_point+')</span>' : ''}</td>
+                                    <td style="text-align:center;">${badge}</td>
+                                    <td><input type="number" class="form-input import-qty" data-idx="${idx}" value="${item.qty_still_needed}" min="0" step="0.5" style="width:70px;"></td>
+                                    <td style="text-align:center;"><input type="checkbox" class="import-order" data-idx="${idx}" ${orderChecked ? 'checked' : ''} title="Mark as Order Needed"></td>
+                                </tr>`;
+                            }).join('')}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+        return headerHtml;
     }).join('');
-    document.getElementById('importCheckAll').checked = false;
+}
+
+function stockBadge(status, qty) {
+    const cls = status === 'In Stock' ? 'in-stock' : status === 'Low Stock' ? 'low-stock' : 'out-of-stock';
+    return `<span class="stock-badge ${cls}">${status} (${qty})</span>`;
+}
+
+function togglePhaseAll(cb) {
+    const phase = cb.dataset.phase;
+    document.querySelectorAll(`.import-check[data-phase="${phase}"]`).forEach(c => c.checked = cb.checked);
 }
 
 function toggleAllImport(checked) {
     document.querySelectorAll('.import-check').forEach(cb => cb.checked = checked);
+    document.querySelectorAll('.phase-select-all').forEach(cb => cb.checked = checked);
 }
 function selectAllImport() {
-    document.querySelectorAll('.import-check').forEach(cb => cb.checked = true);
-    document.getElementById('importCheckAll').checked = true;
+    toggleAllImport(true);
 }
 function deselectAllImport() {
-    document.querySelectorAll('.import-check').forEach(cb => cb.checked = false);
-    document.getElementById('importCheckAll').checked = false;
+    toggleAllImport(false);
 }
 function selectInStockOnly() {
     document.querySelectorAll('.import-check').forEach(cb => {
         const idx = parseInt(cb.dataset.idx);
-        cb.checked = importItems[idx] && importItems[idx].in_stock;
+        cb.checked = importItems[idx] && importItems[idx].stock_status === 'In Stock';
     });
 }
+
+// ─── File Import Tab ─────────────────────────────────
+
+async function handleFileImport() {
+    const input = document.getElementById('fileImportInput');
+    const file = input.files[0];
+    if (!file) return;
+    document.getElementById('fileImportStatus').textContent = 'Parsing...';
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch('/api/material-requests/parse-file', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+            document.getElementById('fileImportStatus').textContent = data.error || 'Error parsing file';
+            return;
+        }
+        fileImportItems = data.items || [];
+        document.getElementById('fileImportStatus').textContent = `${data.count} items found`;
+        renderFileImportGrid();
+    } catch (e) {
+        document.getElementById('fileImportStatus').textContent = 'Error: ' + e.message;
+    }
+}
+
+function renderFileImportGrid() {
+    if (!fileImportItems.length) {
+        document.getElementById('fileImportSection').style.display = 'none';
+        return;
+    }
+    document.getElementById('fileImportSection').style.display = 'block';
+    const inStockCount = fileImportItems.filter(i => i.stock_status === 'In Stock').length;
+    document.getElementById('fileSummary').textContent = `${fileImportItems.length} items — ${inStockCount} in stock, ${fileImportItems.length - inStockCount} need ordering`;
+    document.getElementById('fileImportBody').innerHTML = fileImportItems.map((item, idx) => {
+        const badge = stockBadge(item.stock_status, item.stock_on_hand);
+        return `<tr>
+            <td style="text-align:center;"><input type="checkbox" class="file-check" data-idx="${idx}" checked></td>
+            <td style="font-size:13px;font-family:monospace;">${item.sku || '-'}</td>
+            <td style="font-size:13px;">${item.description}</td>
+            <td><input type="number" class="form-input file-qty" data-idx="${idx}" value="${item.quantity}" min="0" step="0.5" style="width:70px;"></td>
+            <td style="font-size:13px;">${item.unit}</td>
+            <td style="text-align:center;">${item.stock_on_hand}</td>
+            <td style="text-align:center;">${badge}</td>
+            <td style="text-align:center;"><input type="checkbox" class="file-order" data-idx="${idx}" ${item.order_needed ? 'checked' : ''} title="Mark as Order Needed"></td>
+        </tr>`;
+    }).join('');
+    document.getElementById('fileCheckAll').checked = true;
+}
+
+function toggleAllFile(checked) {
+    document.querySelectorAll('.file-check').forEach(cb => cb.checked = checked);
+}
+function selectAllFile() { toggleAllFile(true); document.getElementById('fileCheckAll').checked = true; }
+function deselectAllFile() { toggleAllFile(false); document.getElementById('fileCheckAll').checked = false; }
 
 // ─── Manual Items ────────────────────────────────────
 
@@ -262,7 +480,7 @@ function addRequestItem() {
 
 async function submitRequest() {
     const items = [];
-    // Gather checked import items
+    // 1. Gather checked import items (job import)
     document.querySelectorAll('.import-check:checked').forEach(cb => {
         const idx = parseInt(cb.dataset.idx);
         const item = importItems[idx];
@@ -281,7 +499,25 @@ async function submitRequest() {
             inventory_item_id: item.inventory_item_id
         });
     });
-    // Gather manual items
+    // 2. Gather checked file import items
+    document.querySelectorAll('.file-check:checked').forEach(cb => {
+        const idx = parseInt(cb.dataset.idx);
+        const item = fileImportItems[idx];
+        if (!item) return;
+        const qtyInput = document.querySelector(`.file-qty[data-idx="${idx}"]`);
+        const orderCb = document.querySelector(`.file-order[data-idx="${idx}"]`);
+        const qty = parseFloat(qtyInput?.value) || 0;
+        if (qty <= 0) return;
+        items.push({
+            sku: item.sku,
+            description: item.description,
+            quantity_requested: qty,
+            unit: item.unit || 'each',
+            order_needed: orderCb?.checked ? 1 : 0,
+            inventory_item_id: item.inventory_item_id
+        });
+    });
+    // 3. Gather manual items
     document.querySelectorAll('#reqItemsBody tr').forEach(row => {
         items.push({
             sku: row.querySelector('.ri-sku').value,
@@ -310,19 +546,28 @@ async function showDetail(rid) {
     const res = await fetch(`/api/material-requests/${rid}`);
     const r = await res.json();
     document.getElementById('detailTitle').textContent = `Material Request #${rid}`;
+    const detailItems = r.items || [];
+    const fromStock = detailItems.filter(i => !i.order_needed).length;
+    const orderNeeded = detailItems.filter(i => i.order_needed).length;
     let html = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
         <div><strong>Job:</strong> ${r.job_name}</div><div><strong>Requester:</strong> ${r.requester_name}</div>
         <div><strong>Priority:</strong> ${r.priority}</div><div><strong>Status:</strong> ${r.status}</div>
         <div><strong>Needed By:</strong> ${r.needed_by || '-'}</div><div><strong>Phase:</strong> ${r.phase || '-'}</div>
         <div style="grid-column:1/-1;"><strong>Notes:</strong> ${r.notes || '-'}</div>
-    </div><h4>Items</h4><table class="data-table" style="margin-top:8px;">
+    </div>
+    <div style="display:flex;gap:16px;margin-bottom:12px;font-size:13px;">
+        <span style="padding:4px 10px;border-radius:6px;background:#dcfce7;color:#166534;font-weight:600;">From Stock: ${fromStock}</span>
+        <span style="padding:4px 10px;border-radius:6px;background:#fef2f2;color:#991b1b;font-weight:600;">Order Needed: ${orderNeeded}</span>
+    </div>
+    <h4>Items</h4><table class="data-table" style="margin-top:8px;">
     <thead><tr><th>SKU</th><th>Description</th><th>Requested</th><th>Approved</th><th>Fulfilled</th><th>Unit</th><th>Stock</th><th>Status</th></tr></thead>
-    <tbody>${(r.items||[]).map(i => {
+    <tbody>${detailItems.map(i => {
         const stockVal = i.stock_on_hand != null ? i.stock_on_hand : '-';
         const statusLabel = i.order_needed
-            ? '<span style="background:#fef2f2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">Order Needed</span>'
-            : '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">From Stock</span>';
-        return `<tr><td style="font-family:monospace;">${i.sku||'-'}</td><td>${i.description}</td>
+            ? '<span class="stock-badge out-of-stock">Order Needed</span>'
+            : '<span class="stock-badge in-stock">From Stock</span>';
+        const rowBg = i.order_needed ? 'background:rgba(254,242,242,0.5);' : '';
+        return `<tr style="${rowBg}"><td style="font-family:monospace;">${i.sku||'-'}</td><td>${i.description}</td>
         <td>${i.quantity_requested}</td><td>${i.quantity_approved||'-'}</td><td>${i.quantity_fulfilled||'-'}</td>
         <td>${i.unit}</td><td style="text-align:center;">${stockVal}</td><td style="text-align:center;">${statusLabel}</td></tr>`;
     }).join('')}</tbody></table>`;

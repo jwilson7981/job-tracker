@@ -100,6 +100,7 @@ _ROUTE_ENTITY_MAP = {
     '/api/customers': 'customer', '/api/vendors': 'vendor',
     '/api/material-shipments': 'material_shipment', '/api/receiving': 'receiving',
     '/api/feedback': 'feedback', '/api/team-pay': 'team_pay',
+    '/api/team-chat': 'team_chat',
 }
 
 _SKIP_PREFIXES = ('/api/heartbeat', '/api/notifications', '/static', '/api/chat', '/login', '/logout', '/change-password')
@@ -11963,41 +11964,85 @@ def invoice_detail_page(iid):
 @api_login_required
 def api_line_items_for_request(job_id):
     phase = request.args.get('phase', '')
+    grouped = request.args.get('grouped', '')
     conn = get_db()
     line_items = conn.execute('''
         SELECT id, line_number, sku, description, qty_ordered, stock_ns
         FROM line_items WHERE job_id = ? ORDER BY line_number
     ''', (job_id,)).fetchall()
+
+    # Batch-query inventory for all SKUs
+    skus = list(set((li['sku'] or '').strip() for li in line_items if (li['sku'] or '').strip()))
+    inv_map = {}
+    if skus:
+        placeholders = ','.join('?' * len(skus))
+        inv_rows = conn.execute(f'''
+            SELECT id, sku, quantity_on_hand, reorder_point FROM inventory_items WHERE sku IN ({placeholders})
+        ''', skus).fetchall()
+        for row in inv_rows:
+            inv_map[row['sku']] = row
+
+    # Batch-query already-requested totals
+    li_ids = [li['id'] for li in line_items]
+    requested_map = {}
+    if li_ids:
+        placeholders = ','.join('?' * len(li_ids))
+        req_rows = conn.execute(f'''
+            SELECT mri.line_item_id, COALESCE(SUM(mri.quantity_requested), 0) as total
+            FROM material_request_items mri
+            JOIN material_requests mr ON mri.request_id = mr.id
+            WHERE mri.line_item_id IN ({placeholders}) AND mr.status != 'Cancelled'
+            GROUP BY mri.line_item_id
+        ''', li_ids).fetchall()
+        for row in req_rows:
+            requested_map[row['line_item_id']] = row['total']
+
+    # Batch-query phase assignments for grouped mode
+    phase_map = {}  # line_item_id -> set of phases
+    if grouped == '1' and li_ids:
+        placeholders = ','.join('?' * len(li_ids))
+        phase_rows = conn.execute(f'''
+            SELECT msi.line_item_id, ms.phase
+            FROM material_shipment_items msi
+            JOIN material_shipments ms ON msi.shipment_id = ms.id
+            WHERE ms.job_id = ? AND msi.line_item_id IN ({placeholders})
+        ''', [job_id] + li_ids).fetchall()
+        for row in phase_rows:
+            phase_map.setdefault(row['line_item_id'], set()).add(row['phase'])
+
     results = []
     for li in line_items:
         sku = (li['sku'] or '').strip()
-        # Cross-reference against inventory by SKU
-        inv = None
-        if sku:
-            inv = conn.execute('''
-                SELECT id, quantity_on_hand FROM inventory_items WHERE sku = ?
-            ''', (sku,)).fetchone()
+        inv = inv_map.get(sku)
         stock_on_hand = inv['quantity_on_hand'] if inv else 0
+        reorder_point = inv['reorder_point'] if inv else 0
         inventory_item_id = inv['id'] if inv else None
-        # Calculate qty already requested from non-cancelled requests
-        already_requested = conn.execute('''
-            SELECT COALESCE(SUM(mri.quantity_requested), 0) as total
-            FROM material_request_items mri
-            JOIN material_requests mr ON mri.request_id = mr.id
-            WHERE mri.line_item_id = ? AND mr.status != 'Cancelled'
-        ''', (li['id'],)).fetchone()['total']
+        already_requested = requested_map.get(li['id'], 0)
         qty_still_needed = max(0, (li['qty_ordered'] or 0) - already_requested)
-        # Check if item has shipment assignments for the selected phase
+
+        # Stock status determination
+        if stock_on_hand <= 0:
+            stock_status = 'Out of Stock'
+        elif stock_on_hand <= reorder_point:
+            stock_status = 'Low Stock'
+        else:
+            stock_status = 'In Stock'
+
         has_phase_shipment = False
-        if phase:
-            ps = conn.execute('''
-                SELECT COUNT(*) as cnt FROM material_shipment_items msi
-                JOIN material_shipments ms ON msi.shipment_id = ms.id
-                WHERE msi.line_item_id = ? AND ms.phase = ?
-            ''', (li['id'], phase)).fetchone()
-            has_phase_shipment = ps['cnt'] > 0
+        if phase and not grouped:
+            phases_for_item = phase_map.get(li['id'], set()) if phase_map else set()
+            if not phases_for_item:
+                ps = conn.execute('''
+                    SELECT COUNT(*) as cnt FROM material_shipment_items msi
+                    JOIN material_shipments ms ON msi.shipment_id = ms.id
+                    WHERE msi.line_item_id = ? AND ms.phase = ?
+                ''', (li['id'], phase)).fetchone()
+                has_phase_shipment = ps['cnt'] > 0
+            else:
+                has_phase_shipment = phase in phases_for_item
+
         in_stock = stock_on_hand >= qty_still_needed and qty_still_needed > 0
-        results.append({
+        item_data = {
             'line_item_id': li['id'],
             'line_number': li['line_number'],
             'sku': sku,
@@ -12005,12 +12050,175 @@ def api_line_items_for_request(job_id):
             'qty_ordered': li['qty_ordered'] or 0,
             'qty_still_needed': qty_still_needed,
             'stock_on_hand': stock_on_hand,
+            'reorder_point': reorder_point,
+            'stock_status': stock_status,
             'in_stock': in_stock,
             'inventory_item_id': inventory_item_id,
             'has_phase_shipment': has_phase_shipment
-        })
+        }
+        results.append(item_data)
+
     conn.close()
+
+    # Grouped response: organize by phase
+    if grouped == '1':
+        phase_order = ['Rough-In', 'Trim Out', 'Equipment', 'Startup', 'Unassigned']
+        phase_buckets = {p: [] for p in phase_order}
+        for item in results:
+            item_phases = phase_map.get(item['line_item_id'], set())
+            if not item_phases:
+                phase_buckets['Unassigned'].append(item)
+            else:
+                for p in item_phases:
+                    if p in phase_buckets:
+                        phase_buckets[p].append(item)
+                    else:
+                        phase_buckets.setdefault(p, []).append(item)
+        phases_out = []
+        for p in phase_order:
+            items = phase_buckets.get(p, [])
+            if not items:
+                continue
+            in_stock_count = sum(1 for i in items if i['stock_status'] == 'In Stock')
+            need_ordering = len(items) - in_stock_count
+            phases_out.append({
+                'phase': p,
+                'items': items,
+                'summary': {
+                    'total_items': len(items),
+                    'in_stock': in_stock_count,
+                    'need_ordering': need_ordering
+                }
+            })
+        return jsonify({'phases': phases_out})
+
     return jsonify(results)
+
+
+@app.route('/api/material-requests/parse-file', methods=['POST'])
+@api_login_required
+def api_material_requests_parse_file():
+    """Parse a CSV or Excel file and cross-reference against inventory."""
+    import csv as csv_module
+    import io
+
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': 'No file provided'}), 400
+
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    rows = []
+
+    # Column alias matching
+    header_aliases = {
+        'sku': ['sku', 'part number', 'part #', 'item number', 'product code'],
+        'description': ['description', 'desc', 'item description', 'material', 'name'],
+        'quantity': ['quantity', 'qty', 'amount', 'count'],
+        'unit': ['unit', 'uom', 'unit of measure'],
+    }
+
+    if ext == 'csv':
+        try:
+            content = file.read().decode('utf-8-sig')
+            reader = csv_module.DictReader(io.StringIO(content))
+            raw_headers = {h.strip().lower(): h for h in (reader.fieldnames or [])}
+            col_map = {}
+            for field, aliases in header_aliases.items():
+                for alias in aliases:
+                    if alias in raw_headers:
+                        col_map[field] = raw_headers[alias]
+                        break
+            for row in reader:
+                rows.append({
+                    'sku': (row.get(col_map.get('sku', ''), '') or '').strip(),
+                    'description': (row.get(col_map.get('description', ''), '') or '').strip(),
+                    'quantity': row.get(col_map.get('quantity', ''), '') or '0',
+                    'unit': (row.get(col_map.get('unit', ''), '') or 'each').strip(),
+                })
+        except Exception as e:
+            return jsonify({'error': f'Could not read CSV: {str(e)[:200]}'}), 400
+
+    elif ext in ('xlsx', 'xls'):
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(file, data_only=True)
+            ws = wb.active
+            headers = {}
+            for col in range(1, ws.max_column + 1):
+                val = ws.cell(row=1, column=col).value
+                if val:
+                    headers[str(val).strip().lower()] = col
+            col_map = {}
+            for field, aliases in header_aliases.items():
+                for alias in aliases:
+                    if alias in headers:
+                        col_map[field] = headers[alias]
+                        break
+            for row_num in range(2, ws.max_row + 1):
+                sku_val = ws.cell(row=row_num, column=col_map.get('sku', 0)).value if 'sku' in col_map else ''
+                desc_val = ws.cell(row=row_num, column=col_map.get('description', 0)).value if 'description' in col_map else ''
+                qty_val = ws.cell(row=row_num, column=col_map.get('quantity', 0)).value if 'quantity' in col_map else 0
+                unit_val = ws.cell(row=row_num, column=col_map.get('unit', 0)).value if 'unit' in col_map else 'each'
+                if not sku_val and not desc_val:
+                    continue
+                rows.append({
+                    'sku': str(sku_val or '').strip(),
+                    'description': str(desc_val or '').strip(),
+                    'quantity': str(qty_val or '0'),
+                    'unit': str(unit_val or 'each').strip(),
+                })
+        except Exception as e:
+            return jsonify({'error': f'Could not read Excel file: {str(e)[:200]}'}), 400
+    else:
+        return jsonify({'error': 'Unsupported file type. Please upload .csv or .xlsx'}), 400
+
+    # Cross-reference against inventory
+    conn = get_db()
+    skus = list(set(r['sku'] for r in rows if r['sku']))
+    inv_map = {}
+    if skus:
+        placeholders = ','.join('?' * len(skus))
+        inv_rows = conn.execute(f'''
+            SELECT id, sku, quantity_on_hand, reorder_point FROM inventory_items WHERE sku IN ({placeholders})
+        ''', skus).fetchall()
+        for row in inv_rows:
+            inv_map[row['sku']] = row
+    conn.close()
+
+    items = []
+    for r in rows:
+        qty = 0
+        try:
+            qty = float(r['quantity'])
+        except (ValueError, TypeError):
+            pass
+        if qty <= 0 and not r['sku'] and not r['description']:
+            continue
+        inv = inv_map.get(r['sku'])
+        stock_on_hand = inv['quantity_on_hand'] if inv else 0
+        reorder_point = inv['reorder_point'] if inv else 0
+        inventory_item_id = inv['id'] if inv else None
+        if stock_on_hand <= 0:
+            stock_status = 'Out of Stock'
+        elif stock_on_hand <= reorder_point:
+            stock_status = 'Low Stock'
+        else:
+            stock_status = 'In Stock'
+        in_stock = stock_on_hand >= qty and qty > 0
+        items.append({
+            'sku': r['sku'],
+            'description': r['description'],
+            'quantity': qty,
+            'unit': r['unit'] or 'each',
+            'stock_on_hand': stock_on_hand,
+            'reorder_point': reorder_point,
+            'stock_status': stock_status,
+            'in_stock': in_stock,
+            'inventory_item_id': inventory_item_id,
+            'order_needed': not in_stock
+        })
+
+    return jsonify({'items': items, 'count': len(items)})
 
 @app.route('/material-requests')
 @login_required
@@ -13993,6 +14201,384 @@ def api_team_pay_dashboard():
     ''').fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+# ─── Team Chat ──────────────────────────────────────────────────
+
+TEAM_CHAT_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'team_chat_files')
+
+@app.route('/team-chat')
+@login_required
+def team_chat_page():
+    return render_template('team_chat/chat.html')
+
+@app.route('/api/team-chat/users')
+@api_login_required
+def api_tc_users():
+    conn = get_db()
+    users = conn.execute('SELECT id, username, display_name, role FROM users WHERE is_active = 1 ORDER BY display_name').fetchall()
+    conn.close()
+    return jsonify([dict(u) for u in users])
+
+@app.route('/api/team-chat/channels')
+@api_login_required
+def api_tc_channels():
+    uid = session['user_id']
+    conn = get_db()
+    channels = conn.execute('''
+        SELECT c.*, (
+            SELECT COUNT(*) FROM tc_messages m
+            WHERE m.channel_id = c.id AND m.id > COALESCE(
+                (SELECT rs.last_read_message_id FROM tc_read_status rs
+                 WHERE rs.user_id = ? AND rs.channel_id = c.id), 0)
+        ) as unread_count
+        FROM tc_channels c
+        JOIN tc_channel_members cm ON cm.channel_id = c.id AND cm.user_id = ?
+        ORDER BY c.name
+    ''', (uid, uid)).fetchall()
+    conn.close()
+    return jsonify([dict(c) for c in channels])
+
+@app.route('/api/team-chat/channels', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_tc_create_channel():
+    data = request.get_json()
+    name = (data.get('name') or '').strip().lower().replace(' ', '-')
+    desc = (data.get('description') or '').strip()
+    if not name:
+        return jsonify({'error': 'Channel name required'}), 400
+
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM tc_channels WHERE name = ?', (name,)).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({'error': 'Channel name already exists'}), 400
+
+    cur = conn.execute(
+        'INSERT INTO tc_channels (name, description, is_default, created_by) VALUES (?, ?, 0, ?)',
+        (name, desc, session['user_id'])
+    )
+    channel_id = cur.lastrowid
+
+    # Auto-enroll all active users
+    users = conn.execute('SELECT id FROM users WHERE is_active = 1').fetchall()
+    for u in users:
+        conn.execute('INSERT OR IGNORE INTO tc_channel_members (channel_id, user_id) VALUES (?, ?)',
+                     (channel_id, u['id']))
+
+    conn.commit()
+    conn.close()
+    return jsonify({'id': channel_id, 'name': name})
+
+@app.route('/api/team-chat/channels/<int:cid>', methods=['DELETE'])
+@api_role_required('owner', 'admin')
+def api_tc_delete_channel(cid):
+    conn = get_db()
+    ch = conn.execute('SELECT * FROM tc_channels WHERE id = ?', (cid,)).fetchone()
+    if not ch:
+        conn.close()
+        return jsonify({'error': 'Channel not found'}), 404
+    if ch['is_default']:
+        conn.close()
+        return jsonify({'error': 'Cannot delete default channel'}), 400
+    conn.execute('DELETE FROM tc_channels WHERE id = ?', (cid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-chat/channels/<int:cid>/messages')
+@api_login_required
+def api_tc_channel_messages(cid):
+    uid = session['user_id']
+    before_id = request.args.get('before_id', type=int)
+    limit = request.args.get('limit', 50, type=int)
+
+    conn = get_db()
+    # Verify membership
+    member = conn.execute('SELECT 1 FROM tc_channel_members WHERE channel_id = ? AND user_id = ?', (cid, uid)).fetchone()
+    if not member:
+        conn.close()
+        return jsonify({'error': 'Not a member of this channel'}), 403
+
+    if before_id:
+        msgs = conn.execute('''
+            SELECT m.*, u.display_name as sender_name FROM tc_messages m
+            LEFT JOIN users u ON u.id = m.sender_id
+            WHERE m.channel_id = ? AND m.id < ?
+            ORDER BY m.id DESC LIMIT ?
+        ''', (cid, before_id, limit)).fetchall()
+    else:
+        msgs = conn.execute('''
+            SELECT m.*, u.display_name as sender_name FROM tc_messages m
+            LEFT JOIN users u ON u.id = m.sender_id
+            WHERE m.channel_id = ?
+            ORDER BY m.id DESC LIMIT ?
+        ''', (cid, limit)).fetchall()
+
+    conn.close()
+    result = [dict(m) for m in msgs]
+    result.reverse()
+    return jsonify(result)
+
+@app.route('/api/team-chat/channels/<int:cid>/messages', methods=['POST'])
+@api_login_required
+def api_tc_send_channel_message(cid):
+    uid = session['user_id']
+    content = (request.form.get('content') or '').strip()
+    file = request.files.get('file')
+
+    if not content and not file:
+        return jsonify({'error': 'Message content or file required'}), 400
+
+    conn = get_db()
+    member = conn.execute('SELECT 1 FROM tc_channel_members WHERE channel_id = ? AND user_id = ?', (cid, uid)).fetchone()
+    if not member:
+        conn.close()
+        return jsonify({'error': 'Not a member'}), 403
+
+    file_path = file_name = file_type = ''
+    if file and file.filename:
+        os.makedirs(TEAM_CHAT_UPLOAD_DIR, exist_ok=True)
+        import uuid
+        ext = os.path.splitext(file.filename)[1]
+        saved_name = f"{uuid.uuid4().hex}{ext}"
+        save_path = os.path.join(TEAM_CHAT_UPLOAD_DIR, saved_name)
+        file.save(save_path)
+        file_path = saved_name
+        file_name = file.filename
+        file_type = file.content_type or ''
+
+    cur = conn.execute(
+        '''INSERT INTO tc_messages (channel_id, sender_id, content, file_path, file_name, file_type)
+           VALUES (?, ?, ?, ?, ?, ?)''',
+        (cid, uid, content, file_path, file_name, file_type)
+    )
+    msg_id = cur.lastrowid
+
+    # Update sender's read status
+    conn.execute('''INSERT INTO tc_read_status (user_id, channel_id, last_read_message_id, updated_at)
+        VALUES (?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(user_id, channel_id) DO UPDATE SET last_read_message_id = ?, updated_at = datetime('now','localtime')''',
+        (uid, cid, msg_id, msg_id))
+
+    # Collect notification data before closing conn
+    sender_name = session.get('display_name') or session.get('username', 'Someone')
+    ch = conn.execute('SELECT name FROM tc_channels WHERE id = ?', (cid,)).fetchone()
+    ch_name = ch['name'] if ch else 'channel'
+    member_ids = [m['user_id'] for m in conn.execute(
+        'SELECT user_id FROM tc_channel_members WHERE channel_id = ? AND user_id != ?', (cid, uid)).fetchall()]
+    preview = (content[:80] + '...') if len(content) > 80 else content
+
+    conn.commit()
+    conn.close()
+
+    # Notify other channel members (create_notification opens its own conn)
+    for mid in member_ids:
+        create_notification(mid, 'team_chat',
+            f'{sender_name} in #{ch_name}',
+            preview or '(file attachment)',
+            f'/team-chat?channel={cid}')
+
+    return jsonify({'id': msg_id})
+
+@app.route('/api/team-chat/channels/<int:cid>/read', methods=['POST'])
+@api_login_required
+def api_tc_channel_read(cid):
+    uid = session['user_id']
+    data = request.get_json() or {}
+    last_id = data.get('last_message_id', 0)
+    conn = get_db()
+    conn.execute('''INSERT INTO tc_read_status (user_id, channel_id, last_read_message_id, updated_at)
+        VALUES (?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(user_id, channel_id) DO UPDATE SET
+            last_read_message_id = MAX(last_read_message_id, ?),
+            updated_at = datetime('now','localtime')''',
+        (uid, cid, last_id, last_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Team Chat DMs ──────────────────────────────────────────
+
+@app.route('/api/team-chat/dm/conversations')
+@api_login_required
+def api_tc_dm_conversations():
+    uid = session['user_id']
+    conn = get_db()
+    # Get unique DM peers
+    rows = conn.execute('''
+        SELECT peer_id, u.display_name, u.username,
+            (SELECT MAX(m2.id) FROM tc_messages m2
+             WHERE m2.channel_id IS NULL
+             AND ((m2.sender_id = ? AND m2.dm_recipient_id = peer_id)
+               OR (m2.sender_id = peer_id AND m2.dm_recipient_id = ?))
+            ) as last_msg_id,
+            (SELECT m3.content FROM tc_messages m3 WHERE m3.id = (
+                SELECT MAX(m4.id) FROM tc_messages m4
+                WHERE m4.channel_id IS NULL
+                AND ((m4.sender_id = ? AND m4.dm_recipient_id = peer_id)
+                  OR (m4.sender_id = peer_id AND m4.dm_recipient_id = ?))
+            )) as last_message,
+            (SELECT COUNT(*) FROM tc_messages m5
+             WHERE m5.channel_id IS NULL AND m5.sender_id = peer_id AND m5.dm_recipient_id = ?
+             AND m5.id > COALESCE(
+                (SELECT rs.last_read_message_id FROM tc_read_status rs
+                 WHERE rs.user_id = ? AND rs.dm_peer_id = peer_id), 0)
+            ) as unread_count
+        FROM (
+            SELECT DISTINCT CASE WHEN sender_id = ? THEN dm_recipient_id ELSE sender_id END as peer_id
+            FROM tc_messages WHERE channel_id IS NULL AND (sender_id = ? OR dm_recipient_id = ?)
+        ) peers
+        JOIN users u ON u.id = peer_id
+        ORDER BY last_msg_id DESC
+    ''', (uid, uid, uid, uid, uid, uid, uid, uid, uid)).fetchall()
+    conn.close()
+    return jsonify([{
+        'peer_id': r['peer_id'],
+        'display_name': r['display_name'] or r['username'],
+        'last_message': r['last_message'] or '',
+        'unread_count': r['unread_count']
+    } for r in rows])
+
+@app.route('/api/team-chat/dm/<int:peer_id>/messages')
+@api_login_required
+def api_tc_dm_messages(peer_id):
+    uid = session['user_id']
+    before_id = request.args.get('before_id', type=int)
+    limit = request.args.get('limit', 50, type=int)
+
+    conn = get_db()
+    if before_id:
+        msgs = conn.execute('''
+            SELECT m.*, u.display_name as sender_name FROM tc_messages m
+            LEFT JOIN users u ON u.id = m.sender_id
+            WHERE m.channel_id IS NULL AND m.id < ?
+            AND ((m.sender_id = ? AND m.dm_recipient_id = ?) OR (m.sender_id = ? AND m.dm_recipient_id = ?))
+            ORDER BY m.id DESC LIMIT ?
+        ''', (before_id, uid, peer_id, peer_id, uid, limit)).fetchall()
+    else:
+        msgs = conn.execute('''
+            SELECT m.*, u.display_name as sender_name FROM tc_messages m
+            LEFT JOIN users u ON u.id = m.sender_id
+            WHERE m.channel_id IS NULL
+            AND ((m.sender_id = ? AND m.dm_recipient_id = ?) OR (m.sender_id = ? AND m.dm_recipient_id = ?))
+            ORDER BY m.id DESC LIMIT ?
+        ''', (uid, peer_id, peer_id, uid, limit)).fetchall()
+
+    conn.close()
+    result = [dict(m) for m in msgs]
+    result.reverse()
+    return jsonify(result)
+
+@app.route('/api/team-chat/dm/<int:peer_id>/messages', methods=['POST'])
+@api_login_required
+def api_tc_send_dm(peer_id):
+    uid = session['user_id']
+    content = (request.form.get('content') or '').strip()
+    file = request.files.get('file')
+
+    if not content and not file:
+        return jsonify({'error': 'Message content or file required'}), 400
+
+    file_path = file_name = file_type = ''
+    if file and file.filename:
+        os.makedirs(TEAM_CHAT_UPLOAD_DIR, exist_ok=True)
+        import uuid
+        ext = os.path.splitext(file.filename)[1]
+        saved_name = f"{uuid.uuid4().hex}{ext}"
+        save_path = os.path.join(TEAM_CHAT_UPLOAD_DIR, saved_name)
+        file.save(save_path)
+        file_path = saved_name
+        file_name = file.filename
+        file_type = file.content_type or ''
+
+    conn = get_db()
+    cur = conn.execute(
+        '''INSERT INTO tc_messages (sender_id, dm_recipient_id, content, file_path, file_name, file_type)
+           VALUES (?, ?, ?, ?, ?, ?)''',
+        (uid, peer_id, content, file_path, file_name, file_type)
+    )
+    msg_id = cur.lastrowid
+
+    # Update sender's read status
+    conn.execute('''INSERT INTO tc_read_status (user_id, dm_peer_id, last_read_message_id, updated_at)
+        VALUES (?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(user_id, dm_peer_id) DO UPDATE SET last_read_message_id = ?, updated_at = datetime('now','localtime')''',
+        (uid, peer_id, msg_id, msg_id))
+
+    sender_name = session.get('display_name') or session.get('username', 'Someone')
+    preview = (content[:80] + '...') if len(content) > 80 else content
+
+    conn.commit()
+    conn.close()
+
+    # Notify recipient (create_notification opens its own conn)
+    create_notification(peer_id, 'team_chat',
+        f'DM from {sender_name}',
+        preview or '(file attachment)',
+        f'/team-chat?dm={uid}')
+
+    return jsonify({'id': msg_id})
+
+@app.route('/api/team-chat/dm/<int:peer_id>/read', methods=['POST'])
+@api_login_required
+def api_tc_dm_read(peer_id):
+    uid = session['user_id']
+    data = request.get_json() or {}
+    last_id = data.get('last_message_id', 0)
+    conn = get_db()
+    conn.execute('''INSERT INTO tc_read_status (user_id, dm_peer_id, last_read_message_id, updated_at)
+        VALUES (?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(user_id, dm_peer_id) DO UPDATE SET
+            last_read_message_id = MAX(last_read_message_id, ?),
+            updated_at = datetime('now','localtime')''',
+        (uid, peer_id, last_id, last_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Team Chat Files & Unread ───────────────────────────────
+
+@app.route('/api/team-chat/files/<int:msg_id>')
+@api_login_required
+def api_tc_file(msg_id):
+    conn = get_db()
+    msg = conn.execute('SELECT file_path, file_name, file_type FROM tc_messages WHERE id = ?', (msg_id,)).fetchone()
+    conn.close()
+    if not msg or not msg['file_path']:
+        return 'File not found', 404
+    fpath = os.path.join(TEAM_CHAT_UPLOAD_DIR, msg['file_path'])
+    if not os.path.exists(fpath):
+        return 'File not found', 404
+    as_attachment = not (msg['file_type'] or '').startswith('image/')
+    return send_file(fpath, download_name=msg['file_name'], as_attachment=as_attachment)
+
+@app.route('/api/team-chat/unread-total')
+@api_login_required
+def api_tc_unread_total():
+    uid = session['user_id']
+    conn = get_db()
+    # Channel unreads
+    ch_unread = conn.execute('''
+        SELECT COALESCE(SUM(cnt), 0) as total FROM (
+            SELECT COUNT(*) as cnt FROM tc_messages m
+            JOIN tc_channel_members cm ON cm.channel_id = m.channel_id AND cm.user_id = ?
+            WHERE m.id > COALESCE(
+                (SELECT rs.last_read_message_id FROM tc_read_status rs
+                 WHERE rs.user_id = ? AND rs.channel_id = m.channel_id), 0)
+        )
+    ''', (uid, uid)).fetchone()['total']
+
+    # DM unreads
+    dm_unread = conn.execute('''
+        SELECT COUNT(*) as total FROM tc_messages m
+        WHERE m.channel_id IS NULL AND m.dm_recipient_id = ?
+        AND m.id > COALESCE(
+            (SELECT rs.last_read_message_id FROM tc_read_status rs
+             WHERE rs.user_id = ? AND rs.dm_peer_id = m.sender_id), 0)
+    ''', (uid, uid)).fetchone()['total']
+
+    conn.close()
+    return jsonify({'total': ch_unread + dm_unread})
 
 # ─── Startup ────────────────────────────────────────────────────
 
