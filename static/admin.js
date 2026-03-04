@@ -8,7 +8,10 @@ async function loadUsers() {
     const users = await res.json();
     const tbody = document.getElementById('usersBody');
     if (!users.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No users.</td></tr>'; return; }
-    tbody.innerHTML = users.map(u => `<tr>
+    tbody.innerHTML = users.map(u => {
+        const uJson = JSON.stringify(u).replace(/"/g, '&quot;');
+        const safeName = u.username.replace(/'/g, "\\'");
+        return `<tr>
         <td>${u.username}</td>
         <td>${u.display_name}</td>
         <td><span class="badge">${u.role.replace('_',' ')}</span></td>
@@ -17,10 +20,14 @@ async function loadUsers() {
         <td>$${(u.hourly_rate || 0).toFixed(2)}</td>
         <td>${u.is_active ? '<span style="color:#16A34A;font-weight:600;">Active</span>' : '<span style="color:#DC2626;">Inactive</span>'}</td>
         <td>
-            <button class="btn btn-small btn-secondary" onclick="editUser(${JSON.stringify(u).replace(/"/g, '&quot;')})">Edit</button>
-            <button class="btn btn-small btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">Del</button>
+            <button class="btn btn-small btn-secondary" onclick="editUser(${uJson})">Edit</button>
+            ${u.is_active
+                ? `<button class="btn btn-small btn-danger" onclick="toggleUserActive(${u.id}, '${safeName}', false)">Deactivate</button>`
+                : `<button class="btn btn-small" style="background:#16A34A;color:#fff;" onclick="toggleUserActive(${u.id}, '${safeName}', true)">Reactivate</button>`
+            }
         </td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 }
 
 function showAddUser() {
@@ -90,10 +97,22 @@ async function saveUser(e) {
     loadUsers();
 }
 
-async function deleteUser(id, username) {
-    if (!confirm(`Deactivate user "${username}"? They will no longer be able to log in.`)) return;
-    const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    loadUsers();
+async function toggleUserActive(id, username, activate) {
+    const action = activate ? 'reactivate' : 'deactivate';
+    if (!confirm(`${activate ? 'Reactivate' : 'Deactivate'} user "${username}"?${activate ? '' : ' They will no longer be able to log in.'}`)) return;
+    try {
+        const res = await fetch(`/api/admin/users/${id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ is_active: activate ? 1 : 0 })
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || `Failed to ${action} user (${res.status})`);
+            return;
+        }
+        loadUsers();
+    } catch (err) {
+        alert(`Error: ${err.message}`);
+    }
 }
