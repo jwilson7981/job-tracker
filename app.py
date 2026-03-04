@@ -3149,7 +3149,7 @@ def api_bids():
     for b in bids:
         d = dict(b)
         if os.path.isdir(proposals_dir):
-            pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{b["id"]}.pdf' in f])
+            pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.startswith('Proposal_') and f.endswith(f'_{b["id"]}.pdf')])
             if pdf_files:
                 d['proposal_pdf'] = f'/api/bids/{b["id"]}/proposal/{pdf_files[-1]}'
         if not is_owner:
@@ -3271,7 +3271,7 @@ def api_bid_detail(bid_id):
     # Check if a proposal PDF exists for this bid
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
     if os.path.isdir(proposals_dir):
-        pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{bid_id}.pdf' in f])
+        pdf_files = sorted([f for f in os.listdir(proposals_dir) if f.startswith('Proposal_') and f.endswith(f'_{bid_id}.pdf')])
         if pdf_files:
             result['proposal_pdf'] = f'/api/bids/{bid_id}/proposal/{pdf_files[-1]}'
 
@@ -3484,7 +3484,7 @@ def api_email_proposal(bid_id):
 
     # Find the most recent proposal PDF for this bid
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
-    pdf_files = [f for f in os.listdir(proposals_dir) if f.endswith('.pdf') and f'_{bid_id}.pdf' in f]
+    pdf_files = [f for f in os.listdir(proposals_dir) if f.startswith('Proposal_') and f.endswith(f'_{bid_id}.pdf')]
     if not pdf_files:
         return jsonify({'error': 'No proposal PDF found. Generate the proposal first.'}), 404
     pdf_path = os.path.join(proposals_dir, sorted(pdf_files)[-1])
