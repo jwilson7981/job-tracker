@@ -1,7 +1,7 @@
 /* Activity Log & User Stats */
 let autoRefreshTimer = null;
 
-function switchTab(tab, btn) {
+function switchActivityTab(tab, btn) {
     document.getElementById('tabFeed').style.display = tab === 'feed' ? '' : 'none';
     document.getElementById('tabStats').style.display = tab === 'stats' ? '' : 'none';
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -65,6 +65,7 @@ async function loadActivityFeed() {
 
     try {
         const res = await fetch('/api/admin/activity-log?' + params);
+        if (!res.ok) { console.error('Activity log API error:', res.status); }
         const data = await res.json();
         const tbody = document.getElementById('feedBody');
         if (!data.length) {
