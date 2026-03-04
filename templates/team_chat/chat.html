@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block title %}Team Chat{% endblock %}
+{% block body_class %}tc-page{% endblock %}
+
+{% block header %}
+<header class="page-header">
+    <h1>Team Chat</h1>
+</header>
+{% endblock %}
+
+{% block content %}
+<div class="tc-container">
+    <!-- Sidebar: Channels + DMs -->
+    <div class="tc-sidebar" id="tcSidebar">
+        <div class="tc-sidebar-section">
+            <div class="tc-sidebar-section-header">
+                <span>Channels</span>
+                {% if current_user.role in ('owner', 'admin') %}
+                <button class="tc-sidebar-add" onclick="showCreateChannel()" title="Create Channel">+</button>
+                {% endif %}
+            </div>
+            <div id="tcChannelList" class="tc-sidebar-list"></div>
+        </div>
+        <div class="tc-sidebar-section">
+            <div class="tc-sidebar-section-header">
+                <span>Direct Messages</span>
+                <button class="tc-sidebar-add" onclick="showNewDM()" title="New Message">+</button>
+            </div>
+            <div id="tcDMList" class="tc-sidebar-list"></div>
+        </div>
+    </div>
+
+    <!-- Main chat area -->
+    <div class="tc-main" id="tcMain">
+        <div class="tc-placeholder" id="tcPlaceholder">
+            <div class="tc-placeholder-icon">&#128172;</div>
+            <div class="tc-placeholder-text">Select a channel or conversation to start chatting</div>
+        </div>
+        <div class="tc-header" id="tcHeader" style="display:none;">
+            <div class="tc-header-name" id="tcHeaderName"></div>
+            <div class="tc-header-desc" id="tcHeaderDesc"></div>
+        </div>
+        <div class="tc-messages" id="tcMessages" style="display:none;"></div>
+        <div class="tc-input-bar" id="tcInputBar" style="display:none;">
+            <div class="tc-file-preview" id="tcFilePreview" style="display:none;"></div>
+            <div class="tc-input-row">
+                <button class="tc-attach-btn" onclick="document.getElementById('tcFileInput').click()" title="Attach file">&#128206;</button>
+                <input type="file" id="tcFileInput" style="display:none;" onchange="handleFileSelect(this)">
+                <input type="text" id="tcMessageInput" class="form-input" placeholder="Type a message..." autocomplete="off" onkeydown="if(event.key==='Enter')sendMessage()">
+                <button class="btn btn-primary btn-small" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Channel Modal -->
+<div class="modal-overlay" id="createChannelModal" style="display:none;">
+    <div class="modal" style="max-width:450px;">
+        <div class="modal-header">
+            <h3>Create Channel</h3>
+            <button class="modal-close" onclick="document.getElementById('createChannelModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Channel Name</label>
+                <input type="text" id="newChannelName" class="form-input" placeholder="e.g. project-updates" maxlength="50">
+                <small class="text-muted">Lowercase, no spaces (use hyphens)</small>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description (optional)</label>
+                <input type="text" id="newChannelDesc" class="form-input" placeholder="What's this channel about?">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="document.getElementById('createChannelModal').style.display='none'">Cancel</button>
+            <button class="btn btn-primary" onclick="createChannel()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- New DM Modal -->
+<div class="modal-overlay" id="newDMModal" style="display:none;">
+    <div class="modal" style="max-width:400px;">
+        <div class="modal-header">
+            <h3>New Direct Message</h3>
+            <button class="modal-close" onclick="document.getElementById('newDMModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Select User</label>
+                <select id="newDMUser" class="form-input"></select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="document.getElementById('newDMModal').style.display='none'">Cancel</button>
+            <button class="btn btn-primary" onclick="startDM()">Start Chat</button>
+        </div>
+    </div>
+</div>
+
+<!-- Mobile back button -->
+<button class="tc-mobile-back" id="tcMobileBack" style="display:none;" onclick="closeMobileChat()">&#8592; Back</button>
+
+<script>
+    const currentUserId = {{ current_user.id }};
+    const currentUserRole = '{{ current_user.role }}';
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/team_chat.js"></script>
+{% endblock %}

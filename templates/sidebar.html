@@ -244,8 +244,13 @@
             <span class="sidebar-icon">&#128172;</span> Feedback
         </a>
 
+        <a href="/team-chat" class="sidebar-link {% if '/team-chat' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128172;</span> Team Chat
+            <span class="tc-sidebar-badge" id="tcSidebarBadge" style="display:none;">0</span>
+        </a>
+
         <a href="/chatbot" class="sidebar-link {% if '/chatbot' in request.path %}active{% endif %}">
-            <span class="sidebar-icon">&#128488;</span> Chat
+            <span class="sidebar-icon">&#128488;</span> AI Assistant
         </a>
 
         {% if current_user.role == 'owner' %}

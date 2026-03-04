@@ -24,6 +24,30 @@
     }
 })();
 
+/* ─── Team Chat Sidebar Badge Polling ──────────────────────── */
+(function() {
+    async function pollTCUnread() {
+        try {
+            const res = await fetch('/api/team-chat/unread-total');
+            if (!res.ok) return;
+            const data = await res.json();
+            const badge = document.getElementById('tcSidebarBadge');
+            if (badge) {
+                if (data.total > 0) {
+                    badge.textContent = data.total > 99 ? '99+' : data.total;
+                    badge.style.display = 'inline-flex';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        } catch(e) { /* ignore */ }
+    }
+    if (document.getElementById('tcSidebarBadge')) {
+        pollTCUnread();
+        setInterval(pollTCUnread, 30000);
+    }
+})();
+
 async function toggleNotifPanel(e) {
     if (e) e.stopPropagation();
     const panel = document.getElementById('notifPanel');

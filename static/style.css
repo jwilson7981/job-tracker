@@ -2841,6 +2841,160 @@ body.page-chatbot .chat-widget {
     margin-bottom: 4px;
 }
 
+/* ─── Team Chat ─── */
+.tc-page .container { max-width: 100%; padding: 0; }
+.tc-page .chat-widget { display: none !important; }
+.tc-container {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: calc(100vh - 80px);
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+.tc-sidebar {
+    background: #f8fafc;
+    border-right: 1px solid #e2e8f0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+.tc-sidebar-section { padding: 8px 0; }
+.tc-sidebar-section + .tc-sidebar-section { border-top: 1px solid #e2e8f0; }
+.tc-sidebar-section-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 14px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; color: #64748b; letter-spacing: 0.5px;
+}
+.tc-sidebar-add {
+    background: none; border: 1px solid #cbd5e1; border-radius: 4px;
+    width: 22px; height: 22px; font-size: 16px; line-height: 1;
+    cursor: pointer; color: #64748b; display: flex; align-items: center; justify-content: center;
+}
+.tc-sidebar-add:hover { background: #e2e8f0; color: #334155; }
+.tc-sidebar-list { padding: 0 6px; }
+.tc-sidebar-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    font-size: 14px; color: #334155; margin-bottom: 1px;
+}
+.tc-sidebar-item:hover { background: #e2e8f0; }
+.tc-sidebar-item.active { background: #3b82f6; color: #fff; }
+.tc-sidebar-item.active .tc-unread-badge { background: #fff; color: #3b82f6; }
+.tc-sidebar-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tc-unread-badge {
+    background: #ef4444; color: #fff; font-size: 11px; font-weight: 700;
+    min-width: 18px; height: 18px; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 5px; flex-shrink: 0; margin-left: 6px;
+}
+.tc-main {
+    display: flex; flex-direction: column; min-width: 0; position: relative;
+}
+.tc-placeholder {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; color: #94a3b8;
+}
+.tc-placeholder-icon { font-size: 48px; margin-bottom: 12px; }
+.tc-placeholder-text { font-size: 16px; }
+.tc-header {
+    padding: 12px 18px; border-bottom: 1px solid #e2e8f0;
+    display: flex; flex-direction: column; flex-shrink: 0;
+}
+.tc-header-name { font-size: 16px; font-weight: 700; color: #1e293b; }
+.tc-header-desc { font-size: 12px; color: #64748b; margin-top: 2px; }
+.tc-messages {
+    flex: 1; overflow-y: auto; padding: 16px 18px;
+    display: flex; flex-direction: column; gap: 2px;
+}
+.tc-no-messages {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #94a3b8; font-size: 14px;
+}
+.tc-date-separator {
+    text-align: center; margin: 16px 0 8px;
+    position: relative; font-size: 12px; color: #64748b;
+}
+.tc-date-separator span {
+    background: #fff; padding: 0 12px; position: relative; z-index: 1;
+}
+.tc-date-separator::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 50%;
+    border-top: 1px solid #e2e8f0;
+}
+.tc-system-message {
+    text-align: center; font-size: 12px; color: #94a3b8;
+    font-style: italic; padding: 4px 0;
+}
+.tc-message {
+    display: flex; gap: 10px; padding: 6px 0;
+}
+.tc-message-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #3b82f6; color: #fff; font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+.tc-message-own .tc-message-avatar { background: #10b981; }
+.tc-message-body { min-width: 0; flex: 1; }
+.tc-message-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+.tc-message-sender { font-weight: 600; font-size: 14px; color: #1e293b; }
+.tc-message-time { font-size: 11px; color: #94a3b8; }
+.tc-message-text { font-size: 14px; color: #334155; line-height: 1.5; word-break: break-word; }
+.tc-message-text a { color: #3b82f6; text-decoration: underline; }
+.tc-message-image { margin-top: 6px; }
+.tc-message-image img {
+    max-width: 360px; max-height: 280px; border-radius: 8px;
+    cursor: pointer; border: 1px solid #e2e8f0;
+}
+.tc-file-link {
+    display: inline-block; margin-top: 4px; padding: 6px 12px;
+    background: #f1f5f9; border-radius: 6px; font-size: 13px;
+    color: #3b82f6; text-decoration: none; border: 1px solid #e2e8f0;
+}
+.tc-file-link:hover { background: #e2e8f0; }
+.tc-input-bar {
+    border-top: 1px solid #e2e8f0; padding: 10px 14px; flex-shrink: 0;
+}
+.tc-input-row { display: flex; gap: 8px; align-items: center; }
+.tc-attach-btn {
+    background: none; border: none; font-size: 20px; cursor: pointer;
+    color: #64748b; padding: 4px; flex-shrink: 0;
+}
+.tc-attach-btn:hover { color: #3b82f6; }
+.tc-input-row .form-input { flex: 1; }
+.tc-file-preview {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; margin-bottom: 6px;
+    background: #f1f5f9; border-radius: 6px; font-size: 13px;
+}
+.tc-file-preview-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-file-preview-remove {
+    background: none; border: none; font-size: 18px; cursor: pointer;
+    color: #ef4444; padding: 0 4px;
+}
+.tc-sidebar-badge {
+    background: #ef4444; color: #fff; font-size: 10px; font-weight: 700;
+    min-width: 16px; height: 16px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 4px; margin-left: 6px; vertical-align: middle;
+}
+.tc-mobile-back {
+    display: none; position: absolute; top: 4px; left: 4px; z-index: 10;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 6px 12px; font-size: 14px; cursor: pointer;
+}
+@media (max-width: 768px) {
+    .tc-container { grid-template-columns: 1fr; }
+    .tc-sidebar { display: flex; }
+    .tc-sidebar-hidden { display: none !important; }
+    .tc-main { display: none; }
+    .tc-main-active { display: flex !important; }
+    .tc-mobile-back { display: block; }
+    .tc-message-image img { max-width: 100%; }
+}
+
 /* ─── Submittal Visual Flagging ─── */
 @keyframes submittal-pulse-red {
     0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
