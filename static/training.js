@@ -30,6 +30,20 @@ const TRAINING_MODULES = [
                 ]
             },
             {
+                key: 'gs-home-screen',
+                title: 'Add App Icon to Your Device',
+                summary: 'Add a shortcut icon to your phone, iPad, or computer for quick access.',
+                steps: [
+                    'You can add the app as an <strong>icon on your home screen</strong> so it opens like a regular app — no need to type the URL each time.',
+                    '<strong>iPhone / iPad:</strong> Open <strong>Safari</strong> (must be Safari, not Chrome) and go to the app URL. Tap the <strong>Share button</strong> (square with an arrow pointing up). Scroll down and tap <strong>"Add to Home Screen"</strong>. Tap <strong>Add</strong> — the CM icon will appear on your home screen.',
+                    '<strong>Android:</strong> Open <strong>Chrome</strong> and go to the app URL. Tap the <strong>three-dot menu</strong> in the top-right corner. Tap <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong>. Tap <strong>Add</strong> — the icon will appear on your home screen.',
+                    '<strong>Mac:</strong> Open <strong>Chrome</strong> and go to the app URL. Look for the <strong>install icon</strong> in the address bar (a monitor with a down arrow), or click the three-dot menu and select <strong>"Install app"</strong>.',
+                    '<strong>Windows:</strong> Open <strong>Chrome</strong> or <strong>Edge</strong> and go to the app URL. Click the <strong>install icon</strong> in the address bar, or use the three-dot menu and select <strong>"Install app"</strong>.',
+                    'Once installed, the app opens in its <strong>own window</strong> without browser tabs or address bars — it looks and feels like a native app.',
+                    'Ask your administrator for the <strong>app URL</strong> if you don\'t have it yet.'
+                ]
+            },
+            {
                 key: 'gs-navigation',
                 title: 'Navigating the App',
                 summary: 'Understanding the sidebar, groups, and page layout.',
