@@ -94,13 +94,16 @@ function showAddEmployee() {
 }
 
 function editEmployee(id) {
-    // Fetch full detail then populate modal
-    fetch('/api/employees/' + id).then(r => r.json()).then(e => {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/employees/' + id, true);
+    xhr.onload = function() {
+        if (xhr.status !== 200) { alert('Failed to load employee details'); return; }
+        var e = JSON.parse(xhr.responseText);
         document.getElementById('empEditId').value = e.id;
         document.getElementById('empModalTitle').textContent = 'Edit Employee';
         document.getElementById('empFirstName').value = e.first_name || '';
         document.getElementById('empLastName').value = e.last_name || '';
-        const hasLogin = e.username && !e.username.startsWith('_nologin_');
+        var hasLogin = e.username && !e.username.startsWith('_nologin_');
         document.getElementById('empUsername').value = hasLogin ? e.username : '';
         document.getElementById('empUsername').readOnly = hasLogin;
         document.getElementById('empPassword').value = '';
@@ -124,7 +127,9 @@ function editEmployee(id) {
         document.getElementById('empECRelation').value = e.emergency_contact_relationship || '';
         document.getElementById('empNotes').value = e.notes || '';
         document.getElementById('empModal').style.display = 'flex';
-    });
+    };
+    xhr.onerror = function() { alert('Network error loading employee details'); };
+    xhr.send();
 }
 
 function closeEmpModal() { document.getElementById('empModal').style.display = 'none'; }
