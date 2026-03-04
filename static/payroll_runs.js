@@ -4,53 +4,76 @@ function fmtMoney(n) { return '$' + Number(n || 0).toLocaleString('en-US', { min
 // ─── Runs List (Overview Page) ───────────────────────────────────
 let _allEmps = [];
 
-async function loadRuns() {
-    const res = await fetch('/api/payroll/runs');
-    const runs = await res.json();
-    const tbody = document.getElementById('runsBody');
+function loadRuns() {
+    var tbody = document.getElementById('runsBody');
     if (!tbody) return;
-    if (!runs.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No payroll runs yet. Click "+ New Payroll Run" to create one.</td></tr>';
-        return;
-    }
-    tbody.innerHTML = runs.map(r => {
-        const statusClass = r.status === 'Finalized' ? 'status-complete' : 'status-needs-bid';
-        return `<tr>
-            <td><a href="/payroll/runs/${r.id}" class="link">#${r.run_number}</a></td>
-            <td><a href="/payroll/runs/${r.id}" class="link">${r.period_start} &mdash; ${r.period_end}</a></td>
-            <td>${r.check_date || '-'}</td>
-            <td>${r.employee_count}</td>
-            <td class="cell-computed">${r.total_hours ? r.total_hours.toFixed(1) + 'h' : '-'}</td>
-            <td class="cell-computed" style="font-weight:700;">${r.total_gross_pay ? fmtMoney(r.total_gross_pay) : '-'}</td>
-            <td><span class="status-badge ${statusClass}">${r.status}</span></td>
-            <td style="white-space:nowrap;">
-                <a href="/payroll/runs/${r.id}" class="btn btn-small btn-secondary">Open</a>
-                ${r.status === 'Draft' ? `<button class="btn btn-small btn-secondary" onclick="deleteRun(${r.id})" style="color:#EF4444;">Del</button>` : ''}
-            </td>
-        </tr>`;
-    }).join('');
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/payroll/runs', true);
+    xhr.onload = function() {
+        if (xhr.status !== 200) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Failed to load runs.</td></tr>';
+            return;
+        }
+        var runs = JSON.parse(xhr.responseText);
+        if (!runs.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No payroll runs yet. Click "+ New Payroll Run" to create one.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = runs.map(function(r) {
+            var statusClass = r.status === 'Finalized' ? 'status-complete' : 'status-needs-bid';
+            return '<tr>' +
+                '<td><a href="/payroll/runs/' + r.id + '" class="link">#' + r.run_number + '</a></td>' +
+                '<td><a href="/payroll/runs/' + r.id + '" class="link">' + r.period_start + ' &mdash; ' + r.period_end + '</a></td>' +
+                '<td>' + (r.check_date || '-') + '</td>' +
+                '<td>' + r.employee_count + '</td>' +
+                '<td class="cell-computed">' + (r.total_hours ? r.total_hours.toFixed(1) + 'h' : '-') + '</td>' +
+                '<td class="cell-computed" style="font-weight:700;">' + (r.total_gross_pay ? fmtMoney(r.total_gross_pay) : '-') + '</td>' +
+                '<td><span class="status-badge ' + statusClass + '">' + r.status + '</span></td>' +
+                '<td style="white-space:nowrap;">' +
+                    '<a href="/payroll/runs/' + r.id + '" class="btn btn-small btn-secondary">Open</a>' +
+                    (r.status === 'Draft' ? ' <button class="btn btn-small btn-secondary" onclick="deleteRun(' + r.id + ')" style="color:#EF4444;">Del</button>' : '') +
+                '</td>' +
+            '</tr>';
+        }).join('');
+    };
+    xhr.onerror = function() {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Failed to load runs.</td></tr>';
+    };
+    xhr.send();
 }
 
-async function showNewRunModal() {
+function showNewRunModal() {
     document.getElementById('runStart').value = '';
     document.getElementById('runEnd').value = '';
     document.getElementById('runCheckDate').value = '';
     document.getElementById('runNotes').value = '';
     document.getElementById('newRunModal').style.display = 'flex';
     // Load employees
-    if (!_allEmps.length) {
-        const res = await fetch('/api/payroll/summary');
-        _allEmps = await res.json();
+    if (_allEmps.length) {
+        _renderEmpChecklist();
+        return;
     }
-    const cl = document.getElementById('empChecklist');
-    cl.innerHTML = _allEmps.map(u => `
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--gray-100,#f1f5f9);cursor:pointer;">
-            <input type="checkbox" class="emp-cb" value="${u.id}" checked>
-            <span style="flex:1;">${u.display_name}</span>
-            <span class="badge" style="font-size:11px;">${u.role.replace('_',' ')}</span>
-            <span style="color:var(--gray-400);font-size:12px;">${fmtMoney(u.hourly_rate)}/hr</span>
-        </label>
-    `).join('');
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/payroll/summary', true);
+    xhr.onload = function() {
+        if (xhr.status === 200) {
+            _allEmps = JSON.parse(xhr.responseText);
+            _renderEmpChecklist();
+        }
+    };
+    xhr.send();
+}
+
+function _renderEmpChecklist() {
+    var cl = document.getElementById('empChecklist');
+    cl.innerHTML = _allEmps.map(function(u) {
+        return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--gray-100,#f1f5f9);cursor:pointer;">' +
+            '<input type="checkbox" class="emp-cb" value="' + u.id + '" checked>' +
+            '<span style="flex:1;">' + u.display_name + '</span>' +
+            '<span class="badge" style="font-size:11px;">' + u.role.replace('_',' ') + '</span>' +
+            '<span style="color:var(--gray-400);font-size:12px;">' + fmtMoney(u.hourly_rate) + '/hr</span>' +
+        '</label>';
+    }).join('');
     document.getElementById('selectAllEmps').checked = true;
 }
 
@@ -68,37 +91,53 @@ function toggleAllEmps(checked) {
     document.querySelectorAll('.emp-cb').forEach(cb => cb.checked = checked);
 }
 
-async function createRun() {
-    const start = document.getElementById('runStart').value;
-    const end = document.getElementById('runEnd').value;
-    const checkDate = document.getElementById('runCheckDate').value;
-    const notes = document.getElementById('runNotes').value.trim();
-    if (!start || !end) return alert('Period start and end dates are required');
-    const empIds = Array.from(document.querySelectorAll('.emp-cb:checked')).map(cb => parseInt(cb.value));
-    if (!empIds.length) return alert('Select at least one employee');
-    try {
-        const res = await fetch('/api/payroll/runs', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ period_start: start, period_end: end, check_date: checkDate, notes, employee_ids: empIds })
-        });
-        const data = await res.json();
-        if (res.ok && data.id) {
-            closeNewRunModal();
-            window.location.assign('/payroll/runs/' + data.id);
+function createRun() {
+    var start = document.getElementById('runStart').value;
+    var end = document.getElementById('runEnd').value;
+    var checkDate = document.getElementById('runCheckDate').value;
+    var notes = document.getElementById('runNotes').value.trim();
+    if (!start || !end) { alert('Period start and end dates are required'); return; }
+    var empIds = [];
+    var cbs = document.querySelectorAll('.emp-cb:checked');
+    for (var i = 0; i < cbs.length; i++) { empIds.push(parseInt(cbs[i].value)); }
+    if (!empIds.length) { alert('Select at least one employee'); return; }
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/payroll/runs', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            var data = JSON.parse(xhr.responseText);
+            if (data.id) {
+                closeNewRunModal();
+                window.location.href = '/payroll/runs/' + data.id;
+            } else {
+                alert(data.error || 'Failed to create run');
+            }
         } else {
-            alert(data.error || 'Failed to create run');
+            try {
+                var err = JSON.parse(xhr.responseText);
+                alert(err.error || 'Failed to create run');
+            } catch(e) {
+                alert('Failed to create run (status ' + xhr.status + ')');
+            }
         }
-    } catch (e) {
-        alert('Error creating run: ' + e.message);
-    }
+    };
+    xhr.onerror = function() {
+        alert('Network error creating run. Please try again.');
+    };
+    xhr.send(JSON.stringify({ period_start: start, period_end: end, check_date: checkDate, notes: notes, employee_ids: empIds }));
 }
 
-async function deleteRun(id) {
+function deleteRun(id) {
     if (!confirm('Delete this payroll run? This cannot be undone.')) return;
-    const res = await fetch('/api/payroll/runs/' + id, { method: 'DELETE' });
-    if (res.ok) loadRuns();
-    else { const err = await res.json(); alert(err.error || 'Failed to delete'); }
+    var xhr = new XMLHttpRequest();
+    xhr.open('DELETE', '/api/payroll/runs/' + id, true);
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) { loadRuns(); }
+        else { try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); } catch(e) { alert('Failed to delete'); } }
+    };
+    xhr.onerror = function() { alert('Network error deleting run.'); };
+    xhr.send();
 }
 
 // ─── Mass Timesheet (Detail Page) ───────────────────────────────
@@ -110,15 +149,19 @@ if (typeof RUN_ID !== 'undefined') {
     loadRunDetail();
 }
 
-async function loadRunDetail() {
-    const res = await fetch('/api/payroll/runs/' + RUN_ID);
-    if (!res.ok) { document.getElementById('timesheetContainer').innerHTML = '<p class="empty-state">Failed to load run.</p>'; return; }
-    _runData = await res.json();
-    // Build name→id map
-    _jobNameMap = {};
-    _runData.available_jobs.forEach(j => { _jobNameMap[j.name] = j.id; });
-    renderRunHeader();
-    buildTimesheetGrid();
+function loadRunDetail() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/payroll/runs/' + RUN_ID, true);
+    xhr.onload = function() {
+        if (xhr.status !== 200) { document.getElementById('timesheetContainer').innerHTML = '<p class="empty-state">Failed to load run.</p>'; return; }
+        _runData = JSON.parse(xhr.responseText);
+        _jobNameMap = {};
+        _runData.available_jobs.forEach(function(j) { _jobNameMap[j.name] = j.id; });
+        renderRunHeader();
+        buildTimesheetGrid();
+    };
+    xhr.onerror = function() { document.getElementById('timesheetContainer').innerHTML = '<p class="empty-state">Failed to load run.</p>'; };
+    xhr.send();
 }
 
 function formatPeriod(start, end) {
@@ -359,60 +402,59 @@ function recalcTotals() {
     recalcKpis();
 }
 
-async function saveTimesheet() {
+function saveTimesheet(callback) {
     // Collect entries — resolve job names to IDs or pass name for new jobs
-    const entries = [];
-    const rows = document.querySelectorAll('.ts-row');
-    let missingProject = false;
-    rows.forEach(row => {
-        const uid = parseInt(row.dataset.uid);
-        const jobInput = row.querySelector('.ts-job');
-        const jobName = jobInput ? jobInput.value.trim() : '';
-        // Check if any hours entered on this row
-        let hasHours = false;
-        row.querySelectorAll('.ts-input').forEach(inp => {
+    var entries = [];
+    var rows = document.querySelectorAll('.ts-row');
+    var missingProject = false;
+    rows.forEach(function(row) {
+        var uid = parseInt(row.dataset.uid);
+        var jobInput = row.querySelector('.ts-job');
+        var jobName = jobInput ? jobInput.value.trim() : '';
+        var hasHours = false;
+        row.querySelectorAll('.ts-input').forEach(function(inp) {
             if (parseFloat(inp.value) > 0) hasHours = true;
         });
         if (!jobName && hasHours) { missingProject = true; return; }
         if (!jobName) return;
-        // Resolve to job_id if known, otherwise pass job_name for backend to create
-        const jobId = _jobNameMap[jobName] || 0;
-        row.querySelectorAll('.ts-input').forEach(inp => {
-            const hours = parseFloat(inp.value) || 0;
-            const date = inp.dataset.date;
-            const entry = { user_id: uid, work_date: date, hours };
+        var jobId = _jobNameMap[jobName] || 0;
+        row.querySelectorAll('.ts-input').forEach(function(inp) {
+            var hours = parseFloat(inp.value) || 0;
+            var date = inp.dataset.date;
+            var entry = { user_id: uid, work_date: date, hours: hours };
             if (jobId) { entry.job_id = jobId; }
             else { entry.job_name = jobName; }
             entries.push(entry);
         });
     });
-    if (missingProject) return alert('Some rows have hours but no project assigned. Please enter a project name for all rows with hours.');
-    const res = await fetch('/api/payroll/runs/' + RUN_ID + '/timesheet', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ entries })
-    });
-    if (res.ok) {
-        const data = await res.json();
-        // Update job name map with any newly created jobs
-        if (data.new_jobs) {
-            data.new_jobs.forEach(j => { _jobNameMap[j.name] = j.id; });
-            // Also add to available_jobs for datalist
-            _runData.available_jobs.push(...data.new_jobs);
-            const dl = document.getElementById('jobList');
-            if (dl) {
-                data.new_jobs.forEach(j => {
-                    const opt = document.createElement('option');
-                    opt.value = j.name;
-                    dl.appendChild(opt);
-                });
+    if (missingProject) { alert('Some rows have hours but no project assigned. Please enter a project name for all rows with hours.'); return; }
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/timesheet', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            var data = JSON.parse(xhr.responseText);
+            if (data.new_jobs) {
+                data.new_jobs.forEach(function(j) { _jobNameMap[j.name] = j.id; });
+                _runData.available_jobs = _runData.available_jobs.concat(data.new_jobs);
+                var dl = document.getElementById('jobList');
+                if (dl) {
+                    data.new_jobs.forEach(function(j) {
+                        var opt = document.createElement('option');
+                        opt.value = j.name;
+                        dl.appendChild(opt);
+                    });
+                }
             }
+            showToast('Timesheet saved successfully');
+            if (callback) callback();
+        } else {
+            try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to save'); }
+            catch(e) { alert('Failed to save timesheet'); }
         }
-        showToast('Timesheet saved successfully');
-    } else {
-        const err = await res.json();
-        alert(err.error || 'Failed to save');
-    }
+    };
+    xhr.onerror = function() { alert('Network error saving timesheet.'); };
+    xhr.send(JSON.stringify({ entries: entries }));
 }
 
 function showToast(msg) {
@@ -423,34 +465,50 @@ function showToast(msg) {
     setTimeout(() => t.remove(), 3000);
 }
 
-async function finalizeRun() {
+function finalizeRun() {
     if (!confirm('Finalize this payroll run? All entries will be approved and locked.')) return;
-    await saveTimesheet();
-    const res = await fetch('/api/payroll/runs/' + RUN_ID + '/finalize', { method: 'POST' });
-    if (res.ok) {
-        showToast('Payroll run finalized');
-        loadRunDetail();
-    } else {
-        const err = await res.json();
-        alert(err.error || 'Failed to finalize');
-    }
+    saveTimesheet(function() {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/finalize', true);
+        xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                showToast('Payroll run finalized');
+                loadRunDetail();
+            } else {
+                try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to finalize'); }
+                catch(e) { alert('Failed to finalize'); }
+            }
+        };
+        xhr.onerror = function() { alert('Network error finalizing run.'); };
+        xhr.send();
+    });
 }
 
-async function reopenRun() {
+function reopenRun() {
     if (!confirm('Reopen this payroll run? This is an owner-only action.')) return;
-    const res = await fetch('/api/payroll/runs/' + RUN_ID + '/reopen', { method: 'POST' });
-    if (res.ok) {
-        showToast('Payroll run reopened');
-        loadRunDetail();
-    } else {
-        const err = await res.json();
-        alert(err.error || 'Failed to reopen');
-    }
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/reopen', true);
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            showToast('Payroll run reopened');
+            loadRunDetail();
+        } else {
+            try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to reopen'); }
+            catch(e) { alert('Failed to reopen'); }
+        }
+    };
+    xhr.onerror = function() { alert('Network error reopening run.'); };
+    xhr.send();
 }
 
-async function deleteRunDetail() {
+function deleteRunDetail() {
     if (!confirm('Delete this payroll run? This cannot be undone.')) return;
-    const res = await fetch('/api/payroll/runs/' + RUN_ID, { method: 'DELETE' });
-    if (res.ok) window.location.assign('/payroll');
-    else { const err = await res.json(); alert(err.error || 'Failed to delete'); }
+    var xhr = new XMLHttpRequest();
+    xhr.open('DELETE', '/api/payroll/runs/' + RUN_ID, true);
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) window.location.href = '/payroll';
+        else { try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to delete'); } catch(e) { alert('Failed to delete'); } }
+    };
+    xhr.onerror = function() { alert('Network error deleting run.'); };
+    xhr.send();
 }
