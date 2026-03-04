@@ -91,7 +91,7 @@ async function saveUser(e) {
 }
 
 async function deleteUser(id, username) {
-    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    if (!confirm(`Deactivate user "${username}"? They will no longer be able to log in.`)) return;
     const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }

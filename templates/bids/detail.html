@@ -187,11 +187,29 @@
     <!-- Profit + Partners -->
     <div class="bid-section">
         <h3>Profit</h3>
-        <div class="bid-form-grid" style="max-width:500px;">
-            <div class="bid-field"><label class="form-label">Company Profit (%)</label>
+        <div class="bid-form-grid" style="max-width:700px;">
+            <div class="bid-field"><label class="form-label">Profit Mode</label>
+                <select id="bidProfitMode" class="form-select" onchange="toggleProfitMode(); recalculate()">
+                    <option value="percentage">Percentage of Cost</option>
+                    <option value="per_system">Set Price Per System</option>
+                </select></div>
+            <div class="bid-field" id="profitPctField"><label class="form-label">Company Profit (%)</label>
                 <input type="number" id="bidProfitPct" class="form-input" value="0" min="0" step="0.1" oninput="recalculate()"></div>
+            <div class="bid-field" id="profitPerSystemField" style="display:none;"><label class="form-label">Profit Per System ($)</label>
+                <input type="number" id="bidProfitPerSystem" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
             <div class="bid-field"><label class="form-label">Company Profit ($)</label>
                 <input type="text" id="bidProfitAmt" class="form-input calc-field" value="$0.00" readonly></div>
+            <div class="bid-field" id="effectivePctField" style="display:none;"><label class="form-label">Effective %</label>
+                <span id="bidEffectivePct" style="font-weight:600;color:var(--blue-primary);line-height:38px;">0%</span></div>
+        </div>
+        <!-- Profit Breakdown (30/35/35) -->
+        <div style="margin-top:12px;padding:12px 16px;background:var(--gray-50);border-radius:8px;max-width:400px;">
+            <h4 style="margin:0 0 8px 0;font-size:14px;">Profit Breakdown</h4>
+            <div style="display:grid;grid-template-columns:1fr auto;gap:4px 16px;font-size:13px;">
+                <span>Company Share (30%)</span><span id="breakdownCompany" style="font-weight:600;text-align:right;">$0.00</span>
+                <span>Dan's Share (35%)</span><span id="breakdownDan" style="font-weight:600;text-align:right;">$0.00</span>
+                <span>James's Share (35%)</span><span id="breakdownJames" style="font-weight:600;text-align:right;">$0.00</span>
+            </div>
         </div>
         <h4 style="margin-top:16px;">Partner Profit Splits</h4>
         <table class="data-table" style="margin-top:8px;">
@@ -258,6 +276,9 @@
             <div class="cost-row cost-row-total" style="font-size:18px;"><span class="cost-label">SUGGESTED BID</span><span class="cost-value" id="sumTotal" style="color:var(--blue-primary);">$0.00</span></div>
             <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px;"></div>
             <div class="cost-row"><span class="cost-label">Net Profit</span><span class="cost-value" id="sumNetProfit">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label" style="padding-left:12px;color:var(--gray-500);">Company Share (30%)</span><span class="cost-value" id="sumBreakdownCompany">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label" style="padding-left:12px;color:var(--gray-500);">Dan's Share (35%)</span><span class="cost-value" id="sumBreakdownDan">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label" style="padding-left:12px;color:var(--gray-500);">James's Share (35%)</span><span class="cost-value" id="sumBreakdownJames">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Suggested Apartment Bid</span><span class="cost-value" id="sumAptBid">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Suggested Clubhouse Bid</span><span class="cost-value" id="sumClubBid">$0.00</span></div>
             <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px;"></div>

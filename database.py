@@ -1502,6 +1502,65 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_user_sessions_user_date ON user_sessions(user_id, session_date);
+
+        /* ─── Team Chat ─── */
+
+        CREATE TABLE IF NOT EXISTS tc_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT DEFAULT '',
+            is_default INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS tc_channel_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            joined_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (channel_id) REFERENCES tc_channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(channel_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS tc_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER,
+            sender_id INTEGER NOT NULL,
+            dm_recipient_id INTEGER,
+            content TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            file_name TEXT DEFAULT '',
+            file_type TEXT DEFAULT '',
+            is_system INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (channel_id) REFERENCES tc_channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (sender_id) REFERENCES users(id),
+            FOREIGN KEY (dm_recipient_id) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS tc_read_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            channel_id INTEGER,
+            dm_peer_id INTEGER,
+            last_read_message_id INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (channel_id) REFERENCES tc_channels(id) ON DELETE CASCADE,
+            UNIQUE(user_id, channel_id),
+            UNIQUE(user_id, dm_peer_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tc_channel_members_channel ON tc_channel_members(channel_id);
+        CREATE INDEX IF NOT EXISTS idx_tc_channel_members_user ON tc_channel_members(user_id);
+        CREATE INDEX IF NOT EXISTS idx_tc_messages_channel ON tc_messages(channel_id);
+        CREATE INDEX IF NOT EXISTS idx_tc_messages_sender ON tc_messages(sender_id);
+        CREATE INDEX IF NOT EXISTS idx_tc_messages_dm ON tc_messages(dm_recipient_id);
+        CREATE INDEX IF NOT EXISTS idx_tc_messages_created ON tc_messages(created_at);
+        CREATE INDEX IF NOT EXISTS idx_tc_read_status_user ON tc_read_status(user_id);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -1585,6 +1644,12 @@ def init_db():
     bid_cols = [row[1] for row in conn.execute("PRAGMA table_info(bids)").fetchall()]
     if 'customer_id' not in bid_cols:
         conn.execute("ALTER TABLE bids ADD COLUMN customer_id INTEGER")
+
+    # Migration: add profit_mode and profit_per_system to bids
+    if 'profit_mode' not in bid_cols:
+        conn.execute("ALTER TABLE bids ADD COLUMN profit_mode TEXT DEFAULT 'percentage'")
+    if 'profit_per_system' not in bid_cols:
+        conn.execute("ALTER TABLE bids ADD COLUMN profit_per_system REAL DEFAULT 0")
 
     # Migration: add duplicate/quote columns to supplier_invoices (Phase 5)
     si_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(supplier_invoices)").fetchall()]
@@ -1957,6 +2022,18 @@ def init_db():
             seed_equipment_manuals(conn)
         except ImportError:
             pass
+
+    # Seed Team Chat default channels + enroll all active users
+    tc_count = conn.execute("SELECT COUNT(*) FROM tc_channels").fetchone()[0]
+    if tc_count == 0:
+        conn.execute("INSERT INTO tc_channels (name, description, is_default, created_by) VALUES ('general', 'General discussion for the team', 1, NULL)")
+        conn.execute("INSERT INTO tc_channels (name, description, is_default, created_by) VALUES ('announcements', 'Company announcements', 1, NULL)")
+    # Auto-enroll active users into default channels
+    default_channels = conn.execute("SELECT id FROM tc_channels WHERE is_default = 1").fetchall()
+    active_users = conn.execute("SELECT id FROM users WHERE is_active = 1").fetchall()
+    for ch in default_channels:
+        for u in active_users:
+            conn.execute("INSERT OR IGNORE INTO tc_channel_members (channel_id, user_id) VALUES (?, ?)", (ch['id'], u['id']))
 
     conn.commit()
     conn.close()

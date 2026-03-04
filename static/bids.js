@@ -60,6 +60,13 @@ function autoPerDiem() {
     $('bidPerDiemRate').value = rate;
 }
 
+function toggleProfitMode() {
+    const mode = $('bidProfitMode') ? $('bidProfitMode').value : 'percentage';
+    if ($('profitPctField')) $('profitPctField').style.display = mode === 'percentage' ? '' : 'none';
+    if ($('profitPerSystemField')) $('profitPerSystemField').style.display = mode === 'per_system' ? '' : 'none';
+    if ($('effectivePctField')) $('effectivePctField').style.display = mode === 'per_system' ? '' : 'none';
+}
+
 function recalculate() {
     if (!isOwner) return; // Non-owners don't have cost fields
     // System counts
@@ -120,12 +127,29 @@ function recalculate() {
 
     // Totals
     const totalCostToBuild = materialCost + laborCost + insurance + permits + mgmtFee + perDiemTotal;
-    const profitPct = val('bidProfitPct');
-    const companyProfit = totalCostToBuild * (profitPct / 100);
+    const profitMode = $('bidProfitMode') ? $('bidProfitMode').value : 'percentage';
+    let companyProfit;
+    if (profitMode === 'per_system') {
+        const profitPerSystem = val('bidProfitPerSystem');
+        companyProfit = totalSystems * profitPerSystem;
+        // Show effective percentage
+        if ($('bidEffectivePct')) {
+            $('bidEffectivePct').textContent = totalCostToBuild > 0
+                ? (companyProfit / totalCostToBuild * 100).toFixed(1) + '%' : '0%';
+        }
+    } else {
+        const profitPct = val('bidProfitPct');
+        companyProfit = totalCostToBuild * (profitPct / 100);
+    }
     const totalBid = totalCostToBuild + companyProfit;
     const netProfit = companyProfit;
 
     $('bidProfitAmt').value = fmt(companyProfit);
+
+    // Profit breakdown (30/35/35)
+    if ($('breakdownCompany')) $('breakdownCompany').textContent = fmt(companyProfit * 0.30);
+    if ($('breakdownDan')) $('breakdownDan').textContent = fmt(companyProfit * 0.35);
+    if ($('breakdownJames')) $('breakdownJames').textContent = fmt(companyProfit * 0.35);
 
     // Per-unit calcs
     const costPerApt = numApt > 0 ? totalCostToBuild / numApt : 0;
@@ -152,6 +176,9 @@ function recalculate() {
     $('sumProfit').textContent = fmt(companyProfit);
     $('sumTotal').textContent = fmt(totalBid);
     $('sumNetProfit').textContent = fmt(netProfit);
+    if ($('sumBreakdownCompany')) $('sumBreakdownCompany').textContent = fmt(companyProfit * 0.30);
+    if ($('sumBreakdownDan')) $('sumBreakdownDan').textContent = fmt(companyProfit * 0.35);
+    if ($('sumBreakdownJames')) $('sumBreakdownJames').textContent = fmt(companyProfit * 0.35);
     $('sumAptBid').textContent = fmt(sugAptBid);
     $('sumClubBid').textContent = fmt(sugClubBid);
     $('sumCostPerApt').textContent = fmt(costPerApt);
@@ -253,6 +280,9 @@ async function loadBid() {
         $('bidPaySchedule').value = Math.round((bid.pay_schedule_pct || 0.33) * 100);
 
         $('bidProfitPct').value = bid.company_profit_pct || 0;
+        if ($('bidProfitMode')) $('bidProfitMode').value = bid.profit_mode || 'percentage';
+        if ($('bidProfitPerSystem')) $('bidProfitPerSystem').value = bid.profit_per_system || 0;
+        toggleProfitMode();
 
         bidPartners = bid.partners || [];
         renderPartners();
@@ -427,6 +457,8 @@ async function saveBid() {
             management_fee: val('bidMgmtFee'),
             pay_schedule_pct: val('bidPaySchedule') / 100,
             company_profit_pct: val('bidProfitPct'),
+            profit_mode: $('bidProfitMode') ? $('bidProfitMode').value : 'percentage',
+            profit_per_system: val('bidProfitPerSystem'),
         });
     }
 

@@ -2741,7 +2741,8 @@ def api_delete_user(uid):
     if uid == session.get('user_id'):
         return jsonify({'error': 'Cannot delete your own account'}), 400
     conn = get_db()
-    conn.execute('DELETE FROM users WHERE id = ?', (uid,))
+    # Deactivate instead of hard-delete to preserve FK references
+    conn.execute("UPDATE users SET is_active = 0, updated_at = datetime('now','localtime') WHERE id = ?", (uid,))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -3031,7 +3032,13 @@ def calculate_bid(data):
     total_cost_to_build = round(material_cost + labor_cost + insurance_cost + permit_cost + management_fee + per_diem_total, 2)
     subtotal = total_cost_to_build
     profit_pct = float(data.get('company_profit_pct', 0) or 0)
-    company_profit = round(subtotal * (profit_pct / 100), 2)
+    profit_mode = data.get('profit_mode', 'percentage') or 'percentage'
+    profit_per_system = float(data.get('profit_per_system', 0) or 0)
+
+    if profit_mode == 'per_system' and profit_per_system > 0:
+        company_profit = round(total_systems * profit_per_system, 2)
+    else:
+        company_profit = round(subtotal * (profit_pct / 100), 2)
     total_bid = round(subtotal + company_profit, 2)
     net_profit = round(total_bid - total_cost_to_build, 2)
 
@@ -3084,6 +3091,7 @@ _BID_COST_KEYS = {
     'trim_out_hours', 'startup_hours', 'man_hours_per_system', 'total_man_hours',
     'crew_size', 'hours_per_day', 'duration_days', 'num_weeks',
     'suggested_apartment_bid', 'suggested_clubhouse_bid', 'price_per_ton',
+    'profit_mode', 'profit_per_system',
 }
 
 def _strip_bid_costs(bid_dict):
@@ -3160,6 +3168,7 @@ def _bid_fields(data, calcs):
         s('contracting_gc'), s('gc_attention'), s('bid_number'), s('bid_date'),
         s('bid_workup_date'), s('bid_due_date'), s('bid_submitted_date'), s('lead_name'),
         s('inclusions'), s('exclusions'), s('bid_description'), s('notes'),
+        s('profit_mode', 'percentage'), f('profit_per_system'),
     )
 
 _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
@@ -3180,7 +3189,8 @@ _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
     suggested_apartment_bid, suggested_clubhouse_bid,
     contracting_gc, gc_attention, bid_number, bid_date,
     bid_workup_date, bid_due_date, bid_submitted_date, lead_name,
-    inclusions, exclusions, bid_description, notes'''
+    inclusions, exclusions, bid_description, notes,
+    profit_mode, profit_per_system'''
 
 @app.route('/api/bids', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
