@@ -325,8 +325,6 @@ async function loadBid() {
         $('bidInsurance').value = bid.insurance_cost || 0;
         $('bidPermits').value = bid.permit_cost || 0;
         $('bidMgmtFee').value = bid.management_fee || 0;
-        $('bidPaySchedule').value = Math.round((bid.pay_schedule_pct || 0.33) * 100);
-
         $('bidProfitPct').value = bid.company_profit_pct || 0;
         if ($('bidProfitMode')) $('bidProfitMode').value = bid.profit_mode || 'percentage';
         if ($('bidProfitPerSystem')) $('bidProfitPerSystem').value = bid.profit_per_system || 0;
@@ -509,7 +507,6 @@ async function saveBid() {
             insurance_cost: val('bidInsurance'),
             permit_cost: val('bidPermits'),
             management_fee: val('bidMgmtFee'),
-            pay_schedule_pct: val('bidPaySchedule') / 100,
             company_profit_pct: val('bidProfitPct'),
             profit_mode: $('bidProfitMode') ? $('bidProfitMode').value : 'percentage',
             profit_per_system: val('bidProfitPerSystem'),
