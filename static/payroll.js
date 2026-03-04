@@ -23,6 +23,7 @@ async function loadPayroll() {
         <td style="white-space:nowrap;">
             <a href="/payroll/employee/${u.id}" class="btn btn-small btn-secondary">View</a>
             <button class="btn btn-small btn-secondary" onclick="editEmployee(${u.id})">Edit</button>
+            <button class="btn btn-small btn-secondary" onclick="resetPassword(${u.id},'${u.display_name.replace(/'/g,"\\'")}')" title="Reset password">&#128274;</button>
             <button class="btn btn-small btn-secondary" onclick="deleteEmployee(${u.id})" style="color:#EF4444;">Del</button>
         </td>
     </tr>`).join('');
@@ -97,6 +98,18 @@ async function deleteEmployee(id) {
     const res = await fetch('/api/admin/users/' + id, { method: 'DELETE' });
     if (res.ok) { loadPayroll(); }
     else { const err = await res.json(); alert(err.error || 'Failed to delete'); }
+}
+
+async function resetPassword(id, name) {
+    if (!confirm(`Reset password for "${name}" to "password"? They will be required to change it on next login.`)) return;
+    const res = await fetch('/api/admin/users/' + id + '/reset-password', { method: 'POST' });
+    if (res.ok) {
+        const data = await res.json();
+        alert(data.message || 'Password reset successfully. Temporary password: password');
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to reset password');
+    }
 }
 
 // ─── Employee Detail Page ────────────────────────────────────

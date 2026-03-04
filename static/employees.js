@@ -44,9 +44,22 @@ function filterEmployees() {
             <td style="white-space:nowrap;">
                 <a href="/employees/${e.id}" class="btn btn-small btn-secondary">View</a>
                 <button class="btn btn-small btn-secondary" onclick="editEmployee(${e.id})">Edit</button>
+                <button class="btn btn-small btn-secondary" onclick="resetEmpPassword(${e.id},'${(e.display_name||'').replace(/'/g,"\\'")}')" title="Reset password">&#128274;</button>
             </td>
         </tr>`;
     }).join('');
+}
+
+async function resetEmpPassword(id, name) {
+    if (!confirm(`Reset password for "${name}" to "password"? They will be required to change it on next login.`)) return;
+    const res = await fetch('/api/admin/users/' + id + '/reset-password', { method: 'POST' });
+    if (res.ok) {
+        const data = await res.json();
+        alert(data.message || 'Password reset successfully. Temporary password: password');
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to reset password');
+    }
 }
 
 function showAddEmployee() {

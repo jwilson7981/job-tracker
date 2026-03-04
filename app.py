@@ -3094,6 +3094,23 @@ def api_delete_user(uid):
     conn.close()
     return jsonify({'ok': True})
 
+@app.route('/api/admin/users/<int:uid>/reset-password', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_reset_user_password(uid):
+    """Reset a user's password to 'password' and force change on next login."""
+    conn = get_db()
+    user = conn.execute('SELECT username, display_name FROM users WHERE id = ?', (uid,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    conn.execute(
+        'UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?',
+        (generate_password_hash('password'), uid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'message': f'Password reset for {user["display_name"] or user["username"]}. Temporary password: password'})
+
 # ─── Session Heartbeat ───────────────────────────────────────────
 
 @app.route('/api/heartbeat', methods=['POST'])
