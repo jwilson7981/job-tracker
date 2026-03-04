@@ -248,7 +248,7 @@ function buildTimesheetGrid() {
                     html += `<td style="text-align:center;">${val || ''}</td>`;
                 } else {
                     html += `<td><input type="number" class="form-input ts-input" data-uid="${uid}" data-date="${d}"
-                        step="0.25" min="0" max="24" value="${val}"
+                        step="any" min="0" max="24" value="${val}"
                         style="width:55px;text-align:center;padding:4px;font-size:13px;"
                         oninput="recalcTotals()"></td>`;
                 }
@@ -301,7 +301,7 @@ function addJobRow(uid) {
     </td>`;
     dates.forEach(d => {
         cells += `<td><input type="number" class="form-input ts-input" data-uid="${uid}" data-date="${d}"
-            step="0.25" min="0" max="24" value=""
+            step="any" min="0" max="24" value=""
             style="width:55px;text-align:center;padding:4px;font-size:13px;"
             oninput="recalcTotals()"></td>`;
     });

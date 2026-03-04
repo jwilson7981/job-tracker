@@ -162,7 +162,7 @@
                 const val = entry ? entry.hours : '';
                 const isToday = d === today;
                 html += `<td class="${isToday ? 'today-col' : ''}" style="text-align:center;">
-                    <input type="number" step="0.25" min="0" max="24"
+                    <input type="number" step="any" min="0" max="24"
                            data-job="${row.job_id}" data-date="${d}"
                            value="${val}" class="${val ? 'has-value' : ''}"
                            oninput="this.classList.toggle('has-value', this.value !== ''); window._gridRecalc();">
@@ -247,7 +247,7 @@
         weekData.dates.forEach(d => {
             const isToday = d === today;
             html += `<td class="${isToday ? 'today-col' : ''}" style="text-align:center;">
-                <input type="number" step="0.25" min="0" max="24"
+                <input type="number" step="any" min="0" max="24"
                        data-job="new" data-date="${d}" value=""
                        oninput="this.classList.toggle('has-value', this.value !== ''); window._gridRecalc();">
             </td>`;
