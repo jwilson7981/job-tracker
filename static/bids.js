@@ -100,14 +100,22 @@ function recalculate() {
     $('bidDuration').value = Math.round(durationDays * 100) / 100;
     $('bidWeeks').value = Math.round((durationDays / 5) * 100) / 100;
 
-    // Labor cost
+    // Labor cost: override > per-unit > hourly
     const laborRate = val('bidLaborRate');
     const laborPerUnit = val('bidLaborPerUnit');
-    let laborCost;
+    const laborOverride = val('bidLaborOverride');
+    let laborCost, laborCalc;
     if (laborPerUnit > 0) {
-        laborCost = totalSystems * laborPerUnit;
+        laborCalc = totalSystems * laborPerUnit;
     } else {
-        laborCost = totalMH * laborRate;
+        laborCalc = totalMH * laborRate;
+    }
+    if (laborOverride > 0) {
+        laborCost = laborOverride;
+        if ($('laborOverrideInfo')) $('laborOverrideInfo').style.display = '';
+    } else {
+        laborCost = laborCalc;
+        if ($('laborOverrideInfo')) $('laborOverrideInfo').style.display = 'none';
     }
     $('bidLaborCost').value = fmt(laborCost);
 
@@ -126,8 +134,11 @@ function recalculate() {
     const permits = val('bidPermits');
     const mgmtFee = val('bidMgmtFee');
 
+    // Admin costs
+    const adminCosts = val('bidAdminCosts');
+
     // Totals
-    const totalCostToBuild = materialCost + laborCost + insurance + permits + mgmtFee + perDiemTotal;
+    const totalCostToBuild = materialCost + laborCost + insurance + permits + mgmtFee + perDiemTotal + adminCosts;
     const profitMode = $('bidProfitMode') ? $('bidProfitMode').value : 'percentage';
     let companyProfit;
     if (profitMode === 'per_system') {
@@ -187,6 +198,7 @@ function recalculate() {
     $('sumPermits').textContent = fmt(permits);
     $('sumMgmt').textContent = fmt(mgmtFee);
     $('sumPerDiem').textContent = fmt(perDiemTotal);
+    if ($('sumAdmin')) $('sumAdmin').textContent = fmt(adminCosts);
     $('sumCostToBuild').textContent = fmt(totalCostToBuild);
     $('sumProfit').textContent = fmt(companyProfit);
     $('sumTotal').textContent = fmt(suggestedBid);
@@ -307,6 +319,9 @@ async function loadBid() {
         if ($('bidProfitPerSystem')) $('bidProfitPerSystem').value = bid.profit_per_system || 0;
         if ($('bidOverride')) $('bidOverride').value = bid.actual_bid_override || 0;
         if ($('bidType')) $('bidType').value = bid.bid_type || '';
+        if ($('bidLaborOverride')) $('bidLaborOverride').value = bid.labor_cost_override || 0;
+        if ($('bidAdminCosts')) $('bidAdminCosts').value = bid.admin_costs || 0;
+        if ($('bidAdminNotes')) $('bidAdminNotes').value = bid.admin_costs_notes || '';
         toggleProfitMode();
 
         bidPartners = bid.partners || [];
@@ -486,6 +501,9 @@ async function saveBid() {
             profit_per_system: val('bidProfitPerSystem'),
             actual_bid_override: val('bidOverride'),
             bid_type: $('bidType') ? $('bidType').value : '',
+            labor_cost_override: val('bidLaborOverride'),
+            admin_costs: val('bidAdminCosts'),
+            admin_costs_notes: $('bidAdminNotes') ? $('bidAdminNotes').value : '',
         });
     }
 

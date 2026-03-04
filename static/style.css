@@ -1753,9 +1753,8 @@ body {
     background: var(--white);
     border: 2px solid var(--blue-primary);
     border-radius: var(--radius);
-    padding: 20px 24px;
-    max-width: 500px;
-    margin-left: auto;
+    padding: 24px 32px;
+    max-width: 700px;
 }
 
 .bid-summary-card h3 {
@@ -3082,4 +3081,20 @@ tr[data-submittal-rejected] .badge {
 }
 tr[data-submittal-resubmit] .badge {
     animation: submittal-pulse-orange 2s infinite;
+}
+
+/* ─── Print Styles ──────────────────────────────────────────── */
+@media print {
+    .sidebar, .chat-widget, .calc-widget, .page-header .btn,
+    .notif-bell-wrapper, .notif-panel, #chatWidget { display: none !important; }
+    .app-main { margin-left: 0 !important; padding: 0 !important; }
+    .container { max-width: 100% !important; padding: 0 !important; }
+    .bid-summary-card { max-width: 100%; border: 2px solid #000; page-break-inside: avoid; }
+    .bid-section { page-break-inside: avoid; }
+    body { background: #fff; font-size: 12px; }
+    .cost-summary-grid { font-size: 13px; }
+    .cost-row-total { font-weight: 700; }
+    input, select, textarea { border: none !important; background: none !important; box-shadow: none !important; padding: 2px !important; }
+    .form-input, .form-select, .form-textarea { font-size: 12px; }
+    .calc-field { background: none !important; font-weight: 600; }
 }

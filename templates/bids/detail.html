@@ -11,6 +11,7 @@
         <a id="btnDownload" href="#" class="btn btn-secondary" style="display:none;" download>Download PDF</a>
         <button class="btn btn-secondary" onclick="openEmailModal()" id="btnEmail" style="display:none;">Email Proposal</button>
         {% endif %}
+        <button class="btn btn-secondary" onclick="window.print()">Print</button>
         <a href="/bids" class="btn btn-secondary">Back to Bids</a>
     </div>
 </div>
@@ -150,8 +151,24 @@
                         <input type="number" id="bidLaborPerUnit" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()" placeholder="0 = use hourly rate"></div>
                     <div class="bid-field"><label class="form-label" style="font-weight:700;">Total Labor Cost</label>
                         <input type="text" id="bidLaborCost" class="form-input calc-field" value="$0.00" readonly></div>
+                    <div class="bid-field"><label class="form-label">Labor Cost Override ($)</label>
+                        <input type="number" id="bidLaborOverride" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()" placeholder="0 = use calculated"></div>
                 </div>
             </div>
+        </div>
+        <div id="laborOverrideInfo" style="display:none;margin-top:8px;padding:8px 12px;background:#FEF3C7;border-radius:6px;font-size:12px;color:#92400E;max-width:700px;">
+            Labor cost overridden — calculated value ignored.
+        </div>
+    </div>
+
+    <!-- Admin Costs -->
+    <div class="bid-section">
+        <h3>Admin Costs</h3>
+        <div class="bid-form-grid" style="max-width:700px;">
+            <div class="bid-field"><label class="form-label">Admin Cost Total ($)</label>
+                <input type="number" id="bidAdminCosts" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+            <div class="bid-field" style="grid-column:1/-1;"><label class="form-label">Admin Cost Notes</label>
+                <textarea id="bidAdminNotes" class="form-textarea" rows="2" placeholder="Accounting, office overhead, project admin, etc."></textarea></div>
         </div>
     </div>
 
@@ -292,6 +309,7 @@
             <div class="cost-row"><span class="cost-label">Permits</span><span class="cost-value" id="sumPermits">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Management Fee</span><span class="cost-value" id="sumMgmt">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Per Diem</span><span class="cost-value" id="sumPerDiem">$0.00</span></div>
+            <div class="cost-row"><span class="cost-label">Admin Costs</span><span class="cost-value" id="sumAdmin">$0.00</span></div>
             <div class="cost-row cost-row-total"><span class="cost-label">Total Cost to Build</span><span class="cost-value" id="sumCostToBuild">$0.00</span></div>
             <div class="cost-row"><span class="cost-label">Company Profit</span><span class="cost-value" id="sumProfit">$0.00</span></div>
             <div class="cost-row cost-row-total" style="font-size:18px;"><span class="cost-label">SUGGESTED BID</span><span class="cost-value" id="sumTotal" style="color:var(--blue-primary);">$0.00</span></div>

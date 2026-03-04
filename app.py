@@ -3001,8 +3001,11 @@ def calculate_bid(data):
     labor_rate = float(data.get('labor_rate_per_hour', 0) or 0)
     labor_cost_per_unit = float(data.get('labor_cost_per_unit', 0) or 0)
 
-    # Labor cost: use per-unit price if set, otherwise hourly rate × total hours
-    if labor_cost_per_unit > 0:
+    # Labor cost: override > per-unit > hourly rate
+    labor_cost_override = float(data.get('labor_cost_override', 0) or 0)
+    if labor_cost_override > 0:
+        labor_cost = round(labor_cost_override, 2)
+    elif labor_cost_per_unit > 0:
         labor_cost = round(total_systems * labor_cost_per_unit, 2)
     else:
         labor_cost = round(total_man_hours * labor_rate, 2)
@@ -3028,8 +3031,11 @@ def calculate_bid(data):
     permit_cost = float(data.get('permit_cost', 0) or 0)
     management_fee = float(data.get('management_fee', 0) or 0)
 
+    # Admin costs
+    admin_costs = float(data.get('admin_costs', 0) or 0)
+
     # Totals
-    total_cost_to_build = round(material_cost + labor_cost + insurance_cost + permit_cost + management_fee + per_diem_total, 2)
+    total_cost_to_build = round(material_cost + labor_cost + insurance_cost + permit_cost + management_fee + per_diem_total + admin_costs, 2)
     subtotal = total_cost_to_build
     profit_pct = float(data.get('company_profit_pct', 0) or 0)
     profit_mode = data.get('profit_mode', 'percentage') or 'percentage'
@@ -3092,6 +3098,7 @@ _BID_COST_KEYS = {
     'crew_size', 'hours_per_day', 'duration_days', 'num_weeks',
     'suggested_apartment_bid', 'suggested_clubhouse_bid', 'price_per_ton',
     'profit_mode', 'profit_per_system', 'actual_bid_override', 'bid_type',
+    'labor_cost_override', 'admin_costs', 'admin_costs_notes',
 }
 
 def _strip_bid_costs(bid_dict):
@@ -3170,6 +3177,7 @@ def _bid_fields(data, calcs):
         s('inclusions'), s('exclusions'), s('bid_description'), s('notes'),
         s('profit_mode', 'percentage'), f('profit_per_system'),
         f('actual_bid_override'), s('bid_type'),
+        f('labor_cost_override'), f('admin_costs'), s('admin_costs_notes'),
     )
 
 _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
@@ -3191,7 +3199,8 @@ _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
     contracting_gc, gc_attention, bid_number, bid_date,
     bid_workup_date, bid_due_date, bid_submitted_date, lead_name,
     inclusions, exclusions, bid_description, notes,
-    profit_mode, profit_per_system, actual_bid_override, bid_type'''
+    profit_mode, profit_per_system, actual_bid_override, bid_type,
+    labor_cost_override, admin_costs, admin_costs_notes'''
 
 def _next_bid_number(conn):
     """Get next bid number starting from 2600."""

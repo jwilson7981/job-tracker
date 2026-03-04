@@ -1654,6 +1654,12 @@ def init_db():
         conn.execute("ALTER TABLE bids ADD COLUMN actual_bid_override REAL DEFAULT 0")
     if 'bid_type' not in bid_cols:
         conn.execute("ALTER TABLE bids ADD COLUMN bid_type TEXT DEFAULT ''")
+    if 'labor_cost_override' not in bid_cols:
+        conn.execute("ALTER TABLE bids ADD COLUMN labor_cost_override REAL DEFAULT 0")
+    if 'admin_costs' not in bid_cols:
+        conn.execute("ALTER TABLE bids ADD COLUMN admin_costs REAL DEFAULT 0")
+    if 'admin_costs_notes' not in bid_cols:
+        conn.execute("ALTER TABLE bids ADD COLUMN admin_costs_notes TEXT DEFAULT ''")
 
     # Migration: add duplicate/quote columns to supplier_invoices (Phase 5)
     si_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(supplier_invoices)").fetchall()]
