@@ -5,6 +5,7 @@ function fmt(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumF
 if (window.PA_PAGE === 'list') initList();
 else if (window.PA_PAGE === 'contract') initContract();
 else if (window.PA_PAGE === 'application') initApplication();
+else if (window.PA_PAGE === 'analytics') initAnalytics();
 
 // ─── LIST PAGE ───────────────────────────────────────────────
 let paJobs = [];
@@ -242,6 +243,20 @@ async function initApplication() {
 
     renderG703();
     recalcG702();
+
+    // Show View PDF button if a PDF has been generated
+    const viewBtn = document.getElementById('viewPdfBtn');
+    if (viewBtn && appData.application.pdf_file) {
+        viewBtn.style.display = '';
+    }
+}
+
+function viewPayAppPDF() {
+    if (appData && appData.application.pdf_file) {
+        window.open('/api/payapps/applications/' + PA_APP_ID + '/pdf/' + appData.application.pdf_file, '_blank');
+    } else {
+        alert('No PDF generated yet. Click "Generate PDF" first.');
+    }
 }
 
 function renderG703() {
@@ -449,6 +464,10 @@ async function generatePayAppPDF() {
         if (data.ok && data.path) {
             window.open(data.path, '_blank');
             btn.textContent = 'PDF Ready!';
+            // Update appData and show View button
+            if (data.filename) appData.application.pdf_file = data.filename;
+            const viewBtn = document.getElementById('viewPdfBtn');
+            if (viewBtn) viewBtn.style.display = '';
         } else {
             alert(data.error || 'Failed to generate PDF');
             btn.textContent = orig;
@@ -459,4 +478,137 @@ async function generatePayAppPDF() {
     }
     btn.disabled = false;
     setTimeout(() => { btn.textContent = orig; }, 3000);
+}
+
+// ─── ANALYTICS PAGE ──────────────────────────────────────────
+
+let analyticsBarChart = null;
+let analyticsDoughnutChart = null;
+
+async function initAnalytics() {
+    await loadAnalytics();
+}
+
+async function loadAnalytics() {
+    const res = await fetch('/api/payapps/analytics');
+    const data = await res.json();
+    const { projects, kpis, status_counts } = data;
+
+    // KPI Cards
+    document.getElementById('kpiContractValue').textContent = fmt(kpis.total_contract_value);
+    document.getElementById('kpiBilled').textContent = fmt(kpis.total_billed);
+    document.getElementById('kpiRetainage').textContent = fmt(kpis.total_retainage);
+    document.getElementById('kpiBalance').textContent = fmt(kpis.total_balance);
+
+    // Table
+    const tbody = document.getElementById('analyticsBody');
+    if (!projects.length) {
+        tbody.innerHTML = '<tr><td colspan="12" class="empty-state">No pay app contracts found.</td></tr>';
+        return;
+    }
+
+    const statusColors = { Draft: '#6B7280', Submitted: '#3B82F6', Approved: '#F59E0B', Paid: '#22C55E' };
+
+    tbody.innerHTML = projects.map(p => {
+        const color = statusColors[p.latest_status] || '#6B7280';
+        const pctWidth = Math.min(100, Math.max(0, p.pct_complete));
+        const pctColor = pctWidth >= 90 ? '#22C55E' : pctWidth >= 50 ? '#3B82F6' : '#F59E0B';
+        return `<tr style="cursor:pointer;" onclick="window.location='/payapps/contract/${p.contract_id}'">
+            <td><strong>${p.job_name || p.project_name || '-'}</strong></td>
+            <td>${p.gc_name || '-'}</td>
+            <td>${fmt(p.original_contract_sum)}</td>
+            <td>${p.net_co ? (p.net_co > 0 ? '+' : '') + fmt(p.net_co) : '-'}</td>
+            <td>${fmt(p.contract_sum_to_date)}</td>
+            <td>${fmt(p.total_completed)}</td>
+            <td>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <div style="flex:1;background:#E5E7EB;border-radius:9999px;height:8px;min-width:60px;">
+                        <div style="width:${pctWidth}%;background:${pctColor};height:8px;border-radius:9999px;"></div>
+                    </div>
+                    <span style="font-size:12px;font-weight:600;white-space:nowrap;">${p.pct_complete}%</span>
+                </div>
+            </td>
+            <td>${fmt(p.total_retainage)}</td>
+            <td>${fmt(p.total_billed)}</td>
+            <td>${fmt(p.balance_to_finish)}</td>
+            <td>${p.latest_app_number ? '#' + p.latest_app_number : '-'}</td>
+            <td>${p.latest_status
+                ? '<span style="display:inline-block;padding:2px 10px;border-radius:9999px;background:' + color + '20;color:' + color + ';font-weight:600;font-size:12px;">' + p.latest_status + '</span>'
+                : '-'}</td>
+        </tr>`;
+    }).join('');
+
+    // Charts
+    renderBarChart(projects);
+    renderDoughnutChart(status_counts);
+}
+
+function renderBarChart(projects) {
+    const ctx = document.getElementById('barChart');
+    if (!ctx) return;
+    if (analyticsBarChart) analyticsBarChart.destroy();
+
+    const labels = projects.map(p => (p.job_name || p.project_name || 'Project').substring(0, 20));
+
+    analyticsBarChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Contract Sum', data: projects.map(p => p.contract_sum_to_date), backgroundColor: 'rgba(99, 102, 241, 0.7)' },
+                { label: 'Total Billed', data: projects.map(p => p.total_billed), backgroundColor: 'rgba(59, 130, 246, 0.7)' },
+                { label: 'Balance', data: projects.map(p => p.balance_to_finish), backgroundColor: 'rgba(239, 68, 68, 0.5)' },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: { label: ctx => ctx.dataset.label + ': ' + fmt(ctx.parsed.y) }
+                }
+            },
+            scales: {
+                y: {
+                    ticks: { callback: v => '$' + (v >= 1000000 ? (v/1000000).toFixed(1) + 'M' : v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
+                }
+            }
+        }
+    });
+}
+
+function renderDoughnutChart(statusCounts) {
+    const ctx = document.getElementById('doughnutChart');
+    if (!ctx) return;
+    if (analyticsDoughnutChart) analyticsDoughnutChart.destroy();
+
+    const labels = ['Draft', 'Submitted', 'Approved', 'Paid'];
+    const colors = ['#6B7280', '#3B82F6', '#F59E0B', '#22C55E'];
+    const values = labels.map(l => statusCounts[l] || 0);
+
+    if (values.every(v => v === 0)) {
+        ctx.parentElement.innerHTML += '<div class="empty-state" style="padding:20px;text-align:center;">No applications yet</div>';
+        return;
+    }
+
+    analyticsDoughnutChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom' }
+            }
+        }
+    });
 }

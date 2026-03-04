@@ -95,19 +95,22 @@ function filterPermits() {
                     <div style="background:var(--gray-50,#F9FAFB);padding:12px 16px;border-top:1px solid var(--gray-200,#E5E7EB);">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                             <strong style="font-size:13px;">Inspections — ${p.permit_type} Permit</strong>
+                            <button class="btn btn-secondary btn-small" onclick="requestInspection(${p.id})" style="background:#8B5CF620;color:#8B5CF6;border-color:#8B5CF6;">Request Inspection</button>
                             <button class="btn btn-secondary btn-small" onclick="showAddInspection(${p.id})">+ Add Inspection</button>
                         </div>`;
 
             if (p.inspections && p.inspections.length) {
                 html += `<table class="data-table" style="margin:0;font-size:13px;">
-                    <thead><tr><th>Type</th><th>Status</th><th>Scheduled</th><th>Completed</th><th>Inspector</th><th>Notes</th><th></th></tr></thead>
+                    <thead><tr><th>Type</th><th>Status</th><th>Requested By</th><th>Scheduled</th><th>Completed</th><th>Inspector</th><th>Notes</th><th></th></tr></thead>
                     <tbody>`;
                 p.inspections.forEach(i => {
-                    const iColors = { Scheduled: '#3B82F6', Passed: '#22C55E', Failed: '#EF4444', Cancelled: '#9CA3AF', 'Re-Inspect': '#F59E0B' };
+                    const iColors = { Requested: '#8B5CF6', Scheduled: '#3B82F6', Passed: '#22C55E', Failed: '#EF4444', Cancelled: '#9CA3AF', 'Re-Inspect': '#F59E0B' };
                     const iColor = iColors[i.status] || '#6B7280';
+                    const reqInfo = i.requested_by_name ? `${i.requested_by_name}` + (i.requested_date ? `<br><span style="font-size:10px;color:#999;">${i.requested_date}</span>` : '') : '-';
                     html += `<tr>
                         <td>${i.inspection_type}</td>
                         <td><span style="display:inline-block;padding:1px 8px;border-radius:9999px;background:${iColor}20;color:${iColor};font-weight:600;font-size:11px;">${i.status}</span></td>
+                        <td>${reqInfo}</td>
                         <td>${i.scheduled_date || '-'}</td>
                         <td>${i.completed_date || '-'}</td>
                         <td>${i.inspector || '-'}</td>
@@ -210,6 +213,21 @@ async function deletePermit(id) {
 }
 
 // ─── Inspection CRUD ─────────────────────────────────────────
+
+function requestInspection(permitId) {
+    document.getElementById('inspectionPermitId').value = permitId;
+    document.getElementById('editInspectionId').value = '';
+    document.getElementById('inspectionModalTitle').textContent = 'Request Inspection';
+    document.getElementById('inspectionType').value = 'Rough-In';
+    document.getElementById('inspectionStatus').value = 'Requested';
+    // Hide fields not needed for a request
+    ['inspectionSchedDate','inspectionCompDate','inspectionInspector'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    document.getElementById('inspectionNotes').value = '';
+    document.getElementById('inspectionModal').style.display = 'flex';
+}
 
 function showAddInspection(permitId) {
     document.getElementById('inspectionPermitId').value = permitId;

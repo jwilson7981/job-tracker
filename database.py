@@ -1440,6 +1440,36 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_permits_status ON permits(status);
         CREATE INDEX IF NOT EXISTS idx_permit_inspections_permit ON permit_inspections(permit_id);
         CREATE INDEX IF NOT EXISTS idx_permit_inspections_status ON permit_inspections(status);
+
+        /* ─── Employee Profiles (HR Data) ─── */
+
+        CREATE TABLE IF NOT EXISTS employee_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            employee_number TEXT DEFAULT '',
+            ssn_encrypted TEXT DEFAULT '',
+            ssn_last4 TEXT DEFAULT '',
+            date_of_birth TEXT DEFAULT '',
+            hire_date TEXT DEFAULT '',
+            termination_date TEXT DEFAULT '',
+            employment_status TEXT NOT NULL DEFAULT 'Active'
+                CHECK(employment_status IN ('Active','Inactive','Terminated')),
+            address_street TEXT DEFAULT '',
+            address_city TEXT DEFAULT '',
+            address_state TEXT DEFAULT '',
+            address_zip TEXT DEFAULT '',
+            shirt_size TEXT DEFAULT '',
+            emergency_contact_name TEXT DEFAULT '',
+            emergency_contact_phone TEXT DEFAULT '',
+            emergency_contact_relationship TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_employee_profiles_user ON employee_profiles(user_id);
+        CREATE INDEX IF NOT EXISTS idx_employee_profiles_status ON employee_profiles(employment_status);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -1795,6 +1825,47 @@ def init_db():
     pa_cols = [row[1] for row in conn.execute("PRAGMA table_info(pay_applications)").fetchall()]
     if 'pdf_file' not in pa_cols:
         conn.execute("ALTER TABLE pay_applications ADD COLUMN pdf_file TEXT DEFAULT ''")
+
+    # Migration: backfill employee_profiles for existing users
+    users_without_profile = conn.execute(
+        'SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM employee_profiles)'
+    ).fetchall()
+    for u in users_without_profile:
+        conn.execute(
+            "INSERT INTO employee_profiles (user_id, employment_status, hire_date) VALUES (?, 'Active', date('now','localtime'))",
+            (u['id'],)
+        )
+
+    # Migration: add requested_by, requested_date to permit_inspections + update CHECK for 'Requested' status
+    pi_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='permit_inspections'").fetchone()
+    if pi_sql and 'Requested' not in pi_sql[0]:
+        # Must recreate table to update CHECK constraint (SQLite limitation)
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS permit_inspections_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                permit_id INTEGER NOT NULL,
+                inspection_type TEXT NOT NULL DEFAULT 'Rough-In',
+                status TEXT NOT NULL DEFAULT 'Scheduled'
+                    CHECK(status IN ('Requested','Scheduled','Passed','Failed','Cancelled','Re-Inspect')),
+                scheduled_date TEXT DEFAULT '',
+                completed_date TEXT DEFAULT '',
+                inspector TEXT DEFAULT '',
+                result_notes TEXT DEFAULT '',
+                created_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                requested_by INTEGER,
+                requested_date TEXT DEFAULT '',
+                FOREIGN KEY (permit_id) REFERENCES permits(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id),
+                FOREIGN KEY (requested_by) REFERENCES users(id)
+            );
+            INSERT INTO permit_inspections_new (id, permit_id, inspection_type, status, scheduled_date, completed_date, inspector, result_notes, created_by, created_at)
+                SELECT id, permit_id, inspection_type, status, scheduled_date, completed_date, inspector, result_notes, created_by, created_at FROM permit_inspections;
+            DROP TABLE permit_inspections;
+            ALTER TABLE permit_inspections_new RENAME TO permit_inspections;
+            CREATE INDEX IF NOT EXISTS idx_permit_inspections_permit ON permit_inspections(permit_id);
+            CREATE INDEX IF NOT EXISTS idx_permit_inspections_status ON permit_inspections(status);
+        ''')
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]

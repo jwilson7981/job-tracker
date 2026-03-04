@@ -1185,7 +1185,11 @@ def time_entry():
 @api_role_required('owner', 'admin')
 def api_payroll_summary():
     conn = get_db()
-    users = conn.execute('SELECT * FROM users WHERE is_active = 1 ORDER BY display_name').fetchall()
+    users = conn.execute(
+        '''SELECT u.*, ep.employee_number FROM users u
+           LEFT JOIN employee_profiles ep ON u.id = ep.user_id
+           WHERE u.is_active = 1 ORDER BY u.display_name'''
+    ).fetchall()
     result = []
     for u in users:
         entries = conn.execute(
@@ -1204,6 +1208,7 @@ def api_payroll_summary():
             'hourly_rate': u['hourly_rate'] or 0,
             'email': u['email'] or '',
             'phone': u['phone'] or '',
+            'employee_number': u['employee_number'] or '',
             'total_hours': round(entries['total_hours'], 1),
             'total_pay': round(entries['total_pay'], 2),
             'pending_hours': round(pending, 1),
@@ -1275,9 +1280,69 @@ def delete_time_entry(tid):
     if not entry:
         conn.close()
         return jsonify({'error': 'Not found'}), 404
-    if entry['user_id'] != session['user_id'] and session.get('role') != 'owner':
+    if entry['user_id'] != session['user_id'] and session.get('role') not in ('owner', 'admin'):
         conn.close()
         return jsonify({'error': 'Access denied'}), 403
+    conn.execute('DELETE FROM time_entries WHERE id = ?', (tid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Payroll Entry Management (owner/admin managing employee time) ────
+
+@app.route('/api/payroll/entries', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_payroll_create_entry():
+    """Create a time entry for any employee."""
+    data = request.get_json(force=True)
+    user_id = data.get('user_id')
+    job_id = data.get('job_id')
+    if not user_id or not job_id:
+        return jsonify({'error': 'user_id and job_id required'}), 400
+    conn = get_db()
+    rate = float(data.get('hourly_rate', 0))
+    if not rate:
+        user = conn.execute('SELECT hourly_rate FROM users WHERE id = ?', (user_id,)).fetchone()
+        rate = user['hourly_rate'] or 0 if user else 0
+    conn.execute(
+        '''INSERT INTO time_entries (user_id, job_id, hours, hourly_rate, work_date, description, entry_type)
+           VALUES (?,?,?,?,?,?,?)''',
+        (user_id, job_id, float(data.get('hours', 0)), rate,
+         data.get('work_date', datetime.now().strftime('%Y-%m-%d')),
+         data.get('description', ''), data.get('entry_type', 'regular'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/payroll/entries/<int:tid>', methods=['PUT'])
+@api_role_required('owner', 'admin')
+def api_payroll_update_entry(tid):
+    """Update a time entry."""
+    data = request.get_json(force=True)
+    conn = get_db()
+    entry = conn.execute('SELECT id FROM time_entries WHERE id = ?', (tid,)).fetchone()
+    if not entry:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    fields = []
+    values = []
+    for f in ('job_id', 'hours', 'hourly_rate', 'work_date', 'description', 'entry_type'):
+        if f in data:
+            fields.append(f'{f} = ?')
+            values.append(data[f])
+    if fields:
+        values.append(tid)
+        conn.execute(f"UPDATE time_entries SET {', '.join(fields)} WHERE id = ?", values)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/payroll/entries/<int:tid>', methods=['DELETE'])
+@api_role_required('owner', 'admin')
+def api_payroll_delete_entry(tid):
+    """Delete a time entry."""
+    conn = get_db()
     conn.execute('DELETE FROM time_entries WHERE id = ?', (tid,))
     conn.commit()
     conn.close()
@@ -1403,6 +1468,261 @@ def api_payroll_approve_period():
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+# ─── Employees (HR) ──────────────────────────────────────────────
+
+def _get_fernet():
+    """Get or create Fernet cipher for SSN encryption."""
+    from cryptography.fernet import Fernet
+    key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'ssn.key')
+    os.makedirs(os.path.dirname(key_path), exist_ok=True)
+    if os.path.exists(key_path):
+        with open(key_path, 'rb') as f:
+            key = f.read()
+    else:
+        key = Fernet.generate_key()
+        with open(key_path, 'wb') as f:
+            f.write(key)
+    return Fernet(key)
+
+def _encrypt_ssn(ssn_plain):
+    """Encrypt SSN and return (encrypted, last4)."""
+    if not ssn_plain:
+        return '', ''
+    clean = ssn_plain.replace('-', '').replace(' ', '')
+    last4 = clean[-4:] if len(clean) >= 4 else clean
+    fernet = _get_fernet()
+    encrypted = fernet.encrypt(clean.encode()).decode()
+    return encrypted, last4
+
+def _decrypt_ssn(ssn_encrypted):
+    """Decrypt SSN and return formatted string."""
+    if not ssn_encrypted:
+        return ''
+    fernet = _get_fernet()
+    decrypted = fernet.decrypt(ssn_encrypted.encode()).decode()
+    if len(decrypted) == 9:
+        return f'{decrypted[:3]}-{decrypted[3:5]}-{decrypted[5:]}'
+    return decrypted
+
+@app.route('/employees')
+@role_required('owner', 'admin')
+def employees_list():
+    return render_template('employees/list.html')
+
+@app.route('/employees/<int:uid>')
+@role_required('owner', 'admin')
+def employees_detail(uid):
+    conn = get_db()
+    user = conn.execute('SELECT * FROM users WHERE id = ?', (uid,)).fetchone()
+    conn.close()
+    if not user:
+        return 'Employee not found', 404
+    return render_template('employees/detail.html', employee=user)
+
+@app.route('/api/employees')
+@api_role_required('owner', 'admin')
+def api_employees_list():
+    status_filter = request.args.get('status', 'Active')
+    conn = get_db()
+    if status_filter == 'all':
+        rows = conn.execute(
+            '''SELECT u.*, ep.employee_number, ep.employment_status, ep.hire_date, ep.termination_date
+               FROM users u LEFT JOIN employee_profiles ep ON u.id = ep.user_id
+               ORDER BY u.display_name'''
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            '''SELECT u.*, ep.employee_number, ep.employment_status, ep.hire_date, ep.termination_date
+               FROM users u LEFT JOIN employee_profiles ep ON u.id = ep.user_id
+               WHERE ep.employment_status = ? ORDER BY u.display_name''', (status_filter,)
+        ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d.pop('password_hash', None)
+        result.append(d)
+    return jsonify(result)
+
+@app.route('/api/employees', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_employees_create():
+    data = request.get_json()
+    username = (data.get('username') or '').strip()
+    password = data.get('password', '')
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({'error': 'Username already taken'}), 400
+
+    cursor = conn.execute(
+        '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate, must_change_password)
+           VALUES (?,?,?,?,?,?,?,?)''',
+        (username, data.get('display_name', username), generate_password_hash(password),
+         data.get('role', 'employee'), data.get('email', ''), data.get('phone', ''),
+         float(data.get('hourly_rate', 0)), 1)
+    )
+    uid = cursor.lastrowid
+
+    # Create employee profile
+    ssn_enc, ssn_last4 = _encrypt_ssn(data.get('ssn', ''))
+    conn.execute(
+        '''INSERT INTO employee_profiles (user_id, employee_number, ssn_encrypted, ssn_last4,
+           date_of_birth, hire_date, employment_status, address_street, address_city, address_state,
+           address_zip, shirt_size, emergency_contact_name, emergency_contact_phone,
+           emergency_contact_relationship, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (uid, data.get('employee_number', ''), ssn_enc, ssn_last4,
+         data.get('date_of_birth', ''), data.get('hire_date', datetime.now().strftime('%Y-%m-%d')),
+         'Active', data.get('address_street', ''), data.get('address_city', ''),
+         data.get('address_state', ''), data.get('address_zip', ''), data.get('shirt_size', ''),
+         data.get('emergency_contact_name', ''), data.get('emergency_contact_phone', ''),
+         data.get('emergency_contact_relationship', ''), data.get('notes', ''))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': uid}), 201
+
+@app.route('/api/employees/<int:uid>')
+@api_role_required('owner', 'admin')
+def api_employees_detail(uid):
+    conn = get_db()
+    user = conn.execute('SELECT * FROM users WHERE id = ?', (uid,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    profile = conn.execute('SELECT * FROM employee_profiles WHERE user_id = ?', (uid,)).fetchone()
+    # Get time entry stats
+    stats = conn.execute(
+        '''SELECT COALESCE(SUM(hours), 0) as total_hours,
+                  COALESCE(SUM(hours * hourly_rate), 0) as total_pay,
+                  COUNT(*) as entry_count
+           FROM time_entries WHERE user_id = ?''', (uid,)
+    ).fetchone()
+    recent_entries = conn.execute(
+        '''SELECT te.*, j.name as job_name FROM time_entries te
+           LEFT JOIN jobs j ON te.job_id = j.id
+           WHERE te.user_id = ? ORDER BY te.work_date DESC LIMIT 20''', (uid,)
+    ).fetchall()
+    conn.close()
+
+    d = dict(user)
+    d.pop('password_hash', None)
+    if profile:
+        for k in profile.keys():
+            if k not in ('id', 'user_id'):
+                d[k] = profile[k]
+    d['ssn_display'] = f'***-**-{profile["ssn_last4"]}' if profile and profile['ssn_last4'] else ''
+    d['total_hours'] = round(stats['total_hours'], 1)
+    d['total_pay'] = round(stats['total_pay'], 2)
+    d['entry_count'] = stats['entry_count']
+    d['recent_entries'] = [dict(e) for e in recent_entries]
+    return jsonify(d)
+
+@app.route('/api/employees/<int:uid>', methods=['PUT'])
+@api_role_required('owner', 'admin')
+def api_employees_update(uid):
+    data = request.get_json()
+    conn = get_db()
+
+    # Update user fields
+    user_fields = []
+    user_values = []
+    for f in ('display_name', 'role', 'email', 'phone', 'hourly_rate'):
+        if f in data:
+            user_fields.append(f'{f} = ?')
+            user_values.append(data[f])
+    if 'password' in data and data['password']:
+        user_fields.append('password_hash = ?')
+        user_values.append(generate_password_hash(data['password']))
+    if user_fields:
+        user_fields.append("updated_at = datetime('now','localtime')")
+        user_values.append(uid)
+        conn.execute(f"UPDATE users SET {', '.join(user_fields)} WHERE id = ?", user_values)
+
+    # Update profile fields
+    profile = conn.execute('SELECT id FROM employee_profiles WHERE user_id = ?', (uid,)).fetchone()
+    if profile:
+        prof_fields = []
+        prof_values = []
+        for f in ('employee_number', 'date_of_birth', 'hire_date', 'address_street',
+                   'address_city', 'address_state', 'address_zip', 'shirt_size',
+                   'emergency_contact_name', 'emergency_contact_phone',
+                   'emergency_contact_relationship', 'notes'):
+            if f in data:
+                prof_fields.append(f'{f} = ?')
+                prof_values.append(data[f])
+        if 'ssn' in data and data['ssn']:
+            ssn_enc, ssn_last4 = _encrypt_ssn(data['ssn'])
+            prof_fields.append('ssn_encrypted = ?')
+            prof_values.append(ssn_enc)
+            prof_fields.append('ssn_last4 = ?')
+            prof_values.append(ssn_last4)
+        if prof_fields:
+            prof_fields.append("updated_at = datetime('now','localtime')")
+            prof_values.append(uid)
+            conn.execute(f"UPDATE employee_profiles SET {', '.join(prof_fields)} WHERE user_id = ?", prof_values)
+    else:
+        # Create profile if missing
+        ssn_enc, ssn_last4 = _encrypt_ssn(data.get('ssn', ''))
+        conn.execute(
+            '''INSERT INTO employee_profiles (user_id, employee_number, ssn_encrypted, ssn_last4,
+               date_of_birth, hire_date, employment_status, address_street, address_city,
+               address_state, address_zip, shirt_size, emergency_contact_name,
+               emergency_contact_phone, emergency_contact_relationship, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (uid, data.get('employee_number', ''), ssn_enc, ssn_last4,
+             data.get('date_of_birth', ''), data.get('hire_date', ''), 'Active',
+             data.get('address_street', ''), data.get('address_city', ''),
+             data.get('address_state', ''), data.get('address_zip', ''),
+             data.get('shirt_size', ''), data.get('emergency_contact_name', ''),
+             data.get('emergency_contact_phone', ''),
+             data.get('emergency_contact_relationship', ''), data.get('notes', ''))
+        )
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/employees/<int:uid>/status', methods=['PUT'])
+@api_role_required('owner', 'admin')
+def api_employees_status(uid):
+    data = request.get_json()
+    new_status = data.get('status', '')
+    if new_status not in ('Active', 'Inactive', 'Terminated'):
+        return jsonify({'error': 'Invalid status'}), 400
+
+    conn = get_db()
+    if new_status == 'Terminated':
+        conn.execute("UPDATE employee_profiles SET employment_status = 'Terminated', termination_date = date('now','localtime'), updated_at = datetime('now','localtime') WHERE user_id = ?", (uid,))
+        conn.execute('UPDATE users SET is_active = 0 WHERE id = ?', (uid,))
+    elif new_status == 'Inactive':
+        conn.execute("UPDATE employee_profiles SET employment_status = 'Inactive', updated_at = datetime('now','localtime') WHERE user_id = ?", (uid,))
+        conn.execute('UPDATE users SET is_active = 0 WHERE id = ?', (uid,))
+    elif new_status == 'Active':
+        conn.execute("UPDATE employee_profiles SET employment_status = 'Active', termination_date = '', updated_at = datetime('now','localtime') WHERE user_id = ?", (uid,))
+        conn.execute('UPDATE users SET is_active = 1 WHERE id = ?', (uid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/employees/<int:uid>/ssn')
+@api_role_required('owner')
+def api_employees_ssn(uid):
+    conn = get_db()
+    profile = conn.execute('SELECT ssn_encrypted FROM employee_profiles WHERE user_id = ?', (uid,)).fetchone()
+    conn.close()
+    if not profile or not profile['ssn_encrypted']:
+        return jsonify({'ssn': ''})
+    try:
+        ssn = _decrypt_ssn(profile['ssn_encrypted'])
+    except Exception:
+        return jsonify({'error': 'Failed to decrypt SSN'}), 500
+    return jsonify({'ssn': ssn})
 
 # ─── Warranty ───────────────────────────────────────────────────
 
@@ -2298,12 +2618,18 @@ def api_create_user():
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
 
-    conn.execute(
+    cursor = conn.execute(
         '''INSERT INTO users (username, display_name, password_hash, role, email, phone, hourly_rate, must_change_password)
            VALUES (?,?,?,?,?,?,?,?)''',
         (username, data.get('display_name', username), generate_password_hash(password),
          data.get('role', 'employee'), data.get('email', ''), data.get('phone', ''),
          float(data.get('hourly_rate', 0)), 1 if data.get('must_change_password', False) else 0)
+    )
+    new_uid = cursor.lastrowid
+    # Auto-create employee profile
+    conn.execute(
+        "INSERT OR IGNORE INTO employee_profiles (user_id, employment_status, hire_date) VALUES (?, 'Active', date('now','localtime'))",
+        (new_uid,)
     )
     conn.commit()
     conn.close()
@@ -3263,7 +3589,13 @@ def api_permits():
     result = []
     for p in permits:
         d = dict(p)
-        inspections = conn.execute('SELECT * FROM permit_inspections WHERE permit_id = ? ORDER BY scheduled_date', (p['id'],)).fetchall()
+        inspections = conn.execute(
+            '''SELECT pi.*, u.display_name as requested_by_name
+               FROM permit_inspections pi
+               LEFT JOIN users u ON pi.requested_by = u.id
+               WHERE pi.permit_id = ? ORDER BY pi.scheduled_date''',
+            (p['id'],)
+        ).fetchall()
         d['inspections'] = [dict(i) for i in inspections]
         d['inspection_count'] = len(inspections)
         d['passed_count'] = sum(1 for i in inspections if i['status'] == 'Passed')
@@ -3349,25 +3681,68 @@ def api_delete_permit(pid):
 @api_role_required('owner', 'admin', 'project_manager')
 def api_add_inspection(pid):
     data = request.get_json()
+    status = data.get('status', 'Scheduled')
+    valid_statuses = ('Requested', 'Scheduled', 'Passed', 'Failed', 'Cancelled', 'Re-Inspect')
+    if status not in valid_statuses:
+        return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+
     conn = get_db()
+    requested_by = None
+    requested_date = ''
+    if status == 'Requested':
+        requested_by = session.get('user_id')
+        requested_date = datetime.now().strftime('%Y-%m-%d %H:%M')
+
     cursor = conn.execute(
         '''INSERT INTO permit_inspections (permit_id, inspection_type, status,
-           scheduled_date, completed_date, inspector, result_notes, created_by)
-           VALUES (?,?,?,?,?,?,?,?)''',
+           scheduled_date, completed_date, inspector, result_notes, created_by,
+           requested_by, requested_date)
+           VALUES (?,?,?,?,?,?,?,?,?,?)''',
         (pid, data.get('inspection_type', 'Rough-In'),
-         data.get('status', 'Scheduled'), data.get('scheduled_date', ''),
+         status, data.get('scheduled_date', ''),
          data.get('completed_date', ''), data.get('inspector', ''),
-         data.get('result_notes', ''), session.get('user_id'))
+         data.get('result_notes', ''), session.get('user_id'),
+         requested_by, requested_date)
     )
     conn.commit()
+
+    # If Requested, notify all owner/admin users
+    insp_id = cursor.lastrowid
+    if status == 'Requested':
+        permit = conn.execute(
+            'SELECT p.permit_type, j.name as job_name FROM permits p LEFT JOIN jobs j ON p.job_id = j.id WHERE p.id = ?',
+            (pid,)
+        ).fetchone()
+        insp_type = data.get('inspection_type', 'Rough-In')
+        job_name = permit['job_name'] if permit else 'Unknown Job'
+        permit_type = permit['permit_type'] if permit else ''
+        requester = session.get('display_name', session.get('username', ''))
+        admins = conn.execute(
+            "SELECT id FROM users WHERE role IN ('owner','admin') AND is_active = 1 AND id != ?",
+            (session.get('user_id'),)
+        ).fetchall()
+        for admin in admins:
+            conn.execute(
+                'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                (admin['id'], 'inspection',
+                 f'Inspection Request: {insp_type}',
+                 f'{requester} requested a {insp_type} inspection for {job_name} — {permit_type} permit. Please call in to schedule.',
+                 '/permits')
+            )
+        conn.commit()
+
     conn.close()
-    return jsonify({'ok': True, 'id': cursor.lastrowid}), 201
+    return jsonify({'ok': True, 'id': insp_id}), 201
 
 @app.route('/api/permits/<int:pid>/inspections/<int:iid>', methods=['PUT'])
 @api_role_required('owner', 'admin', 'project_manager')
 def api_update_inspection(pid, iid):
     data = request.get_json()
     conn = get_db()
+
+    # Get current inspection state before update
+    old_insp = conn.execute('SELECT * FROM permit_inspections WHERE id = ? AND permit_id = ?', (iid, pid)).fetchone()
+
     fields = []
     params = []
     for col in ('inspection_type', 'status', 'scheduled_date', 'completed_date',
@@ -3379,6 +3754,26 @@ def api_update_inspection(pid, iid):
         params.extend([iid, pid])
         conn.execute(f"UPDATE permit_inspections SET {', '.join(fields)} WHERE id = ? AND permit_id = ?", params)
         conn.commit()
+
+    # Notify requesting PM when Requested → Scheduled
+    new_status = data.get('status')
+    if old_insp and old_insp['status'] == 'Requested' and new_status == 'Scheduled' and old_insp['requested_by']:
+        permit = conn.execute(
+            'SELECT p.permit_type, j.name as job_name FROM permits p LEFT JOIN jobs j ON p.job_id = j.id WHERE p.id = ?',
+            (pid,)
+        ).fetchone()
+        insp_type = data.get('inspection_type', old_insp['inspection_type'])
+        job_name = permit['job_name'] if permit else 'Unknown Job'
+        sched_date = data.get('scheduled_date', '')
+        conn.execute(
+            'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+            (old_insp['requested_by'], 'inspection',
+             f'Inspection Scheduled: {insp_type}',
+             f'Your {insp_type} inspection for {job_name} has been scheduled{" for " + sched_date if sched_date else ""}.',
+             '/permits')
+        )
+        conn.commit()
+
     conn.close()
     return jsonify({'ok': True})
 
@@ -3882,10 +4277,17 @@ def api_payapps_generate_pdf(aid):
 
     logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
 
+    # Calculate total pages: page 1 = G702, then G703 pages
+    non_header_count = sum(1 for l in lines if not l['is_header'])
+    header_count = sum(1 for l in lines if l['is_header'])
+    total_lines = non_header_count + header_count + 1  # +1 for grand totals row
+    total_pages = 1 + max(1, -(-total_lines // 35))  # ceil division, ~35 lines per G703 page
+
     html = render_template('payapps/payapp_pdf.html',
         application=dict(app_row), contract=dict(contract), job_name=job_name,
         lines=lines, totals=t, g702=g702,
-        fmt=fmt_money, logo_path='file://' + logo_path
+        fmt=fmt_money, logo_path='file://' + logo_path,
+        total_pages=total_pages
     )
 
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
@@ -3940,6 +4342,137 @@ def api_payapps_download_pdf(aid, filename):
     if request.args.get('download'):
         return send_file(filepath, as_attachment=True, download_name=filename)
     return send_file(filepath, mimetype='application/pdf')
+
+
+@app.route('/payapps/analytics')
+@role_required('owner', 'admin', 'project_manager')
+def payapps_analytics_page():
+    return render_template('payapps/analytics.html')
+
+
+@app.route('/api/payapps/analytics')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_analytics():
+    """Return analytics data for all pay app contracts."""
+    conn = get_db()
+    contracts = conn.execute('''
+        SELECT c.*, j.name as job_name
+        FROM pay_app_contracts c
+        LEFT JOIN jobs j ON c.job_id = j.id
+        ORDER BY c.created_at DESC
+    ''').fetchall()
+
+    projects = []
+    agg = {'total_contract_value': 0, 'total_billed': 0, 'total_retainage': 0, 'total_balance': 0}
+    status_counts = {'Draft': 0, 'Submitted': 0, 'Approved': 0, 'Paid': 0}
+
+    for c in contracts:
+        cid = c['id']
+        original = c['original_contract_sum'] or 0
+
+        # Latest application
+        latest_app = conn.execute(
+            'SELECT * FROM pay_applications WHERE contract_id = ? ORDER BY application_number DESC LIMIT 1',
+            (cid,)
+        ).fetchone()
+
+        # Sum COs from all applications
+        co_row = conn.execute(
+            'SELECT SUM(co_additions) as adds, SUM(co_deductions) as deds FROM pay_applications WHERE contract_id = ?',
+            (cid,)
+        ).fetchone()
+        co_additions = (co_row['adds'] or 0) if co_row else 0
+        co_deductions = (co_row['deds'] or 0) if co_row else 0
+        net_co = co_additions - co_deductions
+        contract_sum_to_date = original + net_co
+
+        # Totals from all SOV items + all entries
+        sov_items = conn.execute(
+            'SELECT * FROM pay_app_sov_items WHERE contract_id = ? AND is_header = 0',
+            (cid,)
+        ).fetchall()
+
+        all_apps = conn.execute(
+            'SELECT id, application_number FROM pay_applications WHERE contract_id = ? ORDER BY application_number',
+            (cid,)
+        ).fetchall()
+        all_app_ids = [a['id'] for a in all_apps]
+
+        total_work = 0
+        total_stored = 0
+        total_retainage = 0
+
+        if all_app_ids:
+            ph = ','.join('?' * len(all_app_ids))
+            # Sum work_this_period across all apps per SOV item
+            work_sums = {}
+            for row in conn.execute(
+                f'SELECT sov_item_id, SUM(work_this_period) as tw FROM pay_app_line_entries WHERE pay_app_id IN ({ph}) GROUP BY sov_item_id',
+                all_app_ids
+            ).fetchall():
+                work_sums[row['sov_item_id']] = row['tw'] or 0
+
+            # Get latest app's materials_stored
+            latest_id = all_app_ids[-1] if all_app_ids else None
+            mat_sums = {}
+            if latest_id:
+                for row in conn.execute(
+                    'SELECT sov_item_id, materials_stored FROM pay_app_line_entries WHERE pay_app_id = ?',
+                    (latest_id,)
+                ).fetchall():
+                    mat_sums[row['sov_item_id']] = row['materials_stored'] or 0
+
+            for item in sov_items:
+                sid = item['id']
+                work = work_sums.get(sid, 0)
+                mats = mat_sums.get(sid, 0)
+                total_work += work
+                total_stored += mats
+                if not item['retainage_exempt'] and (item['scheduled_value'] or 0) > 0:
+                    total_retainage += (c['retainage_work_pct'] / 100) * work
+                    total_retainage += (c['retainage_stored_pct'] / 100) * mats
+
+        total_retainage = round(total_retainage, 2)
+        total_completed = total_work + total_stored
+        total_billed = total_completed - total_retainage
+        balance = contract_sum_to_date - total_billed
+        pct = (total_completed / contract_sum_to_date * 100) if contract_sum_to_date else 0
+
+        latest_status = latest_app['status'] if latest_app else None
+        if latest_status:
+            status_counts[latest_status] = status_counts.get(latest_status, 0) + 1
+
+        projects.append({
+            'contract_id': cid,
+            'job_name': c['job_name'] or '',
+            'project_name': c['project_name'] or '',
+            'gc_name': c['gc_name'] or '',
+            'original_contract_sum': original,
+            'co_additions': co_additions,
+            'co_deductions': co_deductions,
+            'net_co': net_co,
+            'contract_sum_to_date': contract_sum_to_date,
+            'total_completed': round(total_completed, 2),
+            'total_retainage': total_retainage,
+            'total_billed': round(total_billed, 2),
+            'balance_to_finish': round(balance, 2),
+            'pct_complete': round(pct, 1),
+            'latest_app_number': latest_app['application_number'] if latest_app else None,
+            'latest_status': latest_status,
+            'latest_period_to': latest_app['period_to'] if latest_app else None,
+        })
+
+        agg['total_contract_value'] += contract_sum_to_date
+        agg['total_billed'] += total_billed
+        agg['total_retainage'] += total_retainage
+        agg['total_balance'] += balance
+
+    conn.close()
+    # Round aggregates
+    for k in agg:
+        agg[k] = round(agg[k], 2)
+
+    return jsonify({'projects': projects, 'kpis': agg, 'status_counts': status_counts})
 
 
 def _calc_earned_less_retainage(conn, contract, up_to_app_number):
