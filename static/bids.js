@@ -153,10 +153,12 @@ function recalculate() {
         actualBid = bidOverride;
         actualProfit = bidOverride - totalCostToBuild;
         if ($('overrideInfo')) $('overrideInfo').style.display = '';
+        if ($('sumActualBidRow')) { $('sumActualBidRow').style.display = ''; $('sumActualBid').textContent = fmt(actualBid); }
     } else {
         actualBid = suggestedBid;
         actualProfit = companyProfit;
         if ($('overrideInfo')) $('overrideInfo').style.display = 'none';
+        if ($('sumActualBidRow')) $('sumActualBidRow').style.display = 'none';
     }
 
     // Profit breakdown (30/35/35) — uses actual profit (override or suggested)
