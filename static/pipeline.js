@@ -52,6 +52,11 @@ function renderMatrix() {
     el.innerHTML = html;
 }
 
+function pipelineNav(url, e) {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'INPUT') return;
+    window.location.href = url;
+}
+
 function showDetail(jobId) {
     selectedJobId = jobId;
     fetch('/api/jobs/' + jobId + '/pipeline')
@@ -64,15 +69,17 @@ function showDetail(jobId) {
             steps.forEach(function(s) {
                 var color = STATUS_COLORS[s.status] || '#D1D5DB';
                 var catColor = CATEGORY_COLORS[s.step_category] || '#6B7280';
-                html += '<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:8px;background:#F9FAFB;border-left:4px solid ' + catColor + ';">';
-                html += '<div style="width:28px;height:28px;border-radius:50%;background:' + color + ';display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:11px;">' + s.step_number + '</div>';
+                var clickable = s.module_link ? ' cursor:pointer;' : '';
+                var clickHandler = s.module_link ? ' onclick="pipelineNav(\'' + s.module_link + '\', event)"' : '';
+                html += '<div class="pipeline-step-row"' + clickHandler + ' style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:8px;background:#F9FAFB;border-left:4px solid ' + catColor + ';' + clickable + 'transition:background 0.15s;">';
+                html += '<div style="width:28px;height:28px;border-radius:50%;background:' + color + ';display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:11px;flex-shrink:0;">' + s.step_number + '</div>';
                 html += '<div style="flex:1;min-width:0;">';
                 html += '<div style="font-weight:600;font-size:13px;">' + s.step_name + '</div>';
                 html += '<div style="font-size:11px;color:#6B7280;">' + s.step_category + (s.completed_date ? ' — ' + s.completed_date : '') + '</div>';
                 html += '</div>';
-                // Module link
+                // Module link arrow
                 if (s.module_link) {
-                    html += '<a href="' + s.module_link + '" class="btn btn-secondary btn-small" style="font-size:11px;" onclick="event.stopPropagation();">Open</a>';
+                    html += '<i class="fas fa-chevron-right" style="color:#9CA3AF;font-size:12px;"></i>';
                 }
                 // Status toggle
                 html += '<select onchange="updateStep(' + jobId + ',' + s.step_number + ',this.value)" style="font-size:11px;padding:4px;border-radius:4px;border:1px solid #D1D5DB;" onclick="event.stopPropagation();">';
