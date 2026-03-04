@@ -201,20 +201,27 @@
                 <input type="text" id="bidProfitAmt" class="form-input calc-field" value="$0.00" readonly></div>
             <div class="bid-field" id="effectivePctField" style="display:none;"><label class="form-label">Effective %</label>
                 <span id="bidEffectivePct" style="font-weight:600;color:var(--blue-primary);line-height:38px;">0%</span></div>
-            <div class="bid-field"><label class="form-label">Actual Bid Override ($)</label>
-                <input type="number" id="bidOverride" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
-            <div class="bid-field"><label class="form-label">Bid Type</label>
-                <select id="bidType" class="form-select">
-                    <option value="">--</option>
-                    <option value="Budgetary">Budgetary</option>
-                    <option value="Final Bid">Final Bid</option>
-                    <option value="Not To Exceed">Not To Exceed</option>
-                    <option value="Design Build">Design Build</option>
-                    <option value="Unit Price">Unit Price</option>
-                </select></div>
         </div>
-        <div id="overrideInfo" style="display:none;margin-top:8px;padding:8px 12px;background:#FEF3C7;border-radius:6px;font-size:12px;color:#92400E;max-width:700px;">
-            Profit recalculated from override: <strong>Actual Bid</strong> &minus; <strong>Cost to Build</strong>
+        <!-- Bid Override -->
+        <div style="margin-top:16px;padding:16px;background:#EFF6FF;border:2px solid #3B82F6;border-radius:8px;max-width:700px;">
+            <h4 style="margin:0 0 12px 0;font-size:15px;color:#1E40AF;">Actual Bid Amount</h4>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="bid-field"><label class="form-label">Override Bid ($)</label>
+                    <input type="number" id="bidOverride" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()" style="font-size:16px;font-weight:600;"></div>
+                <div class="bid-field"><label class="form-label">Bid Type</label>
+                    <select id="bidType" class="form-select">
+                        <option value="">--</option>
+                        <option value="Budgetary">Budgetary</option>
+                        <option value="Final Bid">Final Bid</option>
+                        <option value="Not To Exceed">Not To Exceed</option>
+                        <option value="Design Build">Design Build</option>
+                        <option value="Unit Price">Unit Price</option>
+                    </select></div>
+            </div>
+            <div id="overrideInfo" style="display:none;margin-top:8px;font-size:12px;color:#1E40AF;">
+                Profit recalculated: <strong>Override Bid</strong> &minus; <strong>Cost to Build</strong> = <strong>Net Profit</strong>
+            </div>
+            <p style="margin:8px 0 0;font-size:12px;color:#6B7280;">Enter the actual bid amount if different from the suggested bid. Leave at 0 to use the suggested bid.</p>
         </div>
         <!-- Profit Breakdown (30/35/35) -->
         <div style="margin-top:12px;padding:12px 16px;background:var(--gray-50);border-radius:8px;max-width:400px;">
