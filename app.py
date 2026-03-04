@@ -3657,10 +3657,12 @@ def api_bid_detail(bid_id):
         '''SELECT bp.*, u.display_name as user_display_name FROM bid_personnel bp
            LEFT JOIN users u ON bp.user_id = u.id WHERE bp.bid_id = ? ORDER BY bp.id''', (bid_id,)
     ).fetchall()
+    proposal_lines = conn.execute('SELECT * FROM bid_proposal_lines WHERE bid_id = ? ORDER BY sort_order, id', (bid_id,)).fetchall()
     conn.close()
     result = dict(bid)
     result['partners'] = [dict(p) for p in partners]
     result['personnel'] = [dict(p) for p in personnel]
+    result['proposal_lines'] = [dict(l) for l in proposal_lines]
 
     # Check if a proposal PDF exists for this bid
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
@@ -3770,9 +3772,11 @@ def api_preview_proposal(bid_id):
     if not bid:
         return jsonify({'error': 'Bid not found'}), 404
     bid = dict(bid)
+    proposal_lines = conn.execute('SELECT * FROM bid_proposal_lines WHERE bid_id = ? ORDER BY sort_order, id', (bid_id,)).fetchall()
+    conn.close()
     today = datetime.now().strftime('%B %d, %Y')
     logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
-    html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path)
+    html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path, proposal_lines=[dict(l) for l in proposal_lines])
     return html
 
 @app.route('/api/bids/<int:bid_id>/generate-proposal', methods=['POST'])
@@ -3784,15 +3788,17 @@ def api_generate_proposal(bid_id):
         'SELECT b.*, j.name as job_name FROM bids b LEFT JOIN jobs j ON b.job_id = j.id WHERE b.id = ?',
         (bid_id,)
     ).fetchone()
-    conn.close()
     if not bid:
+        conn.close()
         return jsonify({'error': 'Bid not found'}), 404
 
     bid = dict(bid)
+    proposal_lines = conn.execute('SELECT * FROM bid_proposal_lines WHERE bid_id = ? ORDER BY sort_order, id', (bid_id,)).fetchall()
+    conn.close()
     today = datetime.now().strftime('%B %d, %Y')
     logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
 
-    html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path)
+    html = render_template('bids/proposal_pdf.html', bid=bid, today=today, logo_path='file://' + logo_path, proposal_lines=[dict(l) for l in proposal_lines])
 
     proposals_dir = os.path.join(os.path.dirname(__file__), 'data', 'proposals')
     os.makedirs(proposals_dir, exist_ok=True)
@@ -3848,6 +3854,26 @@ def api_download_proposal(bid_id, filename):
         return send_file(filepath, as_attachment=True, download_name=filename)
     return send_file(filepath, mimetype='application/pdf')
 
+
+@app.route('/api/bids/<int:bid_id>/proposal-lines', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_save_proposal_lines(bid_id):
+    """Save proposal line items (replaces all existing lines)."""
+    data = request.get_json(force=True)
+    lines = data.get('lines', [])
+    conn = get_db()
+    conn.execute('DELETE FROM bid_proposal_lines WHERE bid_id = ?', (bid_id,))
+    for i, line in enumerate(lines):
+        desc = (line.get('description') or '').strip()
+        amount = float(line.get('amount', 0))
+        if desc:
+            conn.execute(
+                'INSERT INTO bid_proposal_lines (bid_id, description, amount, sort_order) VALUES (?,?,?,?)',
+                (bid_id, desc, amount, i)
+            )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 @app.route('/api/bids/<int:bid_id>/email-proposal', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')

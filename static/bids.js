@@ -349,6 +349,10 @@ async function loadBid() {
     $('bidDescription').value = bid.bid_description || '';
     $('bidNotes').value = bid.notes || '';
 
+    // Proposal line items
+    proposalLines = bid.proposal_lines || [];
+    renderProposalLines();
+
     // Show proposal buttons if a PDF already exists
     if (bid.proposal_pdf) {
         $('btnPreview').href = bid.proposal_pdf;
@@ -566,6 +570,13 @@ async function saveBid() {
             }
         }
     }
+
+    // Save proposal line items
+    const lines = collectProposalLines();
+    await fetch(`/api/bids/${bidId}/proposal-lines`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ lines })
+    });
 
     // Reload to get fresh IDs
     window.BID_ID = bidId;
@@ -793,6 +804,55 @@ async function awardBid() {
     } else {
         alert(data.error || 'Failed to award bid');
     }
+}
+
+// ─── Proposal Line Items ──────────────────────────────────
+let proposalLines = [];
+
+function renderProposalLines() {
+    const container = $('proposalLinesContainer');
+    if (!container) return;
+    if (!proposalLines.length) {
+        container.innerHTML = '<p style="color:var(--gray-400);font-size:13px;margin:4px 0;">No line items. The proposal will show the total bid amount only.</p>';
+        return;
+    }
+    container.innerHTML = proposalLines.map((line, i) => `
+        <div class="proposal-line-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+            <input type="text" class="form-input pl-desc" value="${(line.description || '').replace(/"/g, '&quot;')}"
+                placeholder="e.g. Commercial Space" style="flex:2;">
+            <input type="number" class="form-input pl-amount" value="${line.amount || 0}" step="0.01" min="0"
+                placeholder="Amount" style="flex:1;">
+            <button type="button" class="btn btn-small btn-secondary" onclick="removeProposalLine(${i})" style="color:#EF4444;">X</button>
+        </div>
+    `).join('');
+}
+
+function addProposalLine() {
+    proposalLines.push({ description: '', amount: 0 });
+    renderProposalLines();
+    // Focus the new description input
+    const inputs = document.querySelectorAll('.pl-desc');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+function removeProposalLine(index) {
+    // Save current values before removing
+    syncProposalLinesFromDOM();
+    proposalLines.splice(index, 1);
+    renderProposalLines();
+}
+
+function syncProposalLinesFromDOM() {
+    const rows = document.querySelectorAll('.proposal-line-row');
+    proposalLines = Array.from(rows).map(row => ({
+        description: row.querySelector('.pl-desc').value.trim(),
+        amount: parseFloat(row.querySelector('.pl-amount').value) || 0,
+    }));
+}
+
+function collectProposalLines() {
+    syncProposalLinesFromDOM();
+    return proposalLines.filter(l => l.description);
 }
 
 // Load followups after bid loads

@@ -88,7 +88,16 @@ table.summary tr.total td { border-top: 2px solid #1a5276; font-weight: 700; fon
 
 <!-- PRICING -->
 <div class="pricing-box">
+    {% if proposal_lines %}
+    <table class="summary" style="margin:0;">
+        {% for line in proposal_lines %}
+        <tr><td>{{ line.description }}</td><td>${{ '{:,.2f}'.format(line.amount) }}</td></tr>
+        {% endfor %}
+        <tr class="total"><td>Total</td><td>${{ '{:,.2f}'.format(bid.total_bid) }}</td></tr>
+    </table>
+    {% else %}
     <div class="total-line">Base Quote: ${{ '{:,.2f}'.format(bid.total_bid) }}</div>
+    {% endif %}
     <div class="detail-line">
         {{ bid.total_systems|int if bid.total_systems == bid.total_systems|int else bid.total_systems }} systems
         {% if bid.num_apartments %} ({{ bid.num_apartments }} apartments{% if bid.has_clubhouse %} + clubhouse{% endif %}){% endif %}

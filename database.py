@@ -339,6 +339,15 @@ def init_db():
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
 
+        CREATE TABLE IF NOT EXISTS bid_proposal_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bid_id INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            amount REAL DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS bid_partners (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bid_id INTEGER NOT NULL,
