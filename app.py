@@ -31,7 +31,7 @@ def login_required(f):
         if 'user_id' not in session:
             return redirect(url_for('login'))
         if session.get('must_change_password') and request.path != '/change-password':
-            return redirect('/change-password', code=303)
+            return render_template('change_password.html')
         return f(*args, **kwargs)
     return decorated
 
@@ -42,7 +42,7 @@ def role_required(*roles):
             if 'user_id' not in session:
                 return redirect(url_for('login'))
             if session.get('must_change_password') and request.path != '/change-password':
-                return redirect('/change-password')
+                return render_template('change_password.html')
             if session.get('role') not in roles:
                 return 'Access denied', 403
             return f(*args, **kwargs)
@@ -177,7 +177,7 @@ def login():
             session['must_change_password'] = bool(user['must_change_password'])
             log_activity(user['id'], 'login', 'session', None, f"{user['display_name'] or user['username']} logged in")
             if user['must_change_password']:
-                return redirect('/change-password', code=303)
+                return render_template('change_password.html')
             return redirect(url_for('index'))
         return render_template('login.html', error='Invalid username or password')
     return render_template('login.html')
