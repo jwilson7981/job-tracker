@@ -3085,18 +3085,20 @@ tr[data-submittal-resubmit] .badge {
 
 /* ─── Print Styles ──────────────────────────────────────────── */
 @media print {
-    body * { visibility: hidden !important; }
-    .bid-summary-card, .bid-summary-card * { visibility: visible !important; }
+    body, html { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    body * { display: none !important; }
+    .bid-summary-card, .bid-summary-card * { display: block !important; }
+    .bid-summary-card .cost-summary-grid { display: grid !important; }
+    .bid-summary-card .cost-row { display: flex !important; }
     .bid-summary-card {
-        position: absolute; left: 0; top: 0;
-        max-width: 100%; width: 100%;
-        border: 2px solid #000; page-break-inside: avoid;
-        padding: 24px 32px;
+        position: fixed; left: 0; top: 0;
+        width: 100%; max-width: 100%;
+        border: none; margin: 0; padding: 20px 32px;
+        box-shadow: none;
+        font-size: 13px;
     }
-    .sidebar, .chat-widget, .calc-widget, .page-header,
-    .notif-bell-wrapper, .notif-panel, #chatWidget { display: none !important; }
-    .app-main { margin-left: 0 !important; padding: 0 !important; }
-    body { background: #fff; }
-    .cost-summary-grid { font-size: 14px; }
+    .bid-summary-card h3 { font-size: 18px; margin-bottom: 12px; }
+    .cost-summary-grid { font-size: 13px; gap: 2px !important; }
+    .cost-row { padding: 3px 0 !important; }
     .cost-row-total { font-weight: 700; }
 }
