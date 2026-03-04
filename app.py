@@ -152,6 +152,13 @@ def _auto_log_activity(response):
         pass
     return response
 
+# ─── PWA / Icon Routes ────────────────────────────────────────────
+
+@app.route('/apple-touch-icon.png')
+@app.route('/apple-touch-icon-precomposed.png')
+def apple_touch_icon():
+    return send_file(os.path.join(app.static_folder, 'icons', 'apple-touch-icon.png'), mimetype='image/png')
+
 # ─── Auth Routes ─────────────────────────────────────────────────
 
 @app.route('/login', methods=['GET', 'POST'])

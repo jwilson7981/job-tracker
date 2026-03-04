@@ -62,15 +62,13 @@ body {
 .sidebar-logo {
     width: 38px;
     height: 38px;
-    background: var(--sidebar-active);
-    color: white;
+    background: white;
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 800;
-    font-size: 14px;
     flex-shrink: 0;
+    overflow: hidden;
 }
 
 .sidebar-title {
@@ -295,17 +293,15 @@ body {
 }
 
 .login-logo {
-    width: 56px;
-    height: 56px;
-    background: var(--blue-primary);
-    color: white;
-    border-radius: 12px;
+    width: 80px;
+    height: 80px;
+    background: white;
+    border-radius: 14px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 800;
-    font-size: 20px;
     margin-bottom: 16px;
+    overflow: hidden;
 }
 
 .login-title {
