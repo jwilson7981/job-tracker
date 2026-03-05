@@ -27,10 +27,26 @@ async function loadQuote() {
     document.getElementById('qDate').value = quoteData.quote_date || '';
     document.getElementById('qExpDate').value = quoteData.expiration_date || '';
     document.getElementById('qSubtotal').value = fmt(quoteData.subtotal);
-    document.getElementById('qTax').value = quoteData.tax_amount || 0;
     document.getElementById('qFreight').value = quoteData.freight || 0;
-    document.getElementById('qTotal').value = fmt(quoteData.total);
     document.getElementById('qNotes').value = quoteData.notes || '';
+
+    // Tax rate: back-calculate from existing tax_amount/subtotal, or fetch from job
+    const existingTax = quoteData.tax_amount || 0;
+    const existingSub = quoteData.subtotal || 0;
+    if (existingTax > 0 && existingSub > 0) {
+        document.getElementById('qTaxRate').value = Math.round(existingTax / existingSub * 100 * 100) / 100;
+    } else if (quoteData.job_id) {
+        // Auto-fill tax rate from job
+        fetch('/api/projects/' + quoteData.job_id)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data && data.job && data.job.tax_rate) {
+                    document.getElementById('qTaxRate').value = data.job.tax_rate;
+                    recalcTotal();
+                }
+            }).catch(() => {});
+    }
+    recalcTotal();
 
     // File link + parse button
     if (quoteData.file_path) {
@@ -66,8 +82,10 @@ function parseMoney(s) {
 
 function recalcTotal() {
     const subtotal = parseMoney(document.getElementById('qSubtotal').value);
-    const tax = parseFloat(document.getElementById('qTax').value) || 0;
+    const taxRate = parseFloat(document.getElementById('qTaxRate').value) || 0;
+    const tax = Math.round(subtotal * taxRate / 100 * 100) / 100;
     const freight = parseFloat(document.getElementById('qFreight').value) || 0;
+    document.getElementById('qTax').value = fmt(tax);
     document.getElementById('qTotal').value = fmt(subtotal + tax + freight);
 }
 
@@ -158,7 +176,7 @@ async function saveQuote() {
         expiration_date: document.getElementById('qExpDate').value,
         status: document.getElementById('qStatus').value,
         subtotal: parseMoney(document.getElementById('qSubtotal').value),
-        tax_amount: parseFloat(document.getElementById('qTax').value) || 0,
+        tax_amount: parseMoney(document.getElementById('qTax').value),
         freight: parseFloat(document.getElementById('qFreight').value) || 0,
         total: parseMoney(document.getElementById('qTotal').value),
         notes: document.getElementById('qNotes').value.trim(),

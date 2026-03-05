@@ -11,7 +11,6 @@ let contractsByJobId = {};
 
 document.addEventListener('DOMContentLoaded', function() {
     loadJobsList();
-    loadChangeOrders();
     loadContractsLookup();
 });
 
@@ -31,6 +30,12 @@ async function loadJobsList() {
         o2.textContent = j.name;
         modalSel.appendChild(o2);
     });
+
+    // Auto-select job from URL parameter
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) { document.getElementById('filterJob').value = _urlJobId; }
+
+    loadChangeOrders();
 }
 
 // ─── Load Contracts Lookup (for GC name auto-fill) ──────────
@@ -103,37 +108,87 @@ function renderTable() {
         return;
     }
 
-    tbody.innerHTML = allCOs.map(co => {
-        const statusClass = getStatusClass(co.status);
-        const isRejected = co.status === 'Rejected';
-        const rowStyle = isRejected ? 'background:#FEF2F2;' : '';
-        const coNum = 'CO-' + co.job_id + '-' + co.co_number;
+    // Group by job
+    const groups = {};
+    const jobOrder = [];
+    allCOs.forEach(co => {
+        const key = co.job_id || 0;
+        if (!groups[key]) {
+            groups[key] = { name: co.job_name || 'No Job', items: [] };
+            jobOrder.push(key);
+        }
+        groups[key].items.push(co);
+    });
 
-        let actions = '';
-        if (co.status === 'Draft' || co.status === 'Submitted') {
-            actions += `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();editCO(${co.id})">Edit</button> `;
-        }
-        if (co.status === 'Draft' || co.status === 'Submitted' || co.status === 'Approved') {
-            actions += `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();generateProposal(${co.id})">Proposal</button> `;
-        }
-        if (co.status === 'Submitted') {
-            actions += `<button class="btn btn-small btn-primary" onclick="event.stopPropagation();approveCO(${co.id})">Approve</button> `;
-        }
-        if (co.status === 'Draft') {
-            actions += `<button class="btn btn-small btn-danger" onclick="event.stopPropagation();deleteChangeOrder(${co.id})">Delete</button>`;
-        }
+    let html = '';
 
-        return `<tr style="${rowStyle}">
-            <td style="font-weight:600;">${coNum}</td>
-            <td>${co.job_name || '-'}</td>
-            <td>${co.title || '-'}${isRejected ? ' <span style="color:#EF4444;font-weight:700;" title="Rejected">&#9888;</span>' : ''}</td>
-            <td style="text-align:right;font-weight:600;">${fmt(co.amount)}</td>
-            <td><span class="status-badge ${statusClass}">${co.status}</span></td>
-            <td style="font-size:13px;color:var(--gray-500);">${co.submitted_date || '-'}</td>
-            <td style="font-size:13px;color:var(--gray-500);">${co.approved_date || '-'}</td>
-            <td style="white-space:nowrap;">${actions}</td>
+    jobOrder.forEach(key => {
+        const group = groups[key];
+        const count = group.items.length;
+        const draft = group.items.filter(c => c.status === 'Draft').length;
+        const submitted = group.items.filter(c => c.status === 'Submitted').length;
+        const approved = group.items.filter(c => c.status === 'Approved');
+        const approvedAmt = approved.reduce((s, c) => s + (c.amount || 0), 0);
+        const rejected = group.items.filter(c => c.status === 'Rejected').length;
+
+        let statusSummary = '';
+        if (draft) statusSummary += `<span style="color:#6B7280;font-size:12px;margin-left:8px;">${draft} draft</span>`;
+        if (submitted) statusSummary += `<span style="color:#1E40AF;font-size:12px;margin-left:8px;">${submitted} submitted</span>`;
+        if (approved.length) statusSummary += `<span style="color:#166534;font-size:12px;margin-left:8px;">${approved.length} approved (${fmt(approvedAmt)})</span>`;
+        if (rejected) statusSummary += `<span style="color:#991B1B;font-size:12px;margin-left:8px;">${rejected} rejected</span>`;
+
+        html += `<tr class="co-group-header" onclick="toggleCoGroup('co-grp-${key}')" style="cursor:pointer;background:var(--gray-50,#f9fafb);border-top:2px solid var(--gray-200,#e5e7eb);">
+            <td colspan="8" style="padding:10px 12px;font-weight:700;font-size:14px;">
+                <span class="co-toggle" id="toggle-co-grp-${key}" style="display:inline-block;width:18px;transition:transform .2s;">&#9654;</span>
+                ${group.name}
+                <span style="font-weight:400;color:var(--gray-500);font-size:13px;margin-left:6px;">(${count})</span>
+                ${statusSummary}
+            </td>
         </tr>`;
-    }).join('');
+
+        group.items.forEach(co => {
+            const statusClass = getStatusClass(co.status);
+            const isRejected = co.status === 'Rejected';
+            let rowStyle = 'display:none;';
+            if (isRejected) rowStyle += 'background:#FEF2F2;';
+            const coNum = 'CO-' + co.job_id + '-' + co.co_number;
+
+            let actions = '';
+            if (co.status === 'Draft' || co.status === 'Submitted') {
+                actions += `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();editCO(${co.id})">Edit</button> `;
+            }
+            if (co.status === 'Draft' || co.status === 'Submitted' || co.status === 'Approved') {
+                actions += `<button class="btn btn-small btn-secondary" onclick="event.stopPropagation();generateProposal(${co.id})">Proposal</button> `;
+            }
+            if (co.status === 'Submitted') {
+                actions += `<button class="btn btn-small btn-primary" onclick="event.stopPropagation();approveCO(${co.id})">Approve</button> `;
+            }
+            if (co.status === 'Draft') {
+                actions += `<button class="btn btn-small btn-danger" onclick="event.stopPropagation();deleteChangeOrder(${co.id})">Delete</button>`;
+            }
+
+            html += `<tr class="co-row co-grp-${key}" style="${rowStyle}">
+                <td style="font-weight:600;">${coNum}</td>
+                <td>${co.job_name || '-'}</td>
+                <td>${co.title || '-'}${isRejected ? ' <span style="color:#EF4444;font-weight:700;" title="Rejected">&#9888;</span>' : ''}</td>
+                <td style="text-align:right;font-weight:600;">${fmt(co.amount)}</td>
+                <td><span class="status-badge ${statusClass}">${co.status}</span></td>
+                <td style="font-size:13px;color:var(--gray-500);">${co.submitted_date || '-'}</td>
+                <td style="font-size:13px;color:var(--gray-500);">${co.approved_date || '-'}</td>
+                <td style="white-space:nowrap;">${actions}</td>
+            </tr>`;
+        });
+    });
+
+    tbody.innerHTML = html;
+}
+
+function toggleCoGroup(groupClass) {
+    const rows = document.querySelectorAll('.co-row.' + groupClass);
+    const toggle = document.getElementById('toggle-' + groupClass);
+    const isOpen = rows.length && rows[0].style.display !== 'none';
+    rows.forEach(r => r.style.display = isOpen ? 'none' : '');
+    if (toggle) toggle.style.transform = isOpen ? '' : 'rotate(90deg)';
 }
 
 function getStatusClass(status) {

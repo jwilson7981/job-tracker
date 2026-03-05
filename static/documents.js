@@ -21,7 +21,7 @@ async function loadJobs() {
     const grid = document.getElementById('jobCardsGrid');
 
     if (!docJobs.length) {
-        grid.innerHTML = '<p class="empty-state">No jobs found.</p>';
+        grid.innerHTML = '<p class="empty-state">No projects found.</p>';
         return;
     }
 

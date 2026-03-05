@@ -10,7 +10,6 @@ function fmt(n) {
 // ─── Init ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
     loadJobs();
-    loadContracts();
 });
 
 // ─── Load Jobs Dropdown ──────────────────────────────────────
@@ -31,6 +30,12 @@ async function loadJobs() {
         o2.textContent = j.name;
         modalSel.appendChild(o2);
     });
+
+    // Auto-select job from URL parameter
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) { document.getElementById('filterJob').value = _urlJobId; }
+
+    loadContracts();
 }
 
 // ─── Load Contracts ──────────────────────────────────────────

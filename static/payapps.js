@@ -1,6 +1,33 @@
 /* Pay Applications (AIA G702/G703) JS */
 function fmt(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
+// Format date as mm/dd/yyyy
+function fmtDate(d) {
+    if (!d) return '-';
+    var parts = d.split('-');
+    if (parts.length !== 3) return d;
+    return parts[1] + '/' + parts[2] + '/' + parts[0];
+}
+
+// Normalize 2-digit years (e.g. 0026-02-01 → 2026-02-01)
+function normalizeDate(val) {
+    if (!val) return val;
+    var parts = val.split('-');
+    if (parts.length === 3) {
+        var year = parseInt(parts[0]);
+        if (year < 100) {
+            parts[0] = String(year + 2000);
+        }
+        return parts.join('-');
+    }
+    return val;
+}
+
+function showToast(msg) {
+    window._toastShown = true;
+    window.showToast(msg);
+}
+
 // ─── Page Router ─────────────────────────────────────────────
 if (window.PA_PAGE === 'list') initList();
 else if (window.PA_PAGE === 'contract') initContract();
@@ -13,6 +40,10 @@ async function initList() {
     const res = await fetch('/api/jobs/list');
     paJobs = await res.json();
     const sel = document.getElementById('ncJob');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '-- Select a Job --';
+    sel.appendChild(placeholder);
     paJobs.forEach(j => { const o = document.createElement('option'); o.value = j.id; o.textContent = j.name; sel.appendChild(o); });
     sel.addEventListener('change', async () => {
         const jobId = sel.value;
@@ -20,11 +51,16 @@ async function initList() {
         try {
             const r = await fetch('/api/jobs/' + jobId + '/customer-info');
             const c = await r.json();
-            if (c.company_name) document.getElementById('ncGcName').value = c.company_name;
-            if (c.address) document.getElementById('ncGcAddr').value = c.address;
-            if (c.primary_contact) document.getElementById('ncGcContact').value = c.primary_contact;
-            if (c.contact_email) document.getElementById('ncGcEmail').value = c.contact_email;
-            if (c.contact_phone) document.getElementById('ncGcPhone').value = c.contact_phone;
+            // GC name: prefer contracting_gc from bid, fall back to customer company_name
+            document.getElementById('ncGcName').value = c.contracting_gc || c.company_name || '';
+            document.getElementById('ncGcAddr').value = c.address || '';
+            document.getElementById('ncGcContact').value = c.gc_attention || c.primary_contact || '';
+            document.getElementById('ncGcEmail').value = c.contact_email || '';
+            document.getElementById('ncGcPhone').value = c.contact_phone || '';
+            // Contract sum from bid total or contract value
+            if (c.total_bid) document.getElementById('ncContractSum').value = c.total_bid;
+            // Contract date from contract or job awarded date
+            if (c.contract_date) document.getElementById('ncContractDate').value = c.contract_date;
         } catch(e) {}
     });
     loadContracts();
@@ -49,11 +85,25 @@ async function loadContracts() {
     </tr>`).join('');
 }
 
-function showNewContract() { document.getElementById('contractModal').style.display = 'flex'; }
+function showNewContract() {
+    document.getElementById('ncJob').value = '';
+    document.getElementById('ncGcName').value = '';
+    document.getElementById('ncGcAddr').value = '';
+    document.getElementById('ncGcContact').value = '';
+    document.getElementById('ncGcEmail').value = '';
+    document.getElementById('ncGcPhone').value = '';
+    document.getElementById('ncProjNo').value = '';
+    document.getElementById('ncContractFor').value = '';
+    document.getElementById('ncContractDate').value = '';
+    document.getElementById('ncContractSum').value = '';
+    document.getElementById('ncRetWork').value = '10';
+    document.getElementById('ncRetStored').value = '0';
+    document.getElementById('contractModal').style.display = 'flex';
+}
 
 async function saveContract(e) {
     e.preventDefault();
-    await fetch('/api/payapps/contracts', {
+    const res = await fetch('/api/payapps/contracts', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
             job_id: document.getElementById('ncJob').value,
@@ -64,12 +114,19 @@ async function saveContract(e) {
             gc_phone: document.getElementById('ncGcPhone').value,
             project_no: document.getElementById('ncProjNo').value,
             contract_for: document.getElementById('ncContractFor').value,
-            contract_date: document.getElementById('ncContractDate').value,
+            contract_date: normalizeDate(document.getElementById('ncContractDate').value),
             original_contract_sum: parseFloat(document.getElementById('ncContractSum').value) || 0,
             retainage_work_pct: parseFloat(document.getElementById('ncRetWork').value) || 10,
             retainage_stored_pct: parseFloat(document.getElementById('ncRetStored').value) || 0,
         })
     });
+    const data = await res.json();
+    if (data.ok) {
+        showToast('Contract created');
+        document.getElementById('contractModal').style.display = 'none';
+        window.location.href = '/payapps/contract/' + data.id;
+        return;
+    }
     document.getElementById('contractModal').style.display = 'none';
     loadContracts();
 }
@@ -93,7 +150,7 @@ async function initContract() {
 async function loadContractDetail() {
     const res = await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID + '/detail');
     contractData = await res.json();
-    document.getElementById('contractTitle').textContent = (contractData.job_name || 'Job') + ' — Pay App Contract';
+    document.getElementById('contractTitle').textContent = (contractData.job_name || 'Project') + ' — Pay App Contract';
     const d = contractData;
     document.getElementById('contractDetails').innerHTML = `
         <div class="detail-grid" style="grid-template-columns:1fr 1fr 1fr;">
@@ -101,11 +158,57 @@ async function loadContractDetail() {
             <div class="detail-row"><span class="detail-label">GC Address:</span><span>${d.gc_address || '-'}</span></div>
             <div class="detail-row"><span class="detail-label">Project #:</span><span>${d.project_no || '-'}</span></div>
             <div class="detail-row"><span class="detail-label">Contract For:</span><span>${d.contract_for || '-'}</span></div>
-            <div class="detail-row"><span class="detail-label">Contract Date:</span><span>${d.contract_date || '-'}</span></div>
+            <div class="detail-row"><span class="detail-label">Contract Date:</span><span>${fmtDate(d.contract_date)}</span></div>
             <div class="detail-row"><span class="detail-label">Original Sum:</span><span>${fmt(d.original_contract_sum)}</span></div>
             <div class="detail-row"><span class="detail-label">Retainage (Work):</span><span>${d.retainage_work_pct}%</span></div>
             <div class="detail-row"><span class="detail-label">Retainage (Stored):</span><span>${d.retainage_stored_pct}%</span></div>
         </div>`;
+}
+
+// ─── Edit Contract Details ───────────────────────────────────
+function editContractDetails() {
+    if (!contractData) return;
+    var d = contractData;
+    document.getElementById('ecGcName').value = d.gc_name || '';
+    document.getElementById('ecGcAddr').value = d.gc_address || '';
+    document.getElementById('ecProjNo').value = d.project_no || '';
+    document.getElementById('ecContractFor').value = d.contract_for || '';
+    document.getElementById('ecContractDate').value = d.contract_date || '';
+    document.getElementById('ecContractSum').value = d.original_contract_sum || 0;
+    document.getElementById('ecRetWork').value = d.retainage_work_pct != null ? d.retainage_work_pct : 10;
+    document.getElementById('ecRetStored').value = d.retainage_stored_pct != null ? d.retainage_stored_pct : 0;
+    document.getElementById('ecGcContact').value = d.gc_contact || '';
+    document.getElementById('ecGcEmail').value = d.gc_email || '';
+    document.getElementById('ecGcPhone').value = d.gc_phone || '';
+    document.getElementById('editContractModal').style.display = 'flex';
+}
+
+async function saveContractEdit(e) {
+    e.preventDefault();
+    var res = await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+            gc_name: document.getElementById('ecGcName').value,
+            gc_address: document.getElementById('ecGcAddr').value,
+            project_no: document.getElementById('ecProjNo').value,
+            contract_for: document.getElementById('ecContractFor').value,
+            contract_date: normalizeDate(document.getElementById('ecContractDate').value),
+            original_contract_sum: parseFloat(document.getElementById('ecContractSum').value) || 0,
+            retainage_work_pct: parseFloat(document.getElementById('ecRetWork').value) || 10,
+            retainage_stored_pct: parseFloat(document.getElementById('ecRetStored').value) || 0,
+            gc_contact: document.getElementById('ecGcContact').value,
+            gc_email: document.getElementById('ecGcEmail').value,
+            gc_phone: document.getElementById('ecGcPhone').value,
+        })
+    });
+    var data = await res.json();
+    if (data.ok) {
+        showToast('Contract updated successfully');
+        document.getElementById('editContractModal').style.display = 'none';
+        loadContractDetail();
+    } else {
+        alert(data.error || 'Failed to update contract');
+    }
 }
 
 async function loadSov() {
@@ -210,11 +313,12 @@ async function loadApplications() {
     if (!apps.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No applications yet.</td></tr>'; return; }
     tbody.innerHTML = apps.map(a => `<tr>
         <td><a href="/payapps/application/${a.id}" class="link">#${a.application_number}</a></td>
-        <td>${a.period_to || '-'}</td>
+        <td>${fmtDate(a.period_to)}</td>
         <td>${fmt(a.current_payment_due)}</td>
         <td><span class="phase-status phase-${a.status.toLowerCase()}">${a.status}</span></td>
         <td>
             <a href="/payapps/application/${a.id}" class="btn btn-small btn-secondary">Open</a>
+            ${a.signed_file ? '<a href="/api/payapps/applications/' + a.id + '/signed/' + a.signed_file + '" target="_blank" class="btn btn-small btn-secondary">View PDF</a>' : ''}
             <button class="btn btn-small btn-danger" onclick="deleteApplication(${a.id})">Delete</button>
         </td>
     </tr>`).join('');
@@ -234,6 +338,30 @@ async function deleteApplication(id) {
     loadApplications();
 }
 
+function showUploadExistingPA() {
+    document.getElementById('uploadPaPeriod').value = '';
+    document.getElementById('uploadPaStatus').value = 'Submitted';
+    document.getElementById('uploadPaFile').value = '';
+    document.getElementById('uploadPaModal').style.display = 'flex';
+}
+
+async function uploadExistingPA(e) {
+    e.preventDefault();
+    var fd = new FormData();
+    fd.append('file', document.getElementById('uploadPaFile').files[0]);
+    fd.append('period_to', normalizeDate(document.getElementById('uploadPaPeriod').value));
+    fd.append('status', document.getElementById('uploadPaStatus').value);
+    var res = await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID + '/upload-existing', { method: 'POST', body: fd });
+    var data = await res.json();
+    if (data.ok) {
+        showToast('Pay App #' + data.application_number + ' uploaded');
+        document.getElementById('uploadPaModal').style.display = 'none';
+        loadApplications();
+    } else {
+        alert(data.error || 'Upload failed');
+    }
+}
+
 // ─── APPLICATION PAGE (G702/G703) ────────────────────────────
 let appData = null;
 
@@ -243,14 +371,16 @@ async function initApplication() {
     document.getElementById('backLink').href = '/payapps/contract/' + appData.contract.id;
     document.getElementById('appTitle').textContent = 'Pay Application #' + appData.application.application_number;
     document.getElementById('appStatus').value = appData.application.status;
-    document.getElementById('periodTo').value = appData.application.period_to || '';
+    // Normalize and set date
+    var periodTo = normalizeDate(appData.application.period_to || '');
+    document.getElementById('periodTo').value = periodTo;
     // Auto-calculated CO values from backend
     document.getElementById('coAddDisplay').textContent = fmt(appData.g702.co_this_additions || 0);
     document.getElementById('coDelDisplay').textContent = fmt(appData.g702.co_this_deductions || 0);
 
     // G702 header info
     document.getElementById('g702AppNo').textContent = appData.application.application_number;
-    document.getElementById('g702PeriodTo').textContent = appData.application.period_to || '-';
+    document.getElementById('g702PeriodTo').textContent = fmtDate(periodTo);
     document.getElementById('g702RetPct').textContent = appData.contract.retainage_work_pct;
     document.getElementById('g702RetStoredPct').textContent = appData.contract.retainage_stored_pct;
     document.getElementById('g702Info').innerHTML = `
@@ -425,32 +555,41 @@ async function saveAllEntries() {
         work_this_period: l.this_period || 0,
         materials_stored: l.materials_stored || 0,
     }));
-    await fetch('/api/payapps/applications/' + PA_APP_ID, {
+    const res = await fetch('/api/payapps/applications/' + PA_APP_ID, {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ entries })
     });
-    // Visual feedback
-    const btn = event.target;
-    const orig = btn.textContent;
-    btn.textContent = 'Saved!';
-    setTimeout(() => btn.textContent = orig, 1500);
+    const data = await res.json();
+    if (data.ok) {
+        showToast('Pay application saved successfully');
+    } else {
+        alert(data.error || 'Failed to save');
+    }
 }
 
 async function saveAppMeta() {
+    var periodTo = normalizeDate(document.getElementById('periodTo').value);
+    // Update the input value with normalized date
+    document.getElementById('periodTo').value = periodTo;
     await fetch('/api/payapps/applications/' + PA_APP_ID, {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
-            period_to: document.getElementById('periodTo').value,
+            period_to: periodTo,
         })
     });
-    document.getElementById('g702PeriodTo').textContent = document.getElementById('periodTo').value || '-';
+    document.getElementById('g702PeriodTo').textContent = fmtDate(periodTo);
+    showToast('Period date saved');
 }
 
 async function updateAppStatus(status) {
-    await fetch('/api/payapps/applications/' + PA_APP_ID, {
+    const res = await fetch('/api/payapps/applications/' + PA_APP_ID, {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ status })
     });
+    const data = await res.json();
+    if (data.ok) {
+        showToast('Status updated to ' + status);
+    }
 }
 
 function cancelApplication() {
@@ -473,11 +612,13 @@ async function generatePayAppPDF() {
             work_this_period: l.this_period || 0,
             materials_stored: l.materials_stored || 0,
         }));
+        var periodTo = normalizeDate(document.getElementById('periodTo').value);
+        document.getElementById('periodTo').value = periodTo;
         await fetch('/api/payapps/applications/' + PA_APP_ID, {
             method: 'PUT', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
                 entries,
-                period_to: document.getElementById('periodTo').value,
+                period_to: periodTo,
             })
         });
         // Generate PDF
@@ -485,21 +626,19 @@ async function generatePayAppPDF() {
         const data = await res.json();
         if (data.ok && data.path) {
             window.open(data.path, '_blank');
-            btn.textContent = 'PDF Ready!';
+            showToast('PDF generated successfully');
             // Update appData and show View button
             if (data.filename) appData.application.pdf_file = data.filename;
             const viewBtn = document.getElementById('viewPdfBtn');
             if (viewBtn) viewBtn.style.display = '';
         } else {
             alert(data.error || 'Failed to generate PDF');
-            btn.textContent = orig;
         }
     } catch (e) {
-        alert('Error generating PDF');
-        btn.textContent = orig;
+        alert('Error generating PDF: ' + e.message);
     }
+    btn.textContent = orig;
     btn.disabled = false;
-    setTimeout(() => { btn.textContent = orig; }, 3000);
 }
 
 async function loadSignaturePreview() {
@@ -523,7 +662,7 @@ async function uploadSignature(input) {
     const res = await fetch('/api/settings/signature', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.ok) {
-        alert('Signature saved! It will appear on the next generated PDF.');
+        showToast('Signature saved! It will appear on the next generated PDF.');
         loadSignaturePreview();
     } else {
         alert(data.error || 'Upload failed');
@@ -570,7 +709,7 @@ async function sendPayAppEmail(e) {
         if (data.error) {
             alert('Error: ' + data.error);
         } else {
-            alert('Pay App sent to: ' + data.sent_to.join(', '));
+            showToast('Pay App sent to: ' + data.sent_to.join(', '));
             document.getElementById('payappEmailModal').style.display = 'none';
         }
     } catch (err) {
@@ -588,7 +727,7 @@ async function uploadSignedCopy(input) {
     const res = await fetch('/api/payapps/applications/' + PA_APP_ID + '/signed', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.ok) {
-        alert('Signed copy uploaded.');
+        showToast('Signed copy uploaded');
         appData.application.signed_file = data.filename;
         const signedBtn = document.getElementById('viewSignedBtn');
         if (signedBtn) signedBtn.style.display = '';

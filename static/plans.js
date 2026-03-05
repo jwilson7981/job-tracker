@@ -12,7 +12,6 @@ function fmt(n) {
 // ─── Init ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
     loadJobs();
-    loadPlans();
 });
 
 // ─── Load Jobs Dropdown ──────────────────────────────────────
@@ -33,6 +32,12 @@ async function loadJobs() {
         o2.textContent = j.name;
         modalSel.appendChild(o2);
     });
+
+    // Auto-select job from URL parameter
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) { document.getElementById('filterJob').value = _urlJobId; }
+
+    loadPlans();
 }
 
 // ─── Load Plans ──────────────────────────────────────────────
@@ -1231,7 +1236,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function showDropUploadModal(files) {
     // Populate job dropdown
     const sel = document.getElementById('dropJob');
-    sel.innerHTML = '<option value="">-- Select Job --</option>';
+    sel.innerHTML = '<option value="">-- Select Project --</option>';
     jobsList.forEach(j => {
         const o = document.createElement('option');
         o.value = j.id;
@@ -1267,7 +1272,7 @@ function cancelDropUpload() {
 async function submitDropUpload(e) {
     e.preventDefault();
     const jobId = document.getElementById('dropJob').value;
-    if (!jobId) { alert('Please select a job.'); return; }
+    if (!jobId) { alert('Please select a project.'); return; }
 
     const planType = document.getElementById('dropType').value;
     const btn = document.getElementById('dropSubmitBtn');

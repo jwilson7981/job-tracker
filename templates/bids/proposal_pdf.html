@@ -29,6 +29,7 @@ h3 { font-size: 11px; color: #333; margin: 12px 0 6px; }
 .scope-text { margin-bottom: 12px; }
 ul { margin: 6px 0; padding-left: 20px; }
 ul li { margin-bottom: 3px; }
+ul.scope-list { columns: 2; column-gap: 24px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .terms-section { font-size: 9.5px; color: #444; line-height: 1.6; }
 .terms-section h2 { font-size: 12px; }
@@ -82,27 +83,21 @@ table.summary tr.total td { border-top: 2px solid #1a5276; font-weight: 700; fon
 
 <h2>Project</h2>
 <p><strong>{{ bid.bid_name }}</strong></p>
-{% if bid.bid_description %}
-<p class="scope-text">{{ bid.bid_description }}</p>
-{% endif %}
 
 <!-- PRICING -->
+{% set display_price = bid.actual_bid_override if bid.actual_bid_override else bid.total_bid %}
 <div class="pricing-box">
     {% if proposal_lines %}
     <table class="summary" style="margin:0;">
         {% for line in proposal_lines %}
         <tr><td>{{ line.description }}</td><td>${{ '{:,.2f}'.format(line.amount) }}</td></tr>
         {% endfor %}
-        <tr class="total"><td>Total</td><td>${{ '{:,.2f}'.format(bid.total_bid) }}</td></tr>
+        <tr class="total"><td>Total</td><td>${{ '{:,.2f}'.format(display_price) }}</td></tr>
     </table>
     {% else %}
-    <div class="total-line">Base Quote: ${{ '{:,.2f}'.format(bid.total_bid) }}</div>
+    <div class="total-line">Base Quote: ${{ '{:,.2f}'.format(display_price) }}</div>
     {% endif %}
-    <div class="detail-line">
-        {{ bid.total_systems|int if bid.total_systems == bid.total_systems|int else bid.total_systems }} systems
-        {% if bid.num_apartments %} ({{ bid.num_apartments }} apartments{% if bid.has_clubhouse %} + clubhouse{% endif %}){% endif %}
-        {% if bid.permit_cost %} — Permits included{% endif %}
-    </div>
+    {% if bid.permit_cost %}<div class="detail-line">Permits included</div>{% endif %}
 </div>
 
 <p style="font-size:10px;color:#666;">
@@ -112,18 +107,42 @@ table.summary tr.total td { border-top: 2px solid #1a5276; font-weight: 700; fon
 
 <!-- SCOPE OF WORK -->
 <h2>Scope of Work</h2>
-<p>LGHVAC Mechanical, LLC is pleased to submit this bid proposal for the above-referenced project. We propose to furnish all necessary labor, materials, equipment, and supervision for the installation of the HVAC systems as shown on project plans and specifications provided at the time of bid submission.</p>
+<ul class="scope-list">
+    <li>LGHVAC Mechanical, LLC is pleased to submit this bid proposal for the above-referenced project. We propose to furnish all necessary labor, materials, equipment, and supervision for the installation of the HVAC systems as shown on project plans and specifications provided at the time of bid submission.</li>
+{% if bid.bid_description %}
+{% for item in bid.bid_description.split('\n') %}
+{% if item.strip() %}
+    <li>{{ item.strip() }}</li>
+{% endif %}
+{% endfor %}
+{% endif %}
+</ul>
 
-{% if bid.inclusions %}
+<h2>Details of Ordering and Storing Material and Equipment</h2>
+<p>Upon contract award, all materials will be ordered immediately and billed in full upon receipt to ensure pricing stability. Materials will be stored at our warehouse at no additional cost to the contractor or at a designated location provided by the contractor at no cost to the subcontractor.</p>
+
+{% set default_inclusions = "1 Year parts and labor warranty\nManufacturer's Warranty per submittals\nInsurances, licenses, and required HVAC Permits\nPrice includes sales tax" %}
+{% set default_exclusions = "Cutting or coring any concrete, block, or brick\nConcrete work and Lifting\nFramed openings or structural support\nCondenser pads, Disconnects, and Whips\nWeather-tight of exterior and roof penetrations" %}
+{% set inc_text = bid.inclusions if bid.inclusions else default_inclusions %}
+{% set exc_text = bid.exclusions if bid.exclusions else default_exclusions %}
+
 <h2>Scope Inclusions</h2>
 <ul>
-{% for item in bid.inclusions.split('\n') %}
+{% for item in inc_text.split('\n') %}
 {% if item.strip() %}
     <li>{{ item.strip() }}</li>
 {% endif %}
 {% endfor %}
 </ul>
+
+<h2>Exclusions</h2>
+<ul>
+{% for item in exc_text.split('\n') %}
+{% if item.strip() %}
+    <li>{{ item.strip() }}</li>
 {% endif %}
+{% endfor %}
+</ul>
 
 {% if bid.has_clubhouse and bid.suggested_clubhouse_bid %}
 <p style="font-size:10px;color:#555;">
@@ -144,17 +163,6 @@ table.summary tr.total td { border-top: 2px solid #1a5276; font-weight: 700; fon
     <li><strong>Non-Payment:</strong> Work will be suspended if payment is not received within 60 days of billing submission.</li>
     <li><strong>Contract Type:</strong> Pricing is based on contracts that pay subcontractor within 40 days of pay application submission.</li>
 </ul>
-
-{% if bid.exclusions %}
-<h2>Exclusions</h2>
-<ul>
-{% for item in bid.exclusions.split('\n') %}
-{% if item.strip() %}
-    <li>{{ item.strip() }}</li>
-{% endif %}
-{% endfor %}
-</ul>
-{% endif %}
 
 <!-- PAGE 2: TERMS DETAIL -->
 <div class="page-break"></div>

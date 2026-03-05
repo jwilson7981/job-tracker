@@ -45,7 +45,7 @@ async function loadSchedules() {
 
 function showNewSchedule() {
     const sel = document.getElementById('nsJob');
-    sel.innerHTML = '<option value="">Select a job...</option>';
+    sel.innerHTML = '<option value="">Select a project...</option>';
     allJobs.forEach(j => {
         const o = document.createElement('option');
         o.value = j.id; o.textContent = j.name; sel.appendChild(o);
@@ -92,10 +92,10 @@ async function initJob() {
 async function loadScheduleDetail() {
     const res = await fetch('/api/team-pay/schedules/' + TP_SCHEDULE_ID);
     scheduleData = await res.json();
-    document.getElementById('jobTitle').textContent = (scheduleData.job_name || 'Job') + ' — Team Pay';
+    document.getElementById('jobTitle').textContent = (scheduleData.job_name || 'Project') + ' — Team Pay';
     document.getElementById('scheduleInfo').innerHTML = `
-        <div class="detail-row"><span class="detail-label">Job:</span><span>${scheduleData.job_name || '-'}</span></div>
-        <div class="detail-row"><span class="detail-label">Total Job Value:</span><span>${fmt(scheduleData.total_job_value)}</span></div>
+        <div class="detail-row"><span class="detail-label">Project:</span><span>${scheduleData.job_name || '-'}</span></div>
+        <div class="detail-row"><span class="detail-label">Total Project Value:</span><span>${fmt(scheduleData.total_job_value)}</span></div>
         <div class="detail-row"><span class="detail-label">Notes:</span><span>${scheduleData.notes || '-'}</span></div>`;
 }
 

@@ -9,6 +9,7 @@
             <button class="btn btn-secondary btn-small" onclick="exportToPDF('Supplier Quotes','quotesBody','Supplier_Quotes')">PDF</button>
         </div>
         <a href="/supplier-quotes/compare" class="btn btn-secondary">Compare Quotes</a>
+        <button class="btn btn-secondary" onclick="openUploadQuoteModal()">Upload Quote</button>
         <button class="btn btn-primary" onclick="openNewQuoteModal()">+ New Quote Request</button>
     </div>
 </div>
@@ -226,9 +227,75 @@ async function createQuote() {
     }
 }
 
+function openUploadQuoteModal() {
+    document.getElementById('uploadQuoteModal').style.display = 'flex';
+    // Populate job dropdown
+    const sel = document.getElementById('uploadQuoteJob');
+    sel.innerHTML = '<option value="">-- Select Job --</option>';
+    allJobs.forEach(j => {
+        sel.appendChild(new Option(j.name, j.id));
+    });
+}
+function closeUploadQuoteModal() {
+    document.getElementById('uploadQuoteModal').style.display = 'none';
+    document.getElementById('uploadQuoteFile').value = '';
+    document.getElementById('uploadQuoteSupplier').value = '';
+}
+async function submitUploadQuote() {
+    const jobId = document.getElementById('uploadQuoteJob').value;
+    const supplier = document.getElementById('uploadQuoteSupplier').value.trim();
+    const fileInput = document.getElementById('uploadQuoteFile');
+    if (!jobId) return alert('Please select a job.');
+    if (!supplier) return alert('Please enter a supplier name.');
+    if (!fileInput.files.length) return alert('Please select a file.');
+    const fd = new FormData();
+    fd.append('job_id', jobId);
+    fd.append('supplier_name', supplier);
+    fd.append('status', 'Received');
+    fd.append('quote_date', new Date().toISOString().split('T')[0]);
+    fd.append('file', fileInput.files[0]);
+    const res = await fetch('/api/supplier-quotes', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+        window.location = '/supplier-quotes/' + data.id;
+    } else {
+        alert(data.error || 'Upload failed.');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     await loadJobs();
     await loadQuotes();
 });
 </script>
+
+<!-- Upload Quote Modal -->
+<div id="uploadQuoteModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeUploadQuoteModal()">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Upload Supplier Quote</h3>
+            <button onclick="closeUploadQuoteModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="display:grid;gap:12px;">
+                <div>
+                    <label class="form-label">Job *</label>
+                    <select id="uploadQuoteJob" class="form-select"><option value="">-- Select Job --</option></select>
+                </div>
+                <div>
+                    <label class="form-label">Supplier Name *</label>
+                    <input type="text" id="uploadQuoteSupplier" class="form-input" placeholder="e.g. Locke Supply">
+                </div>
+                <div>
+                    <label class="form-label">Quote File *</label>
+                    <input type="file" id="uploadQuoteFile" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls" class="form-input">
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeUploadQuoteModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitUploadQuote()">Upload & Create Quote</button>
+        </div>
+    </div>
+</div>
 {% endblock %}

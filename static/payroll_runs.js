@@ -169,6 +169,8 @@ function confirmDeleteRun() {
 let _runData = null;
 // Map of job name → job id for quick lookup
 let _jobNameMap = {};
+// Track whether copy-from-last was used
+let _hasCopiedEntries = false;
 
 if (typeof RUN_ID !== 'undefined') {
     loadRunDetail();
@@ -182,6 +184,7 @@ function loadRunDetail() {
         _runData = JSON.parse(xhr.responseText);
         _jobNameMap = {};
         _runData.available_jobs.forEach(function(j) { _jobNameMap[j.name] = j.id; });
+        _hasCopiedEntries = false;
         renderRunHeader();
         buildTimesheetGrid();
     };
@@ -213,7 +216,9 @@ function renderRunHeader() {
     // Actions
     var actions = document.getElementById('runActions');
     if (run.status === 'Draft') {
-        actions.innerHTML = '<button class="btn btn-primary" onclick="saveTimesheet()">Save All</button>' +
+        actions.innerHTML =
+            '<button class="btn btn-secondary" onclick="copyFromLastPeriod()" title="Pre-fill grid from previous payroll run">Copy From Last Period</button>' +
+            '<button class="btn btn-primary" onclick="saveTimesheet()">Save All</button>' +
             '<button class="btn btn-secondary" onclick="finalizeRun()" style="background:#059669;color:#fff;">Finalize</button>' +
             '<button class="btn btn-secondary" onclick="deleteRunDetail()" style="color:#EF4444;">Delete Run</button>';
     } else {
@@ -277,11 +282,13 @@ function buildTimesheetGrid() {
         return dayNames[dt.getDay()] + '<br>' + (dt.getMonth()+1) + '/' + dt.getDate();
     });
 
+    var tableMinWidth = 180 + dates.length * 140;
     var html = buildJobDatalistHTML();
     html += '<style>' +
         '.ts-cell { padding:4px !important; vertical-align:top; }' +
         '.ts-entry { margin-bottom:6px; padding:4px; background:var(--gray-50,#f8fafc); border-radius:6px; border:1px solid var(--gray-200,#e2e8f0); position:relative; }' +
         '.ts-entry:last-child { margin-bottom:0; }' +
+        '.ts-entry[data-copied="true"] { background:#FFFBEB; border-color:#FCD34D; }' +
         '.ts-job-cell { width:100%; font-size:11px; padding:4px 6px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; margin-bottom:4px; display:block; box-sizing:border-box; background:#fff; }' +
         '.ts-hrs-cell { width:100%; font-size:14px; padding:4px 6px; border:1px solid var(--gray-200,#e2e8f0); border-radius:4px; text-align:center; display:block; box-sizing:border-box; background:#fff; font-weight:600; }' +
         '.ts-add-btn { font-size:11px; color:var(--primary,#2563EB); cursor:pointer; border:none; background:none; padding:3px 0; display:block; }' +
@@ -290,11 +297,33 @@ function buildTimesheetGrid() {
         '.ts-readonly-entry { font-size:12px; margin-bottom:3px; padding:3px 6px; background:var(--gray-50,#f8fafc); border-radius:4px; }' +
         '.ts-readonly-entry .ts-ro-job { color:var(--gray-500); font-size:11px; display:block; }' +
         '.ts-readonly-entry .ts-ro-hrs { font-weight:600; }' +
+        '.ts-emp-tools { margin-top:6px; display:flex; gap:4px; }' +
+        '.ts-emp-tools button { font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid var(--gray-300,#cbd5e1); background:#fff; cursor:pointer; color:var(--primary,#2563EB); }' +
+        '.ts-emp-tools button:hover { background:var(--gray-50,#f8fafc); }' +
+        '.ts-fill-popover { position:absolute; top:100%; left:0; z-index:10; background:#fff; border:1px solid var(--gray-200,#e2e8f0); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:12px; min-width:260px; }' +
+        '.ts-fill-popover label { display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; }' +
+        '.ts-fill-popover .form-input { font-size:13px; padding:4px 8px; }' +
+        '.ts-grid tbody tr[data-uid] { border-bottom:3px solid var(--gray-300,#cbd5e1); }' +
+        '.ts-grid tbody tr[data-uid]:last-child { border-bottom:none; }' +
+        /* Freeze panes: sticky header row and sticky name column */
+        '#tsScrollWrap { max-height:calc(100vh - 240px); overflow:auto; border:1px solid var(--gray-200,#e2e8f0); border-radius:8px; }' +
+        '.ts-grid { border-collapse:separate !important; border-spacing:0; }' +
+        '.ts-grid th, .ts-grid td { border-bottom:1px solid var(--gray-200,#e2e8f0); border-right:1px solid var(--gray-100,#f1f5f9); }' +
+        '.ts-grid thead th { position:sticky !important; top:0; background:#4472C4 !important; color:#fff !important; z-index:3; border-bottom:2px solid var(--gray-300,#cbd5e1); }' +
+        '.ts-grid thead th:first-child { z-index:4; left:0; position:sticky !important; }' +
+        '.ts-grid tbody td:first-child { position:sticky !important; left:0; background:#fff !important; z-index:1; border-right:2px solid var(--gray-300,#cbd5e1) !important; }' +
+        '.ts-grid tfoot td:first-child { position:sticky !important; left:0; z-index:1; }' +
+        /* Top scrollbar */
+        '#tsTopScroll { overflow-x:auto; overflow-y:hidden; margin-bottom:4px; }' +
+        '#tsTopScrollInner { height:1px; }' +
         '</style>';
 
-    html += '<table class="data-table ts-grid" style="min-width:' + (180 + dates.length * 140) + 'px;">' +
+    /* Top scrollbar div that syncs with main container */
+    html += '<div id="tsTopScroll"><div id="tsTopScrollInner" style="width:' + tableMinWidth + 'px;"></div></div>';
+    html += '<div id="tsScrollWrap">';
+    html += '<table class="data-table ts-grid" style="min-width:' + tableMinWidth + 'px;">' +
         '<thead><tr>' +
-        '<th style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:2;min-width:150px;">Employee</th>';
+        '<th style="position:sticky;left:0;min-width:150px;">Employee</th>';
     dateHeaders.forEach(function(dh) {
         html += '<th style="min-width:130px;text-align:center;font-size:12px;">' + dh + '</th>';
     });
@@ -304,11 +333,17 @@ function buildTimesheetGrid() {
         var uid = emp.user_id;
         var userEntries = entryMap[uid] || {};
         html += '<tr data-uid="' + uid + '">';
-        html += '<td style="position:sticky;left:0;background:#fff;z-index:1;font-weight:600;vertical-align:top;">' +
+        html += '<td style="font-weight:600;vertical-align:top;position:relative;">' +
             emp.display_name + '<br>' +
             '<span style="font-size:11px;color:var(--gray-400);font-weight:400;">' + fmtMoney(emp.hourly_rate) + '/hr</span>' +
-            '<div class="ts-emp-subtotal" id="subtotal-' + uid + '" style="margin-top:6px;font-size:13px;color:var(--primary,#2563EB);"></div>' +
-            '</td>';
+            '<div class="ts-emp-subtotal" id="subtotal-' + uid + '" style="margin-top:6px;font-size:13px;color:var(--primary,#2563EB);"></div>';
+        if (!isReadOnly) {
+            html += '<div class="ts-emp-tools">' +
+                '<button type="button" onclick="showFillWeek(' + uid + ', this)" title="Fill empty days with a job and hours">Fill</button>' +
+                '<button type="button" onclick="copyDay(' + uid + ')" title="Copy first day with hours to all empty days">Copy &rarr;</button>' +
+                '</div>';
+        }
+        html += '</td>';
 
         dates.forEach(function(d) {
             var dayEntries = userEntries[d] || [];
@@ -340,28 +375,56 @@ function buildTimesheetGrid() {
 
     // Day totals row
     html += '<tr style="background:var(--gray-50,#f8fafc);font-weight:700;border-top:2px solid var(--gray-300,#cbd5e1);">' +
-        '<td style="position:sticky;left:0;background:var(--gray-50,#f8fafc);z-index:1;">Totals</td>';
+        '<td style="background:var(--gray-50,#f8fafc);">Totals</td>';
     dates.forEach(function(d) {
         html += '<td style="text-align:center;" class="ts-day-total" data-date="' + d + '">0</td>';
     });
     html += '<td style="text-align:right;" id="grandTotal">0</td></tr>';
 
-    html += '</tbody></table>';
+    html += '</tbody></table></div>'; /* close tsScrollWrap */
     container.innerHTML = html;
+
+    // Sync top scrollbar with main container
+    var topScroll = document.getElementById('tsTopScroll');
+    var mainScroll = document.getElementById('tsScrollWrap');
+    if (topScroll && mainScroll) {
+        var syncing = false;
+        topScroll.addEventListener('scroll', function() {
+            if (syncing) return;
+            syncing = true;
+            mainScroll.scrollLeft = topScroll.scrollLeft;
+            syncing = false;
+        });
+        mainScroll.addEventListener('scroll', function() {
+            if (syncing) return;
+            syncing = true;
+            topScroll.scrollLeft = mainScroll.scrollLeft;
+            syncing = false;
+        });
+    }
     recalcTotals();
 }
 
-function buildEntryRow(uid, date, jobName, hours) {
-    return '<div class="ts-entry">' +
+function buildEntryRow(uid, date, jobName, hours, isCopied) {
+    return '<div class="ts-entry"' + (isCopied ? ' data-copied="true"' : '') + '>' +
         '<button type="button" class="ts-remove-entry" onclick="removeCellEntry(this)">&times;</button>' +
-        '<select class="ts-job-cell" style="display:' + (jobName && !_jobNameMap[jobName] ? 'none' : 'block') + ';" onchange="if(this.value===\'__type__\'){this.style.display=\'none\';this.nextElementSibling.style.display=\'block\';this.nextElementSibling.focus();}">' +
+        '<select class="ts-job-cell" style="display:' + (jobName && !_jobNameMap[jobName] ? 'none' : 'block') + ';" onchange="markEdited(this);if(this.value===\'__type__\'){this.style.display=\'none\';this.nextElementSibling.style.display=\'block\';this.nextElementSibling.focus();}">' +
             '<option value="">-- Project --</option>' +
             _runData.available_jobs.map(function(j) { return '<option value="' + j.name + '"' + (j.name === jobName ? ' selected' : '') + '>' + j.name + '</option>'; }).join('') +
             '<option value="__type__">Type custom...</option>' +
         '</select>' +
-        '<input type="text" class="ts-job-cell ts-job-custom" value="' + (jobName && !_jobNameMap[jobName] ? jobName : '') + '" placeholder="Type project name..." style="display:' + (jobName && !_jobNameMap[jobName] ? 'block' : 'none') + ';">' +
-        '<input type="number" class="ts-hrs-cell" step="any" min="0" max="24" value="' + (hours || '') + '" placeholder="0" oninput="recalcTotals()">' +
+        '<input type="text" class="ts-job-cell ts-job-custom" value="' + (jobName && !_jobNameMap[jobName] ? jobName : '') + '" placeholder="Type project name..." style="display:' + (jobName && !_jobNameMap[jobName] ? 'block' : 'none') + ';" oninput="markEdited(this)">' +
+        '<input type="number" class="ts-hrs-cell" step="any" min="0" max="24" value="' + (hours || '') + '" placeholder="0" oninput="markEdited(this);recalcTotals()">' +
         '</div>';
+}
+
+// Clear copied marker when user edits a cell
+function markEdited(el) {
+    var entry = el.closest('.ts-entry');
+    if (entry && entry.dataset.copied) {
+        delete entry.dataset.copied;
+        entry.removeAttribute('data-copied');
+    }
 }
 
 function addCellEntry(btn) {
@@ -420,7 +483,271 @@ function recalcTotals() {
     recalcKpis();
 }
 
+// ─── Copy From Last Period ───────────────────────────────────────
+function copyFromLastPeriod() {
+    // Check if grid already has data
+    var hasData = false;
+    document.querySelectorAll('.ts-hrs-cell').forEach(function(inp) {
+        if (parseFloat(inp.value) > 0) hasData = true;
+    });
+    if (hasData && !confirm('The timesheet already has entries. Copy from last period will overwrite empty cells. Continue?')) return;
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/payroll/runs/' + RUN_ID + '/copy-previous', true);
+    xhr.onload = function() {
+        if (xhr.status !== 200) {
+            try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to copy'); }
+            catch(e) { alert('Failed to copy from previous period'); }
+            return;
+        }
+        var data = JSON.parse(xhr.responseText);
+        if (!data.entries || !data.entries.length) {
+            alert('No entries found in the previous payroll run.');
+            return;
+        }
+        // Group by user_id -> date -> entries
+        var copyMap = {};
+        data.entries.forEach(function(e) {
+            if (!copyMap[e.user_id]) copyMap[e.user_id] = {};
+            if (!copyMap[e.user_id][e.work_date]) copyMap[e.user_id][e.work_date] = [];
+            copyMap[e.user_id][e.work_date].push(e);
+        });
+        var filledCount = 0;
+        // Populate grid cells
+        Object.keys(copyMap).forEach(function(uid) {
+            Object.keys(copyMap[uid]).forEach(function(date) {
+                var container = document.querySelector('.ts-cell-entries[data-uid="' + uid + '"][data-date="' + date + '"]');
+                if (!container) return;
+                // Check if cell is empty (only one entry with no job and no hours)
+                var existingEntries = container.querySelectorAll('.ts-entry');
+                var isEmpty = true;
+                existingEntries.forEach(function(div) {
+                    var sel = div.querySelector('select.ts-job-cell');
+                    var hrs = div.querySelector('.ts-hrs-cell');
+                    if ((sel && sel.value) || (hrs && parseFloat(hrs.value) > 0)) isEmpty = false;
+                });
+                if (!isEmpty) return;
+
+                // Remove existing empty entries
+                existingEntries.forEach(function(div) { div.remove(); });
+                var addBtn = container.querySelector('.ts-add-btn');
+
+                // Add copied entries
+                copyMap[uid][date].forEach(function(e) {
+                    var entryHtml = buildEntryRow(uid, date, e.job_name, e.hours, true);
+                    var temp = document.createElement('div');
+                    temp.innerHTML = entryHtml;
+                    container.insertBefore(temp.firstChild, addBtn);
+                    filledCount++;
+                });
+            });
+        });
+        _hasCopiedEntries = true;
+        recalcTotals();
+        showToast('Copied ' + filledCount + ' entries from Run #' + data.from_run);
+    };
+    xhr.onerror = function() { alert('Network error copying from previous period.'); };
+    xhr.send();
+}
+
+// ─── Fill Week (per employee) ────────────────────────────────────
+function showFillWeek(uid, btn) {
+    // Close any existing popover
+    var existing = document.querySelector('.ts-fill-popover');
+    if (existing) existing.remove();
+
+    var td = btn.closest('td');
+    var popover = document.createElement('div');
+    popover.className = 'ts-fill-popover';
+
+    // Build day checkboxes from the dates
+    var dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var dayCbs = _runData.dates.map(function(d, i) {
+        var dt = new Date(d + 'T00:00:00');
+        var dayIdx = dt.getDay();
+        var checked = (dayIdx >= 1 && dayIdx <= 5) ? 'checked' : '';
+        return '<label><input type="checkbox" class="fill-day-cb" value="' + i + '" ' + checked + '> ' +
+            dayNames[dayIdx] + ' ' + (dt.getMonth()+1) + '/' + dt.getDate() + '</label>';
+    });
+
+    // Build job dropdown
+    var jobOptions = '<option value="">-- Select Project --</option>' +
+        _runData.available_jobs.map(function(j) { return '<option value="' + j.name + '">' + j.name + '</option>'; }).join('');
+
+    popover.innerHTML =
+        '<div style="font-weight:600;margin-bottom:8px;font-size:13px;">Quick Fill</div>' +
+        '<div style="margin-bottom:8px;">' +
+            '<label class="form-label" style="font-size:11px;">Project</label>' +
+            '<select class="form-input fill-job-select" style="font-size:13px;padding:4px 8px;">' + jobOptions + '</select>' +
+        '</div>' +
+        '<div style="margin-bottom:8px;">' +
+            '<label class="form-label" style="font-size:11px;">Hours</label>' +
+            '<input type="number" class="form-input fill-hours-input" step="any" min="0" max="24" value="8" style="font-size:13px;padding:4px 8px;">' +
+        '</div>' +
+        '<div style="margin-bottom:8px;max-height:180px;overflow-y:auto;">' +
+            '<label class="form-label" style="font-size:11px;">Days</label>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;">' + dayCbs.join('') + '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;">' +
+            '<button type="button" class="btn btn-primary btn-small" onclick="applyFillWeek(' + uid + ', this)">Apply</button>' +
+            '<button type="button" class="btn btn-secondary btn-small" onclick="this.closest(\'.ts-fill-popover\').remove()">Cancel</button>' +
+        '</div>';
+
+    td.appendChild(popover);
+
+    // Close on click outside
+    setTimeout(function() {
+        document.addEventListener('click', function closePopover(e) {
+            if (!popover.contains(e.target) && e.target !== btn) {
+                popover.remove();
+                document.removeEventListener('click', closePopover);
+            }
+        });
+    }, 10);
+}
+
+function applyFillWeek(uid, btn) {
+    var popover = btn.closest('.ts-fill-popover');
+    var jobName = popover.querySelector('.fill-job-select').value;
+    var hours = parseFloat(popover.querySelector('.fill-hours-input').value) || 0;
+    if (!jobName) { alert('Please select a project'); return; }
+    if (!hours) { alert('Please enter hours'); return; }
+
+    var checkedDays = [];
+    popover.querySelectorAll('.fill-day-cb:checked').forEach(function(cb) {
+        checkedDays.push(parseInt(cb.value));
+    });
+    if (!checkedDays.length) { alert('Please select at least one day'); return; }
+
+    var filledCount = 0;
+    checkedDays.forEach(function(dayIdx) {
+        var date = _runData.dates[dayIdx];
+        var container = document.querySelector('.ts-cell-entries[data-uid="' + uid + '"][data-date="' + date + '"]');
+        if (!container) return;
+
+        // Check if cell is empty
+        var entries = container.querySelectorAll('.ts-entry');
+        var isEmpty = true;
+        entries.forEach(function(div) {
+            var sel = div.querySelector('select.ts-job-cell');
+            var hrs = div.querySelector('.ts-hrs-cell');
+            if ((sel && sel.value) || (hrs && parseFloat(hrs.value) > 0)) isEmpty = false;
+        });
+        if (!isEmpty) return;
+
+        // Fill the first empty entry
+        var firstEntry = entries[0];
+        if (firstEntry) {
+            var sel = firstEntry.querySelector('select.ts-job-cell');
+            if (sel) sel.value = jobName;
+            var hrs = firstEntry.querySelector('.ts-hrs-cell');
+            if (hrs) hrs.value = hours;
+        }
+        filledCount++;
+    });
+
+    popover.remove();
+    recalcTotals();
+    showToast('Filled ' + filledCount + ' days with ' + hours + 'h on ' + jobName);
+}
+
+// ─── Copy Day (per employee) ─────────────────────────────────────
+function copyDay(uid) {
+    // Find first day with hours > 0
+    var sourceDate = null;
+    var sourceEntries = [];
+    var dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    for (var i = 0; i < _runData.dates.length; i++) {
+        var d = _runData.dates[i];
+        var container = document.querySelector('.ts-cell-entries[data-uid="' + uid + '"][data-date="' + d + '"]');
+        if (!container) continue;
+        var entries = container.querySelectorAll('.ts-entry');
+        var dayHasHours = false;
+        var dayData = [];
+        entries.forEach(function(div) {
+            var sel = div.querySelector('select.ts-job-cell');
+            var customInput = div.querySelector('.ts-job-custom');
+            var jobName = '';
+            if (sel && sel.value && sel.value !== '__type__') {
+                jobName = sel.value;
+            } else if (customInput && customInput.value.trim()) {
+                jobName = customInput.value.trim();
+            }
+            var hrs = parseFloat(div.querySelector('.ts-hrs-cell').value) || 0;
+            if (hrs > 0 && jobName) {
+                dayHasHours = true;
+                dayData.push({ job_name: jobName, hours: hrs });
+            }
+        });
+        if (dayHasHours) {
+            sourceDate = d;
+            sourceEntries = dayData;
+            break;
+        }
+    }
+
+    if (!sourceDate) {
+        alert('No day with hours found for this employee. Enter hours on at least one day first.');
+        return;
+    }
+
+    var sourceDt = new Date(sourceDate + 'T00:00:00');
+    var sourceDayName = dayNames[sourceDt.getDay()];
+    var filledCount = 0;
+
+    for (var i = 0; i < _runData.dates.length; i++) {
+        var d = _runData.dates[i];
+        if (d === sourceDate) continue;
+        var container = document.querySelector('.ts-cell-entries[data-uid="' + uid + '"][data-date="' + d + '"]');
+        if (!container) continue;
+
+        // Check if empty
+        var entries = container.querySelectorAll('.ts-entry');
+        var isEmpty = true;
+        entries.forEach(function(div) {
+            var sel = div.querySelector('select.ts-job-cell');
+            var hrs = div.querySelector('.ts-hrs-cell');
+            if ((sel && sel.value) || (hrs && parseFloat(hrs.value) > 0)) isEmpty = false;
+        });
+        if (!isEmpty) continue;
+
+        // Remove empty entries
+        entries.forEach(function(div) { div.remove(); });
+        var addBtn = container.querySelector('.ts-add-btn');
+
+        // Copy source entries
+        sourceEntries.forEach(function(se) {
+            var entryHtml = buildEntryRow(uid, d, se.job_name, se.hours);
+            var temp = document.createElement('div');
+            temp.innerHTML = entryHtml;
+            container.insertBefore(temp.firstChild, addBtn);
+        });
+        filledCount++;
+    }
+
+    recalcTotals();
+    showToast('Copied ' + sourceDayName + ' to ' + filledCount + ' other days');
+}
+
+// ─── Unchanged entry warning check ──────────────────────────────
+function checkUnchangedCopied() {
+    if (!_hasCopiedEntries) return true;
+    var unchangedCount = 0;
+    document.querySelectorAll('.ts-entry[data-copied="true"]').forEach(function(div) {
+        var hrs = div.querySelector('.ts-hrs-cell');
+        if (hrs && parseFloat(hrs.value) > 0) unchangedCount++;
+    });
+    if (unchangedCount > 0) {
+        return confirm(unchangedCount + ' entries were copied from last period and not changed. Confirm they are correct?');
+    }
+    return true;
+}
+
 function saveTimesheet(callback) {
+    // Check unchanged copied entries
+    if (!callback && !checkUnchangedCopied()) return;
+
     // Collect entries from per-day cells
     var entries = [];
     var missingProject = false;
@@ -467,6 +794,12 @@ function saveTimesheet(callback) {
                     });
                 }
             }
+            // Clear copied markers after successful save
+            document.querySelectorAll('.ts-entry[data-copied="true"]').forEach(function(div) {
+                delete div.dataset.copied;
+                div.removeAttribute('data-copied');
+            });
+            _hasCopiedEntries = false;
             showToast('Timesheet saved successfully');
             if (callback) callback();
         } else {
@@ -479,15 +812,13 @@ function saveTimesheet(callback) {
 }
 
 function showToast(msg) {
-    const t = document.createElement('div');
-    t.textContent = msg;
-    t.style.cssText = 'position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#059669;color:#fff;padding:10px 24px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15);';
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3000);
+    window._toastShown = true;
+    window.showToast(msg);
 }
 
 function finalizeRun() {
     if (!confirm('Finalize this payroll run? All entries will be approved and locked.')) return;
+    if (!checkUnchangedCopied()) return;
     saveTimesheet(function() {
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/finalize', true);

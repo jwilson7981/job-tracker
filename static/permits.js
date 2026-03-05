@@ -15,6 +15,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         jobFilter.innerHTML += `<option value="${j.id}">${j.name}</option>`;
         permitJob.innerHTML += `<option value="${j.id}">${j.name}</option>`;
     });
+
+    // Auto-select job from URL parameter
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) { document.getElementById('jobFilter').value = _urlJobId; }
+
     loadPermits();
 });
 

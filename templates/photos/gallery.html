@@ -1,9 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Job Photos - Construction Management{% endblock %}
+{% block title %}Project Photos - Construction Management{% endblock %}
 {% block content %}
 <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
-    <h1>Job Photos</h1>
+    <h1>Project Photos</h1>
     <div style="display:flex;gap:8px;">
+        <button id="btnNewAlbum" class="btn btn-secondary" onclick="showNewAlbumModal()" style="display:none;"><i class="fas fa-folder-plus"></i> New Album</button>
         <button class="btn btn-primary" onclick="showCameraModal()"><i class="fas fa-camera"></i> Take Photo</button>
         <button class="btn btn-primary" onclick="showUploadModal()"><i class="fas fa-upload"></i> Upload Photos</button>
     </div>
@@ -11,8 +12,8 @@
 
 <!-- Filters -->
 <div class="filter-bar" style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap;">
-    <select id="photoJobFilter" class="form-select" onchange="loadPhotos()" style="max-width:250px;">
-        <option value="">All Jobs</option>
+    <select id="photoJobFilter" class="form-select" onchange="onJobFilterChange()" style="max-width:250px;">
+        <option value="">All Projects</option>
     </select>
     <select id="photoCategoryFilter" class="form-select" onchange="loadPhotos()" style="max-width:200px;">
         <option value="">All Categories</option>
@@ -28,6 +29,25 @@
     </select>
 </div>
 
+<!-- Album Breadcrumb -->
+<div id="albumBreadcrumb" style="display:none;margin-bottom:16px;">
+    <a href="#" onclick="closeAlbum();return false;" style="color:var(--primary);text-decoration:none;font-size:14px;">
+        <i class="fas fa-arrow-left"></i> Back to Albums
+    </a>
+    <span id="albumBreadcrumbName" style="margin-left:8px;font-weight:600;font-size:14px;"></span>
+</div>
+
+<!-- Album Cards -->
+<div id="albumCards" style="display:none;margin-bottom:24px;">
+    <h3 style="margin:0 0 12px 0;font-size:16px;color:#374151;">Albums</h3>
+    <div id="albumGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:12px;"></div>
+</div>
+
+<!-- Un-albumed Photos Label -->
+<div id="unAlbumedLabel" style="display:none;margin-bottom:12px;">
+    <h3 style="margin:0;font-size:16px;color:#374151;">Other Photos</h3>
+</div>
+
 <!-- Gallery Grid -->
 <div id="photoGallery" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:12px;"></div>
 
@@ -40,9 +60,15 @@
         </div>
         <form onsubmit="uploadPhotos(event)" style="padding:16px;">
             <div class="form-group">
-                <label class="form-label">Job</label>
-                <select id="uploadJob" class="form-select" required>
-                    <option value="">Select Job...</option>
+                <label class="form-label">Project</label>
+                <select id="uploadJob" class="form-select" required onchange="loadAlbumDropdown('uploadAlbum', this.value)">
+                    <option value="">Select Project...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Album <span style="color:#9CA3AF;font-weight:normal;">(optional)</span></label>
+                <select id="uploadAlbum" class="form-select">
+                    <option value="">No Album</option>
                 </select>
             </div>
             <div class="form-group">
@@ -84,9 +110,15 @@
         </div>
         <form onsubmit="takePhoto(event)" style="padding:16px;">
             <div class="form-group">
-                <label class="form-label">Job</label>
-                <select id="cameraJob" class="form-select" required>
-                    <option value="">Select Job...</option>
+                <label class="form-label">Project</label>
+                <select id="cameraJob" class="form-select" required onchange="loadAlbumDropdown('cameraAlbum', this.value)">
+                    <option value="">Select Project...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Album <span style="color:#9CA3AF;font-weight:normal;">(optional)</span></label>
+                <select id="cameraAlbum" class="form-select">
+                    <option value="">No Album</option>
                 </select>
             </div>
             <div class="form-group">
@@ -116,6 +148,48 @@
                 <button type="submit" class="btn btn-primary">Upload</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- New Album Modal -->
+<div id="newAlbumModal" class="modal-overlay" style="display:none;">
+    <div class="modal" style="max-width:400px;">
+        <div class="modal-header">
+            <h2>New Album</h2>
+            <button class="modal-close" onclick="document.getElementById('newAlbumModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveAlbum(event)" style="padding:16px;">
+            <div class="form-group">
+                <label class="form-label">Album Name</label>
+                <input type="text" id="newAlbumName" class="form-input" placeholder="e.g. Building A" required>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('newAlbumModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Album</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Move Photo Modal -->
+<div id="movePhotoModal" class="modal-overlay" style="display:none;">
+    <div class="modal" style="max-width:400px;">
+        <div class="modal-header">
+            <h2>Move to Album</h2>
+            <button class="modal-close" onclick="document.getElementById('movePhotoModal').style.display='none'">&times;</button>
+        </div>
+        <div style="padding:16px;">
+            <div class="form-group">
+                <label class="form-label">Select Album</label>
+                <select id="movePhotoAlbum" class="form-select">
+                    <option value="">No Album (remove from album)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('movePhotoModal').style.display='none'">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmMovePhoto()">Move</button>
+            </div>
+        </div>
     </div>
 </div>
 

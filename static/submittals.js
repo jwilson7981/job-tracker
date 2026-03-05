@@ -4,7 +4,6 @@ let jobsList = [];
 
 // Init on page load
 loadJobs();
-loadSubmittals();
 
 // ─── Load Jobs Dropdown ─────────────────────────────────────
 async function loadJobs() {
@@ -29,6 +28,12 @@ async function loadJobs() {
         opt3.textContent = j.name;
         editSel.appendChild(opt3);
     });
+
+    // Auto-select job from URL parameter
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) { document.getElementById('filterJob').value = _urlJobId; }
+
+    loadSubmittals();
 }
 
 // ─── Load & Render Submittals ───────────────────────────────
@@ -90,49 +95,86 @@ function renderTable() {
         return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
-
-    tbody.innerHTML = allSubmittals.map(s => {
-        const statusBadge = getStatusBadge(s.status);
-        const isOverdue = s.date_required && !s.date_returned && s.date_required < today;
-        const isRejected = s.status === 'Rejected';
-        const isResubmit = s.status === 'Resubmit';
-
-        let rowStyle = '';
-        let rowAttrs = '';
-        if (isRejected) {
-            rowStyle = 'background:#FEF2F2;';
-            rowAttrs = ' data-submittal-rejected';
-        } else if (isResubmit) {
-            rowStyle = 'background:#FFFBEB;';
-            rowAttrs = ' data-submittal-resubmit';
-        } else if (isOverdue) {
-            rowStyle = 'background:#FEF2F2;';
+    // Group by job
+    const groups = {};
+    const jobOrder = [];
+    allSubmittals.forEach(s => {
+        const key = s.job_id || 0;
+        if (!groups[key]) {
+            groups[key] = { name: s.job_name || 'No Job', items: [] };
+            jobOrder.push(key);
         }
+        groups[key].items.push(s);
+    });
 
-        const dateRequiredStyle = isOverdue ? 'color:#EF4444;font-weight:600;' : '';
+    const today = new Date().toISOString().split('T')[0];
+    let html = '';
 
-        const hasFile = s.has_file || s.file_path;
-        const libBadge = s.library_file_id ? '<span class="badge" style="background:#EEF2FF;color:#4338CA;font-size:10px;margin-left:4px;" title="Linked from Library">LIB</span>' : '';
+    jobOrder.forEach(key => {
+        const group = groups[key];
+        const count = group.items.length;
+        const approved = group.items.filter(s => s.status === 'Approved' || s.status === 'Approved as Noted').length;
+        const needsAction = group.items.filter(s => s.status === 'Rejected' || s.status === 'Resubmit').length;
+        const pending = group.items.filter(s => s.status === 'Pending' || s.status === 'Submitted').length;
 
-        return `<tr style="${rowStyle}"${rowAttrs}>
-            <td>${s.id}</td>
-            <td>${s.job_name || '-'}</td>
-            <td>${s.spec_section || '-'}</td>
-            <td>${s.description || '-'}${libBadge}</td>
-            <td>${s.vendor || '-'}</td>
-            <td>${s.revision != null ? s.revision : 0}</td>
-            <td>${statusBadge}</td>
-            <td>${s.date_submitted || '-'}</td>
-            <td style="${dateRequiredStyle}">${s.date_required || '-'}${isOverdue ? ' <span class="badge" style="background:#FEE2E2;color:#EF4444;font-size:11px;">OVERDUE</span>' : ''}</td>
-            <td>${s.date_returned || '-'}</td>
-            <td>
-                ${hasFile ? `<button class="btn btn-small btn-secondary" onclick="viewFile(${s.id})">View File</button>` : ''}
-                <button class="btn btn-small btn-primary" onclick='editSubmittal(${JSON.stringify(s)})'>Edit</button>
-                <button class="btn btn-small btn-danger" onclick="deleteSubmittal(${s.id})">Delete</button>
+        let statusSummary = '';
+        if (approved) statusSummary += `<span style="color:#166534;font-size:12px;margin-left:8px;">${approved} approved</span>`;
+        if (pending) statusSummary += `<span style="color:#1E40AF;font-size:12px;margin-left:8px;">${pending} pending</span>`;
+        if (needsAction) statusSummary += `<span style="color:#991B1B;font-size:12px;margin-left:8px;">${needsAction} needs action</span>`;
+
+        html += `<tr class="submittal-group-header" onclick="toggleSubmittalGroup('grp-${key}')" style="cursor:pointer;background:var(--gray-50,#f9fafb);border-top:2px solid var(--gray-200,#e5e7eb);">
+            <td colspan="11" style="padding:10px 12px;font-weight:700;font-size:14px;">
+                <span class="submittal-toggle" id="toggle-grp-${key}" style="display:inline-block;width:18px;transition:transform .2s;">&#9654;</span>
+                ${group.name}
+                <span style="font-weight:400;color:var(--gray-500);font-size:13px;margin-left:6px;">(${count})</span>
+                ${statusSummary}
             </td>
         </tr>`;
-    }).join('');
+
+        group.items.forEach(s => {
+            const statusBadge = getStatusBadge(s.status);
+            const isOverdue = s.date_required && !s.date_returned && s.date_required < today;
+            const isRejected = s.status === 'Rejected';
+            const isResubmit = s.status === 'Resubmit';
+
+            let rowStyle = 'display:none;';
+            if (isRejected) rowStyle += 'background:#FEF2F2;';
+            else if (isResubmit) rowStyle += 'background:#FFFBEB;';
+            else if (isOverdue) rowStyle += 'background:#FEF2F2;';
+
+            const dateRequiredStyle = isOverdue ? 'color:#EF4444;font-weight:600;' : '';
+            const hasFile = s.has_file || s.file_path;
+            const libBadge = s.library_file_id ? '<span class="badge" style="background:#EEF2FF;color:#4338CA;font-size:10px;margin-left:4px;" title="Linked from Library">LIB</span>' : '';
+
+            html += `<tr class="submittal-row grp-${key}" style="${rowStyle}">
+                <td>${s.id}</td>
+                <td>${s.job_name || '-'}</td>
+                <td>${s.spec_section || '-'}</td>
+                <td>${s.description || '-'}${libBadge}</td>
+                <td>${s.vendor || '-'}</td>
+                <td>${s.revision != null ? s.revision : 0}</td>
+                <td>${statusBadge}</td>
+                <td>${s.date_submitted || '-'}</td>
+                <td style="${dateRequiredStyle}">${s.date_required || '-'}${isOverdue ? ' <span class="badge" style="background:#FEE2E2;color:#EF4444;font-size:11px;">OVERDUE</span>' : ''}</td>
+                <td>${s.date_returned || '-'}</td>
+                <td>
+                    ${hasFile ? `<button class="btn btn-small btn-secondary" onclick="viewFile(${s.id})">View File</button>` : ''}
+                    <button class="btn btn-small btn-primary" onclick='editSubmittal(${JSON.stringify(s)})'>Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteSubmittal(${s.id})">Delete</button>
+                </td>
+            </tr>`;
+        });
+    });
+
+    tbody.innerHTML = html;
+}
+
+function toggleSubmittalGroup(groupClass) {
+    const rows = document.querySelectorAll('.submittal-row.' + groupClass);
+    const toggle = document.getElementById('toggle-' + groupClass);
+    const isOpen = rows.length && rows[0].style.display !== 'none';
+    rows.forEach(r => r.style.display = isOpen ? 'none' : '');
+    if (toggle) toggle.style.transform = isOpen ? '' : 'rotate(90deg)';
 }
 
 function getStatusBadge(status) {

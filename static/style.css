@@ -142,6 +142,20 @@ body {
     color: var(--gray-300);
 }
 
+.sidebar-phase {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(96, 165, 250, 0.25);
+    color: #93C5FD;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
 .sidebar-group-header .sidebar-group-arrow {
     font-size: 9px;
     transition: transform 0.2s;

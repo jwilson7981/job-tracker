@@ -92,7 +92,7 @@ function importExcel(e) {
         })
         .finally(function() {
             btn.disabled = false;
-            btn.textContent = 'Import Jobs';
+            btn.textContent = 'Import Projects';
         });
 }
 

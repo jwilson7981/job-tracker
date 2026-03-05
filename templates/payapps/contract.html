@@ -7,13 +7,17 @@
         <h1 id="contractTitle">Contract Setup</h1>
     </div>
     <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="showUploadExistingPA()">Upload Existing PA</button>
         <button class="btn btn-primary" onclick="createApplication()">+ New Pay Application</button>
     </div>
 </div>
 
 <!-- Contract Details (collapsible) -->
 <details class="pa-section" open>
-    <summary class="pa-section-title">Contract Details</summary>
+    <summary class="pa-section-title" style="display:flex;align-items:center;justify-content:space-between;">
+        Contract Details
+        <button class="btn btn-small btn-secondary" onclick="event.preventDefault();event.stopPropagation();editContractDetails()" style="font-size:12px;">Edit</button>
+    </summary>
     <div class="pa-section-body" id="contractDetails">Loading...</div>
 </details>
 
@@ -132,6 +136,108 @@
         </form>
     </div>
 </div>
+<!-- Edit Contract Modal -->
+<div class="modal-overlay" id="editContractModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+            <h2>Edit Contract Details</h2>
+            <button class="modal-close" onclick="document.getElementById('editContractModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveContractEdit(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">GC Name</label>
+                    <input type="text" id="ecGcName" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">GC Address</label>
+                    <input type="text" id="ecGcAddr" class="form-input">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">GC Contact</label>
+                    <input type="text" id="ecGcContact" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">GC Email</label>
+                    <input type="email" id="ecGcEmail" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">GC Phone</label>
+                    <input type="text" id="ecGcPhone" class="form-input">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Project #</label>
+                    <input type="text" id="ecProjNo" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Contract For</label>
+                    <input type="text" id="ecContractFor" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Contract Date</label>
+                    <input type="date" id="ecContractDate" class="form-input">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Original Contract Sum ($)</label>
+                    <input type="number" id="ecContractSum" class="form-input" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Retainage Work (%)</label>
+                    <input type="number" id="ecRetWork" class="form-input" step="0.01" value="10">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Retainage Stored (%)</label>
+                    <input type="number" id="ecRetStored" class="form-input" step="0.01" value="0">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('editContractModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Upload Existing PA Modal -->
+<div class="modal-overlay" id="uploadPaModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Upload Existing Pay Application</h2>
+            <button class="modal-close" onclick="document.getElementById('uploadPaModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="uploadExistingPA(event)">
+            <p style="font-size:13px;color:var(--gray-500);margin:0 0 16px;">Upload a previously submitted AIA pay app PDF. It will be saved as the next PA number.</p>
+            <div class="form-group">
+                <label class="form-label">Period To</label>
+                <input type="date" id="uploadPaPeriod" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="uploadPaStatus" class="form-select">
+                    <option value="Submitted">Submitted</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Draft">Draft</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Pay App PDF *</label>
+                <input type="file" id="uploadPaFile" class="form-input" accept=".pdf,.png,.jpg,.jpeg" required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('uploadPaModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>window.PA_PAGE = 'contract'; window.PA_CONTRACT_ID = {{ contract_id }};</script>
-<script src="/static/payapps.js"></script>
+<script src="/static/payapps.js?v=20260304g"></script>
 {% endblock %}

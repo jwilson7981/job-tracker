@@ -11,7 +11,7 @@ async function loadAccountingOverview() {
     const jobs = await res.json();
     const tbody = document.getElementById('accountingBody');
     if (!jobs.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No jobs yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No projects yet.</td></tr>';
         return;
     }
     tbody.innerHTML = jobs.map(j => {

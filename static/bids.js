@@ -3,11 +3,18 @@ let bidPartners = [];
 let bidPersonnel = [];
 const isOwner = (window.USER_ROLE === 'owner');
 
+var DEFAULT_INCLUSIONS = '1 Year parts and labor warranty\nManufacturer\'s Warranty per submittals\nInsurances, licenses, and required HVAC Permits\nPrice includes sales tax';
+var DEFAULT_EXCLUSIONS = 'Cutting or coring any concrete, block, or brick\nConcrete work and Lifting\nFramed openings or structural support\nCondenser pads, Disconnects, and Whips\nWeather-tight of exterior and roof penetrations';
+
 if (window.BID_ID !== undefined) {
     loadJobs();
     if (isOwner) loadUsers();
     if (window.BID_ID > 0) loadBid();
-    else loadNextBidNumber();
+    else {
+        loadNextBidNumber();
+        document.getElementById('bidInclusions').value = DEFAULT_INCLUSIONS;
+        document.getElementById('bidExclusions').value = DEFAULT_EXCLUSIONS;
+    }
 }
 
 const $ = id => document.getElementById(id);
@@ -124,8 +131,14 @@ function recalculate() {
     const perDiemTotal = perDiemRate * durationDays * crewSize;
     $('bidPerDiemTotal').value = fmt(perDiemTotal);
 
-    // Material per-unit
-    const materialCost = val('bidMaterialCost');
+    // Material cost breakdown
+    const matSubtotal = val('bidMatSubtotal');
+    const matShipping = val('bidMatShipping');
+    const matTaxRate = val('bidMatTaxRate');
+    const matTaxAmount = Math.round(matSubtotal * matTaxRate / 100 * 100) / 100;
+    const materialCost = Math.round((matSubtotal + matShipping + matTaxAmount) * 100) / 100;
+    if ($('bidMatTaxAmount')) $('bidMatTaxAmount').value = fmt(matTaxAmount);
+    $('bidMaterialCost').value = fmt(materialCost);
     $('bidMatPerSystem').value = totalSystems > 0 ? fmt(materialCost / totalSystems) : '$0.00';
     $('bidMatPerApt').value = numApt > 0 ? fmt(materialCost / numApt) : '$0.00';
 
@@ -308,7 +321,29 @@ async function loadBid() {
     toggleClubhouse();
 
     if (isOwner) {
-        $('bidMaterialCost').value = bid.material_cost || 0;
+        // Material cost breakdown — backward compat: if old bid has material_cost but no subtotal, load into subtotal
+        const matSub = bid.material_subtotal || 0;
+        const matCost = bid.material_cost || 0;
+        $('bidMatSubtotal').value = (matSub > 0) ? matSub : matCost;
+        $('bidMatShipping').value = bid.material_shipping || 0;
+        $('bidMatTaxRate').value = bid.material_tax_rate || 0;
+
+        // Auto-fill tax rate from job if not set and bid has a job
+        if ((bid.material_tax_rate || 0) === 0 && matSub === 0 && bid.job_id) {
+            fetch(`/api/projects/${bid.job_id}`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data && data.job && data.job.tax_rate && $('bidMatTaxRate')) {
+                        $('bidMatTaxRate').value = data.job.tax_rate;
+                        recalculate();
+                    }
+                }).catch(() => {});
+        }
+
+        // Populate supplier quote dropdown for this job
+        if (bid.job_id && $('bidQuoteSelect')) {
+            loadQuotesForJob(bid.job_id);
+        }
 
         $('bidRoughIn').value = bid.rough_in_hours ?? 15;
         $('bidAHU').value = bid.ahu_install_hours ?? 1;
@@ -344,8 +379,8 @@ async function loadBid() {
         renderPersonnel();
     }
 
-    $('bidInclusions').value = bid.inclusions || '';
-    $('bidExclusions').value = bid.exclusions || '';
+    $('bidInclusions').value = bid.inclusions || DEFAULT_INCLUSIONS;
+    $('bidExclusions').value = bid.exclusions || DEFAULT_EXCLUSIONS;
     $('bidDescription').value = bid.bid_description || '';
     $('bidNotes').value = bid.notes || '';
 
@@ -364,6 +399,29 @@ async function loadBid() {
     }
 
     recalculate();
+
+    // Check for takeoff data
+    if (isOwner && window.BID_ID > 0) {
+        fetch(`/api/bids/${window.BID_ID}/takeoff/items`).then(r => r.json()).then(tkItems => {
+            if (tkItems.length > 0) {
+                let total = 0;
+                tkItems.forEach(ti => {
+                    if (ti.enabled) {
+                        const oq = ti.qty_override != null ? ti.qty_override : 0;
+                        // Show info bar — exact total computed server-side via push
+                        total += (oq || 0) * (ti.unit_price || 0);
+                    }
+                });
+                const bar = $('takeoffInfoBar');
+                const link = $('takeoffEditLink');
+                if (bar) {
+                    bar.style.display = '';
+                    $('takeoffTotal').textContent = fmt(val('bidMatSubtotal'));
+                    if (link) link.href = `/bids/${window.BID_ID}/takeoff`;
+                }
+            }
+        }).catch(() => {});
+    }
 }
 
 // ─── Partners ──────────────────────────────────────────────
@@ -497,7 +555,9 @@ async function saveBid() {
     if (isOwner) {
         Object.assign(data, {
             price_per_ton: val('bidPricePerTon'),
-            material_cost: val('bidMaterialCost'),
+            material_subtotal: val('bidMatSubtotal'),
+            material_shipping: val('bidMatShipping'),
+            material_tax_rate: val('bidMatTaxRate'),
             rough_in_hours: val('bidRoughIn'),
             ahu_install_hours: val('bidAHU'),
             condenser_install_hours: val('bidCondenser'),
@@ -795,12 +855,16 @@ async function deleteFollowup(fid) {
 }
 
 async function awardBid() {
-    if (!confirm('Award this bid? This will:\n- Set bid status to Accepted\n- Set job status to Awarded\n- Create precon meeting\n- Seed schedule phases and PM benchmarks\n- Notify team')) return;
+    if (!confirm('Award this bid? This will:\n- Create a project (if not already linked)\n- Set bid status to Accepted\n- Set job status to Awarded\n- Create pay app contract\n- Create precon meeting\n- Seed schedule phases, PM benchmarks & closeout checklist\n- Notify team')) return;
     const res = await fetch(`/api/bids/${window.BID_ID}/award`, { method: 'POST' });
     const data = await res.json();
     if (data.ok) {
-        alert('Bid awarded successfully!');
-        location.reload();
+        window._toastShown = true;
+        if (data.job_id && confirm('Bid awarded successfully!\n\nGo to the new project page?')) {
+            location.href = '/projects/' + data.job_id;
+        } else {
+            location.reload();
+        }
     } else {
         alert(data.error || 'Failed to award bid');
     }
@@ -853,6 +917,67 @@ function syncProposalLinesFromDOM() {
 function collectProposalLines() {
     syncProposalLinesFromDOM();
     return proposalLines.filter(l => l.description);
+}
+
+// ─── Supplier Quote Integration ──────────────────────────────
+let _bidQuotes = [];
+
+async function loadQuotesForJob(jobId) {
+    const sel = $('bidQuoteSelect');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- Manual Entry --</option>';
+    _bidQuotes = [];
+    if (!jobId) return;
+    try {
+        const res = await fetch('/api/supplier-quotes?job_id=' + jobId);
+        _bidQuotes = await res.json();
+        _bidQuotes.forEach(q => {
+            const label = (q.supplier_name || 'Quote') +
+                (q.quote_number ? ' #' + q.quote_number : '') +
+                ' — ' + fmt(q.total || 0) +
+                (q.is_baseline ? ' [Baseline]' : '');
+            const opt = document.createElement('option');
+            opt.value = q.id;
+            opt.textContent = label;
+            sel.appendChild(opt);
+        });
+    } catch(e) {}
+}
+
+function loadQuoteIntoBid() {
+    const sel = $('bidQuoteSelect');
+    const info = $('bidQuoteInfo');
+    if (!sel) return;
+    const qid = parseInt(sel.value);
+    if (!qid) {
+        if (info) info.textContent = '';
+        return;
+    }
+    const q = _bidQuotes.find(x => x.id === qid);
+    if (!q) return;
+
+    // Fill material fields from quote
+    $('bidMatSubtotal').value = q.subtotal || 0;
+    $('bidMatShipping').value = q.freight || 0;
+    // Back-calculate tax rate from quote's tax_amount and subtotal
+    if (q.tax_amount > 0 && q.subtotal > 0) {
+        $('bidMatTaxRate').value = Math.round(q.tax_amount / q.subtotal * 100 * 100) / 100;
+    }
+    if (info) info.textContent = 'Loaded from ' + (q.supplier_name || 'quote') + '. You can override any field.';
+    recalculate();
+}
+
+// ─── Takeoff Navigation ────────────────────────────────────────
+async function goToTakeoff() {
+    // If bid isn't saved yet, save it first
+    if (!window.BID_ID || window.BID_ID <= 0) {
+        await saveBid();
+        if (!window.BID_ID || window.BID_ID <= 0) {
+            alert('Please save the bid first.');
+            return;
+        }
+    }
+    location.href = `/bids/${window.BID_ID}/takeoff`;
 }
 
 // Load followups after bid loads

@@ -25,7 +25,7 @@ function loadPipeline() {
 function renderMatrix() {
     var el = document.getElementById('pipelineMatrix');
     if (!pipelineData.length) {
-        el.innerHTML = '<p style="text-align:center;padding:40px;color:#6B7280;">No active jobs with pipeline data. Use "Sync All Jobs" to initialize.</p>';
+        el.innerHTML = '<p style="text-align:center;padding:40px;color:#6B7280;">No active projects with pipeline data. Use "Sync All Projects" to initialize.</p>';
         return;
     }
     var html = '';
@@ -63,7 +63,7 @@ function showDetail(jobId) {
         .then(function(r) { return r.json(); })
         .then(function(steps) {
             var job = pipelineData.find(function(j) { return j.job_id === jobId; });
-            document.getElementById('detailJobName').textContent = job ? job.job_name : 'Job #' + jobId;
+            document.getElementById('detailJobName').textContent = job ? job.job_name : 'Project #' + jobId;
             var container = document.getElementById('detailSteps');
             var html = '';
             steps.forEach(function(s) {

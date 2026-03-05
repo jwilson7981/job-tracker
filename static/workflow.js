@@ -124,7 +124,7 @@ function renderJobCards(data) {
     var jobs = data.jobs || [];
 
     if (!jobs.length) {
-        container.innerHTML = '<p class="empty-state">No jobs found.</p>';
+        container.innerHTML = '<p class="empty-state">No projects found.</p>';
         return;
     }
 

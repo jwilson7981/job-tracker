@@ -63,6 +63,10 @@ async function loadDropdowns() {
         o.textContent = u.display_name;
         editUser.appendChild(o);
     });
+
+    // Auto-select job from URL parameter
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) { document.getElementById('filterJob').value = _urlJobId; }
 }
 
 async function loadRFIs() {
@@ -112,42 +116,99 @@ function renderTable() {
         return;
     }
 
-    tbody.innerHTML = allRFIs.map(r => {
-        const isOverdue = r.status === 'Open' && r.date_required && r.date_required < today;
-        const statusClass = r.status === 'Open' ? 'status-open'
-            : r.status === 'Answered' ? 'status-in-progress'
-            : 'status-closed';
-        const rowClass = isOverdue ? 'style="background:#FEF2F2;"' : '';
-        const jobName = r.job_name || (rfiJobs.find(j => j.id === r.job_id) || {}).name || '-';
+    // Group by job
+    const groups = {};
+    const jobOrder = [];
+    allRFIs.forEach(r => {
+        const key = r.job_id || 0;
+        if (!groups[key]) {
+            const jobName = r.job_name || (rfiJobs.find(j => j.id === r.job_id) || {}).name || 'No Job';
+            groups[key] = { name: jobName, items: [] };
+            jobOrder.push(key);
+        }
+        groups[key].items.push(r);
+    });
 
-        return `<tr ${rowClass}>
-            <td><a href="#" class="link" onclick="toggleDetail(${r.id});return false;">#${r.rfi_number || r.id}</a></td>
-            <td>${jobName}</td>
-            <td>${r.subject || '-'}</td>
-            <td>${r.requested_by || '-'}</td>
-            <td>${r.date_submitted || '-'}</td>
-            <td${isOverdue ? ' style="color:#DC2626;font-weight:600;"' : ''}>${r.date_required || '-'}${isOverdue ? ' (Overdue)' : ''}</td>
-            <td><span class="status-badge ${statusClass}">${r.status}</span></td>
-            <td>
-                <button class="btn btn-small btn-secondary" onclick="editRFI(${r.id})">Edit</button>
-                <button class="btn btn-small btn-danger" onclick="deleteRFI(${r.id})">Delete</button>
-            </td>
-        </tr>
-        <tr id="detail-${r.id}" style="display:none;">
-            <td colspan="8" style="background:var(--gray-50);padding:16px;">
-                <div style="margin-bottom:12px;">
-                    <strong>Question:</strong>
-                    <p style="margin:4px 0 0;white-space:pre-wrap;">${r.question || 'No question provided.'}</p>
-                </div>
-                <div>
-                    <strong>Answer:</strong>
-                    <p style="margin:4px 0 0;white-space:pre-wrap;">${r.answer || 'Not yet answered.'}</p>
-                </div>
-                ${r.assigned_to_name ? '<div style="margin-top:8px;"><strong>Assigned To:</strong> ' + r.assigned_to_name + '</div>' : ''}
-                ${r.date_answered ? '<div style="margin-top:4px;"><strong>Date Answered:</strong> ' + r.date_answered + '</div>' : ''}
+    let html = '';
+
+    jobOrder.forEach(key => {
+        const group = groups[key];
+        const count = group.items.length;
+        const open = group.items.filter(r => r.status === 'Open').length;
+        const answered = group.items.filter(r => r.status === 'Answered').length;
+        const closed = group.items.filter(r => r.status === 'Closed').length;
+
+        let statusSummary = '';
+        if (open) statusSummary += `<span style="color:#1E40AF;font-size:12px;margin-left:8px;">${open} open</span>`;
+        if (answered) statusSummary += `<span style="color:#92400E;font-size:12px;margin-left:8px;">${answered} answered</span>`;
+        if (closed) statusSummary += `<span style="color:#166534;font-size:12px;margin-left:8px;">${closed} closed</span>`;
+
+        html += `<tr class="rfi-group-header" onclick="toggleRfiGroup('rfi-grp-${key}')" style="cursor:pointer;background:var(--gray-50,#f9fafb);border-top:2px solid var(--gray-200,#e5e7eb);">
+            <td colspan="8" style="padding:10px 12px;font-weight:700;font-size:14px;">
+                <span class="rfi-toggle" id="toggle-rfi-grp-${key}" style="display:inline-block;width:18px;transition:transform .2s;">&#9654;</span>
+                ${group.name}
+                <span style="font-weight:400;color:var(--gray-500);font-size:13px;margin-left:6px;">(${count})</span>
+                ${statusSummary}
             </td>
         </tr>`;
-    }).join('');
+
+        group.items.forEach(r => {
+            const isOverdue = r.status === 'Open' && r.date_required && r.date_required < today;
+            const statusClass = r.status === 'Open' ? 'status-open'
+                : r.status === 'Answered' ? 'status-in-progress'
+                : 'status-closed';
+
+            let rowStyle = 'display:none;';
+            if (isOverdue) rowStyle += 'background:#FEF2F2;';
+
+            html += `<tr class="rfi-row rfi-grp-${key}" style="${rowStyle}">
+                <td><a href="#" class="link" onclick="toggleDetail(${r.id});return false;">#${r.rfi_number || r.id}</a></td>
+                <td>${r.job_name || '-'}</td>
+                <td>${r.subject || '-'}</td>
+                <td>${r.requested_by || '-'}</td>
+                <td>${r.date_submitted || '-'}</td>
+                <td${isOverdue ? ' style="color:#DC2626;font-weight:600;"' : ''}>${r.date_required || '-'}${isOverdue ? ' (Overdue)' : ''}</td>
+                <td><span class="status-badge ${statusClass}">${r.status}</span></td>
+                <td>
+                    <button class="btn btn-small btn-secondary" onclick="editRFI(${r.id})">Edit</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteRFI(${r.id})">Delete</button>
+                </td>
+            </tr>
+            <tr id="detail-${r.id}" class="rfi-row rfi-grp-${key}" style="display:none;">
+                <td colspan="8" style="background:var(--gray-50);padding:16px;">
+                    <div style="margin-bottom:12px;">
+                        <strong>Question:</strong>
+                        <p style="margin:4px 0 0;white-space:pre-wrap;">${r.question || 'No question provided.'}</p>
+                    </div>
+                    <div>
+                        <strong>Answer:</strong>
+                        <p style="margin:4px 0 0;white-space:pre-wrap;">${r.answer || 'Not yet answered.'}</p>
+                    </div>
+                    ${r.assigned_to_name ? '<div style="margin-top:8px;"><strong>Assigned To:</strong> ' + r.assigned_to_name + '</div>' : ''}
+                    ${r.date_answered ? '<div style="margin-top:4px;"><strong>Date Answered:</strong> ' + r.date_answered + '</div>' : ''}
+                </td>
+            </tr>`;
+        });
+    });
+
+    tbody.innerHTML = html;
+}
+
+function toggleRfiGroup(groupClass) {
+    const rows = document.querySelectorAll('.rfi-row.' + groupClass);
+    const toggle = document.getElementById('toggle-' + groupClass);
+    // Check if group is open by looking at the first data row (skip detail rows)
+    const firstRow = document.querySelector('.rfi-row.' + groupClass + ':not([id^="detail-"])');
+    const isOpen = firstRow && firstRow.style.display !== 'none';
+    rows.forEach(r => {
+        if (r.id && r.id.startsWith('detail-')) {
+            // Always hide detail rows when collapsing; keep hidden when expanding
+            r.style.display = 'none';
+        } else {
+            r.style.display = isOpen ? 'none' : '';
+        }
+    });
+    if (toggle) toggle.style.transform = isOpen ? '' : 'rotate(90deg)';
 }
 
 function toggleDetail(id) {

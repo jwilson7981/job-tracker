@@ -5,14 +5,14 @@
 {% block content %}
 <div class="page-header">
     <h1>Dashboard</h1>
-    <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+    <button class="btn btn-primary" onclick="showNewJobModal()">+ New Project</button>
 </div>
 <div id="dashboardLoading" class="loading">Loading dashboard...</div>
 <div id="dashboardContent" style="display:none;">
     <div class="kpi-grid" id="kpiGrid"></div>
     <div class="charts-row">
         <div class="chart-card">
-            <h3>Jobs by Stage</h3>
+            <h3>Projects by Stage</h3>
             <canvas id="stageChart"></canvas>
         </div>
         <div class="chart-card">
@@ -25,7 +25,7 @@
     <div class="chart-card" id="followupsCard" style="margin-top:16px;">
         <h3>Upcoming Bid Follow-ups <small style="color:var(--gray-400);font-weight:400;">(next 7 days)</small></h3>
         <table class="data-table" style="margin-top:8px;">
-            <thead><tr><th>Date</th><th>Bid</th><th>Job</th><th>Type</th><th>Assigned To</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Bid</th><th>Project</th><th>Type</th><th>Assigned To</th><th></th></tr></thead>
             <tbody id="dashFollowupsBody"><tr><td colspan="6" class="empty-state">No upcoming follow-ups</td></tr></tbody>
         </table>
     </div>
@@ -34,12 +34,12 @@
 <div id="newJobModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)hideNewJobModal()">
     <div class="modal">
         <div class="modal-header">
-            <h2>Create New Job</h2>
+            <h2>Create New Project</h2>
             <button class="modal-close" onclick="hideNewJobModal()">&times;</button>
         </div>
         <form onsubmit="createJob(event)">
             <div class="form-group">
-                <label class="form-label">Job Name</label>
+                <label class="form-label">Project Name</label>
                 <input type="text" id="jobName" class="form-input" placeholder="e.g. Building A — Phase 2" autofocus required>
             </div>
             <div class="form-group">
@@ -71,7 +71,7 @@
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="hideNewJobModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Create Job</button>
+                <button type="submit" class="btn btn-primary">Create Project</button>
             </div>
         </form>
     </div>
@@ -92,6 +92,22 @@ function hideNewJobModal() {
     document.getElementById('jobTaxRate').value = '';
     document.getElementById('taxLookupInfo').textContent = '';
 }
+document.getElementById('jobZip').addEventListener('blur', async function() {
+    const zip = this.value.trim();
+    if (zip.length !== 5) return;
+    try {
+        const r = await fetch('/api/tax-lookup/' + zip);
+        const d = await r.json();
+        if (d.tax_rate) {
+            document.getElementById('jobTaxRate').value = d.tax_rate;
+            document.getElementById('taxLookupInfo').textContent = 'Tax rate auto-filled from zip code';
+        }
+        if (d.city && !document.getElementById('jobCity').value.trim())
+            document.getElementById('jobCity').value = d.city;
+        if (d.state && !document.getElementById('jobState').value.trim())
+            document.getElementById('jobState').value = d.state;
+    } catch(e) {}
+});
 async function createJob(e) {
     e.preventDefault();
     const name = document.getElementById('jobName').value.trim();
@@ -114,7 +130,7 @@ async function createJob(e) {
         const data = await res.json();
         window.location.href = '/projects/' + data.id;
     } else {
-        alert('Failed to create job.');
+        alert('Failed to create project.');
     }
 }
 </script>

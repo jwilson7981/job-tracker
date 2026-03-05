@@ -5,8 +5,8 @@
 {% block content %}
 <div class="home-page">
     <div class="home-header">
-        <h1>Your Jobs</h1>
-        <button class="btn btn-primary btn-large" onclick="showNewJobModal()">+ New Job</button>
+        <h1>Your Projects</h1>
+        <button class="btn btn-primary btn-large" onclick="showNewJobModal()">+ New Project</button>
     </div>
 
     {% if jobs %}
@@ -17,14 +17,14 @@
             <div class="job-card-meta">
                 <span class="status-badge status-{{ job.status|lower|replace(' ', '-') }}">{{ job.status }}</span>
                 <span class="job-card-date">Updated {{ job.updated_at }}</span>
-                <button class="btn-delete-job" onclick="deleteJob(event, {{ job.id }})" title="Delete job">&times;</button>
+                <button class="btn-delete-job" onclick="deleteJob(event, {{ job.id }})" title="Delete project">&times;</button>
             </div>
         </a>
         {% endfor %}
     </div>
     {% else %}
     <div class="empty-state" id="emptyState">
-        <p>No jobs yet. Click <strong>+ New Job</strong> to get started.</p>
+        <p>No projects yet. Click <strong>+ New Project</strong> to get started.</p>
     </div>
     {% endif %}
 </div>
@@ -32,9 +32,9 @@
 <!-- New Job Modal -->
 <div id="newJobModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)hideNewJobModal()">
     <div class="modal">
-        <h2>Create New Job</h2>
+        <h2>Create New Project</h2>
         <form onsubmit="createJob(event)">
-            <label for="jobName">Job Name</label>
+            <label for="jobName">Project Name</label>
             <input type="text" id="jobName" placeholder="e.g. Building A — Phase 2" autofocus required>
 
             <label for="jobAddress">Address</label>
@@ -67,7 +67,7 @@
 
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" onclick="hideNewJobModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Create Job</button>
+                <button type="submit" class="btn btn-primary">Create Project</button>
             </div>
         </form>
     </div>
@@ -110,14 +110,14 @@ async function createJob(e) {
         const data = await res.json();
         window.location.href = '/job/' + data.id;
     } else {
-        alert('Failed to create job.');
+        alert('Failed to create project.');
     }
 }
 
 async function deleteJob(event, jobId) {
     event.preventDefault();
     event.stopPropagation();
-    if (!confirm('Are you sure you want to delete this job? This cannot be undone.')) return;
+    if (!confirm('Are you sure you want to delete this project? This cannot be undone.')) return;
     const res = await fetch('/api/job/' + jobId, { method: 'DELETE' });
     if (res.ok) {
         const card = document.getElementById('job-card-' + jobId);
@@ -134,13 +134,13 @@ async function deleteJob(event, jobId) {
                     const empty = document.createElement('div');
                     empty.className = 'empty-state';
                     empty.id = 'emptyState';
-                    empty.innerHTML = '<p>No jobs yet. Click <strong>+ New Job</strong> to get started.</p>';
+                    empty.innerHTML = '<p>No projects yet. Click <strong>+ New Project</strong> to get started.</p>';
                     container.appendChild(empty);
                 }
             }, 300);
         }
     } else {
-        alert('Failed to delete job.');
+        alert('Failed to delete project.');
     }
 }
 

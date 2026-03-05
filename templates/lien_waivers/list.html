@@ -8,6 +8,7 @@
             <button class="btn btn-secondary btn-small" onclick="exportToExcel('Lien Waivers','waiversBody','Lien_Waivers')">Excel</button>
             <button class="btn btn-secondary btn-small" onclick="exportToPDF('Lien Waivers','waiversBody','Lien_Waivers')">PDF</button>
         </div>
+        <button class="btn btn-secondary" onclick="showUploadNew()">Upload Waiver</button>
         <button class="btn btn-primary" onclick="showAddWaiver()">+ New Waiver</button>
     </div>
 </div>
@@ -65,6 +66,7 @@
                 <th>Job</th>
                 <th>#</th>
                 <th>Type</th>
+                <th>Pay App</th>
                 <th>Against</th>
                 <th>Current Payment</th>
                 <th>Balance</th>
@@ -101,6 +103,14 @@
                         <option value="Unconditional Progress">Unconditional Progress</option>
                         <option value="Conditional Final">Conditional Final</option>
                         <option value="Unconditional Final">Unconditional Final</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row" style="display:grid;grid-template-columns:1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Pay App</label>
+                    <select id="waiverPayApp" class="form-select">
+                        <option value="">-- None --</option>
                     </select>
                 </div>
             </div>
@@ -239,12 +249,44 @@
     </div>
 </div>
 
+<!-- Upload New Waiver Modal -->
+<div class="modal-overlay" id="uploadNewModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Upload Lien Waiver</h2>
+            <button class="modal-close" onclick="document.getElementById('uploadNewModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="uploadNewWaiver(event)" id="uploadNewForm">
+            <div class="form-group">
+                <label class="form-label">Job *</label>
+                <select id="uploadJob" class="form-select" required onchange="loadPayAppsForUpload()"></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Pay App</label>
+                <select id="uploadPayApp" class="form-select">
+                    <option value="">-- None --</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Waiver File (PDF) *</label>
+                <input type="file" id="uploadNewFile" class="form-input" accept=".pdf,.png,.jpg,.jpeg" required>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('uploadNewModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 let allWaivers = [];
 let allJobs = [];
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadJobs();
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadJobs();
+    var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+    if (_urlJobId) document.getElementById('filterJob').value = _urlJobId;
     loadWaivers();
 });
 
@@ -253,9 +295,12 @@ async function loadJobs() {
     allJobs = await res.json();
     const filterSel = document.getElementById('filterJob');
     const formSel = document.getElementById('waiverJob');
+    const uploadSel = document.getElementById('uploadJob');
     allJobs.forEach(j => {
-        filterSel.innerHTML += `<option value="${j.id}">${j.name}</option>`;
-        formSel.innerHTML += `<option value="${j.id}">${j.name}</option>`;
+        const opt = `<option value="${j.id}">${j.name}</option>`;
+        filterSel.innerHTML += opt;
+        formSel.innerHTML += opt;
+        uploadSel.innerHTML += opt;
     });
 }
 
@@ -277,7 +322,7 @@ async function loadWaivers() {
 function renderTable() {
     const tbody = document.getElementById('waiversBody');
     if (!allWaivers.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No lien waivers found. Click "+ New Waiver" to create one.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No lien waivers found. Click "+ New Waiver" to create one.</td></tr>';
         document.getElementById('waiverCount').textContent = '';
         return;
     }
@@ -285,10 +330,12 @@ function renderTable() {
     tbody.innerHTML = allWaivers.map(w => {
         const statusClass = w.status === 'Draft' ? 'badge-gray' : w.status === 'Sent' ? 'badge-yellow' : 'badge-green';
         const typeShort = w.waiver_type.replace('Conditional ', 'Cond. ').replace('Unconditional ', 'Uncond. ');
+        const payAppLabel = w.pay_app_number ? `#${w.pay_app_number}` : '-';
         return `<tr>
             <td>${w.job_name || ''}</td>
             <td>${w.waiver_number}</td>
             <td>${typeShort}</td>
+            <td>${payAppLabel}</td>
             <td>${w.against_company || '-'}</td>
             <td>$${fmt(w.current_payment)}</td>
             <td>$${fmt(w.contract_balance)}</td>
@@ -337,12 +384,28 @@ function showAddWaiver() {
     document.getElementById('waiverDate').value = new Date().toISOString().slice(0, 10);
     document.getElementById('waiverStatusGroup').style.display = 'none';
     document.getElementById('waiverBalance').value = '0.00';
+    document.getElementById('waiverPayApp').innerHTML = '<option value="">-- None --</option>';
     document.getElementById('waiverModal').style.display = 'flex';
+}
+
+async function loadPayAppsForSelect(jobId, selectId) {
+    const sel = document.getElementById(selectId);
+    sel.innerHTML = '<option value="">-- None --</option>';
+    if (!jobId) return;
+    try {
+        const res = await fetch('/api/lien-waivers/pay-apps-for-job/' + jobId);
+        if (!res.ok) return;
+        const apps = await res.json();
+        apps.forEach(a => {
+            sel.innerHTML += `<option value="${a.id}">Pay App #${a.application_number}${a.period_to ? ' (' + a.period_to + ')' : ''} - ${a.status}</option>`;
+        });
+    } catch(e) {}
 }
 
 async function autoFillFromJob() {
     const jobId = document.getElementById('waiverJob').value;
     if (!jobId) return;
+    loadPayAppsForSelect(jobId, 'waiverPayApp');
     // Fetch job details for auto-fill
     try {
         const res = await fetch('/api/jobs/' + jobId);
@@ -371,6 +434,9 @@ async function editWaiver(id) {
     document.getElementById('waiverEditId').value = w.id;
     document.getElementById('waiverModalTitle').textContent = 'Edit Lien Waiver #' + w.waiver_number;
     document.getElementById('waiverJob').value = w.job_id;
+    // Load pay apps for this job, then set the selected value
+    await loadPayAppsForSelect(w.job_id, 'waiverPayApp');
+    if (w.pay_app_id) document.getElementById('waiverPayApp').value = w.pay_app_id;
     document.getElementById('waiverType').value = w.waiver_type;
     document.getElementById('waiverDate').value = w.waiver_date || '';
     document.getElementById('waiverThrough').value = w.through_date || '';
@@ -414,6 +480,7 @@ async function saveWaiver(e) {
         signer_name: document.getElementById('waiverSigner').value,
         signer_title: document.getElementById('waiverSignerTitle').value,
         notes: document.getElementById('waiverNotes').value,
+        pay_app_id: document.getElementById('waiverPayApp').value || null,
     };
     if (editId) {
         payload.status = document.getElementById('waiverStatus').value;
@@ -439,6 +506,7 @@ async function viewWaiver(id) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
             <div><strong>Type:</strong> ${w.waiver_type}</div>
             <div><strong>Status:</strong> <span class="badge ${w.status === 'Draft' ? 'badge-gray' : w.status === 'Sent' ? 'badge-yellow' : 'badge-green'}">${w.status}</span></div>
+            <div><strong>Pay App:</strong> ${w.pay_app_number ? '#' + w.pay_app_number + (w.pay_app_period ? ' (' + w.pay_app_period + ')' : '') : 'None'}</div>
             <div><strong>Waiver Date:</strong> ${w.waiver_date || '-'}</div>
             <div><strong>Through Date:</strong> ${w.through_date || '-'}</div>
             <div><strong>Claimant:</strong> ${w.claimant || '-'}</div>
@@ -512,6 +580,37 @@ async function deleteWaiver(id) {
     } else {
         const err = await res.json();
         alert(err.error || 'Error deleting waiver');
+    }
+}
+
+function showUploadNew() {
+    document.getElementById('uploadNewForm').reset();
+    document.getElementById('uploadPayApp').innerHTML = '<option value="">-- None --</option>';
+    document.getElementById('uploadNewModal').style.display = 'flex';
+}
+
+function loadPayAppsForUpload() {
+    const jobId = document.getElementById('uploadJob').value;
+    loadPayAppsForSelect(jobId, 'uploadPayApp');
+}
+
+async function uploadNewWaiver(e) {
+    e.preventDefault();
+    const jobId = document.getElementById('uploadJob').value;
+    const payAppId = document.getElementById('uploadPayApp').value;
+    const file = document.getElementById('uploadNewFile').files[0];
+    if (!file || !jobId) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('job_id', jobId);
+    if (payAppId) fd.append('pay_app_id', payAppId);
+    const res = await fetch('/api/lien-waivers/upload-new', { method: 'POST', body: fd });
+    if (res.ok) {
+        document.getElementById('uploadNewModal').style.display = 'none';
+        loadWaivers();
+    } else {
+        const err = await res.json();
+        alert(err.error || 'Upload failed');
     }
 }
 </script>

@@ -8,7 +8,7 @@ function loadJobs() {
         .then(function(r) { return r.json(); })
         .then(function(jobs) {
             var sel = document.getElementById('shipJob');
-            sel.innerHTML = '<option value="">Select Job...</option>';
+            sel.innerHTML = '<option value="">Select Project...</option>';
             jobs.forEach(function(j) {
                 sel.innerHTML += '<option value="' + j.id + '">' + j.name + '</option>';
             });
@@ -64,7 +64,7 @@ function showShipmentModal(shipment) {
 
 function loadAvailableMaterials(existingShipment) {
     var jobId = document.getElementById('shipJob').value;
-    if (!jobId) { document.getElementById('availableMaterials').innerHTML = '<p style="color:#6B7280;text-align:center;">Select a job first</p>'; return; }
+    if (!jobId) { document.getElementById('availableMaterials').innerHTML = '<p style="color:#6B7280;text-align:center;">Select a project first</p>'; return; }
     fetch('/api/jobs/' + jobId + '/available-materials')
         .then(function(r) { return r.json(); })
         .then(function(items) {

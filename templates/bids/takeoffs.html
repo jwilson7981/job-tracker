@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Material Takeoffs{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Material Takeoffs</h1>
+</div>
+<table class="data-table" id="takeoffsTable">
+    <thead>
+        <tr>
+            <th>Project</th>
+            <th>Location</th>
+            <th>Status</th>
+            <th>Units</th>
+            <th>Items</th>
+            <th>Material Total</th>
+            <th>Updated</th>
+            <th style="width:220px;"></th>
+        </tr>
+    </thead>
+    <tbody id="takeoffsBody">
+        <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+    </tbody>
+</table>
+<script>
+const fmt = n => '$' + Number(n || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+async function loadTakeoffs() {
+    const res = await fetch('/api/takeoffs');
+    const rows = await res.json();
+    const tbody = document.getElementById('takeoffsBody');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No projects yet. Create a project first.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(r => {
+        const hasItems = r.item_count > 0;
+        const loc = [r.city, r.state].filter(Boolean).join(', ') || '-';
+        const statusClass = r.job_status === 'Awarded' ? 'status-complete' : r.job_status === 'In Progress' ? 'status-in-progress' : 'status-pending';
+        return `<tr>
+            <td><strong>${r.job_name || 'Untitled'}</strong></td>
+            <td>${loc}</td>
+            <td><span class="status-badge ${statusClass}">${r.job_status || '-'}</span></td>
+            <td>${hasItems ? r.total_units + ' units / ' + r.unit_type_count + ' types' : '<span style="color:var(--gray-400);">-</span>'}</td>
+            <td>${hasItems ? r.enabled_count + ' of ' + r.item_count : '<span style="color:var(--gray-400);">No takeoff</span>'}</td>
+            <td style="font-weight:600;">${r.material_subtotal > 0 ? fmt(r.material_subtotal) : '-'}</td>
+            <td>${r.updated_at ? r.updated_at.split(' ')[0] : '-'}</td>
+            <td style="text-align:right;white-space:nowrap;">
+                <button class="btn btn-primary btn-small" onclick="openTakeoff(${r.job_id})">${hasItems ? 'Edit' : 'Start'}</button>
+                <button class="btn btn-secondary btn-small" onclick="openBid(${r.job_id})">Bid</button>
+                ${hasItems ? `<button class="btn btn-secondary btn-small" style="color:#EF4444;" onclick="deleteTakeoff(${r.bid_id}, '${(r.job_name || '').replace(/'/g, "\\'")}')">Delete</button>` : ''}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function openTakeoff(jobId) {
+    const res = await fetch('/api/projects/' + jobId + '/takeoff/start', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok && data.bid_id) {
+        window._toastShown = true;
+        location.href = '/bids/' + data.bid_id + '/takeoff';
+    }
+}
+
+async function openBid(jobId) {
+    const res = await fetch('/api/projects/' + jobId + '/takeoff/start', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok && data.bid_id) {
+        window._toastShown = true;
+        location.href = '/bids/' + data.bid_id;
+    }
+}
+
+async function deleteTakeoff(bidId, name) {
+    if (!confirm('Delete takeoff data for "' + name + '"?\n\nThis removes all unit types, items, and config. The bid and project are not affected.')) return;
+    const res = await fetch('/api/bids/' + bidId + '/takeoff', { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+        window._toastShown = true;
+        loadTakeoffs();
+    }
+}
+
+loadTakeoffs();
+</script>
+{% endblock %}

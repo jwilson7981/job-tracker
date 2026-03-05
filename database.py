@@ -368,6 +368,45 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(id)
         );
 
+        /* ─── Bid Takeoff ─── */
+
+        CREATE TABLE IF NOT EXISTS bid_takeoff_unit_types (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bid_id INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            unit_count INTEGER NOT NULL DEFAULT 0,
+            bedrooms INTEGER NOT NULL DEFAULT 1,
+            bathrooms INTEGER NOT NULL DEFAULT 1,
+            drops_8in INTEGER NOT NULL DEFAULT 0,
+            drops_6in INTEGER NOT NULL DEFAULT 0,
+            stories INTEGER NOT NULL DEFAULT 1,
+            tons REAL NOT NULL DEFAULT 0,
+            cfm REAL NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS bid_takeoff_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bid_id INTEGER NOT NULL,
+            phase TEXT NOT NULL DEFAULT 'Rough-In',
+            category TEXT NOT NULL DEFAULT '',
+            part_name TEXT NOT NULL DEFAULT '',
+            sku TEXT DEFAULT '',
+            unit_price REAL NOT NULL DEFAULT 0,
+            calc_basis TEXT NOT NULL DEFAULT 'per_system'
+                CHECK(calc_basis IN ('per_system','per_bedroom','per_bathroom',
+                    'per_8in_drop','per_6in_drop','per_total_drop','by_tonnage','fixed')),
+            qty_multiplier REAL NOT NULL DEFAULT 1,
+            tons_match REAL DEFAULT NULL,
+            waste_pct REAL NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            qty_override REAL DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE
+        );
+
         /* ─── Chat ─── */
 
         CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -1335,6 +1374,19 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_job_photos_job ON job_photos(job_id);
         CREATE INDEX IF NOT EXISTS idx_job_photos_category ON job_photos(category);
 
+        /* ─── Photo Albums ─── */
+
+        CREATE TABLE IF NOT EXISTS photo_albums (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_photo_albums_job ON photo_albums(job_id);
+
         /* ─── Material Shipments ─── */
 
         CREATE TABLE IF NOT EXISTS material_shipments (
@@ -1654,6 +1706,26 @@ def init_db():
             FOREIGN KEY (uploaded_by) REFERENCES users(id)
         );
         CREATE INDEX IF NOT EXISTS idx_shared_files_parent ON shared_files(parent_id);
+
+        /* ─── Project Documents (General File Upload) ─── */
+
+        CREATE TABLE IF NOT EXISTS project_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            file_name TEXT NOT NULL DEFAULT '',
+            file_path TEXT DEFAULT '',
+            file_size INTEGER DEFAULT 0,
+            mime_type TEXT DEFAULT '',
+            category TEXT DEFAULT 'Other'
+                CHECK(category IN ('Supplier Quote','Plans','Specs','Submittal','Contract','Invoice','Photo','Other')),
+            notes TEXT DEFAULT '',
+            uploaded_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_project_documents_job ON project_documents(job_id);
     ''')
 
     # Migration: add total_net_price column if missing
@@ -1759,6 +1831,15 @@ def init_db():
         conn.execute("ALTER TABLE bids ADD COLUMN housing_months REAL DEFAULT 0")
     if 'housing_total' not in bid_cols:
         conn.execute("ALTER TABLE bids ADD COLUMN housing_total REAL DEFAULT 0")
+
+    # Migration: add material cost breakdown columns to bids
+    for col, typedef in [
+        ('material_subtotal', "REAL DEFAULT 0"),
+        ('material_shipping', "REAL DEFAULT 0"),
+        ('material_tax_rate', "REAL DEFAULT 0"),
+    ]:
+        if col not in bid_cols:
+            conn.execute(f"ALTER TABLE bids ADD COLUMN {col} {typedef}")
 
     # Migration: add duplicate/quote columns to supplier_invoices (Phase 5)
     si_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(supplier_invoices)").fetchall()]
@@ -1870,6 +1951,11 @@ def init_db():
     ]:
         if col not in si_cols3:
             conn.execute(f"ALTER TABLE supplier_invoices ADD COLUMN {col} {typedef}")
+
+    # Migration: add pay_app_id to lien_waivers
+    lw_cols = [row[1] for row in conn.execute("PRAGMA table_info(lien_waivers)").fetchall()]
+    if 'pay_app_id' not in lw_cols:
+        conn.execute("ALTER TABLE lien_waivers ADD COLUMN pay_app_id INTEGER")
 
     # Migration: add days_to_pay to client_invoices
     ci_cols = [row[1] for row in conn.execute("PRAGMA table_info(client_invoices)").fetchall()]
@@ -2107,11 +2193,22 @@ def init_db():
     if 'signed_file' not in pa_cols2:
         conn.execute("ALTER TABLE pay_applications ADD COLUMN signed_file TEXT DEFAULT ''")
 
+    # Migration: add album_id to job_photos
+    jp_cols = [row[1] for row in conn.execute("PRAGMA table_info(job_photos)").fetchall()]
+    if 'album_id' not in jp_cols:
+        conn.execute("ALTER TABLE job_photos ADD COLUMN album_id INTEGER REFERENCES photo_albums(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_job_photos_album ON job_photos(album_id)")
+
     # Migration: add payroll_run_id to time_entries
     te_cols = [row[1] for row in conn.execute("PRAGMA table_info(time_entries)").fetchall()]
     if 'payroll_run_id' not in te_cols:
         conn.execute("ALTER TABLE time_entries ADD COLUMN payroll_run_id INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_time_entries_payroll_run ON time_entries(payroll_run_id)")
+
+    # Migration: add takeoff_config JSON to bids
+    bid_cols_tk = [row[1] for row in conn.execute("PRAGMA table_info(bids)").fetchall()]
+    if 'takeoff_config' not in bid_cols_tk:
+        conn.execute("ALTER TABLE bids ADD COLUMN takeoff_config TEXT DEFAULT '{}'")
 
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]

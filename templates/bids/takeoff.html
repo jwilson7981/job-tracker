@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Material Takeoff{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 id="pageTitle">Material Takeoff</h1>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="calculateAll()" style="background:#2563EB;border-color:#2563EB;">Calculate</button>
+        <button class="btn btn-primary" onclick="saveAllItems()">Save All</button>
+        <button class="btn btn-secondary" onclick="pushToBid()" style="background:#16A34A;color:#fff;border-color:#16A34A;">Push to Bid</button>
+        <button class="btn btn-secondary" onclick="addItem()">+ Add Item</button>
+        <a href="/bids/{{ bid_id }}" class="btn btn-secondary">Back to Bid</a>
+    </div>
+</div>
+
+<!-- Sticky Summary Bar -->
+<div id="summaryBar" style="position:sticky;top:0;z-index:50;background:#1E293B;color:#fff;padding:10px 16px;border-radius:8px;margin-bottom:16px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;font-size:13px;">
+    <span><strong id="sumEnabled">0</strong> items enabled</span>
+    <span>Rough-In: <strong id="sumRoughIn">$0</strong></span>
+    <span>Trim Out: <strong id="sumTrimOut">$0</strong></span>
+    <span>Equipment: <strong id="sumEquipment">$0</strong></span>
+    <span>Startup/Other: <strong id="sumStartup">$0</strong></span>
+    <span style="margin-left:auto;font-size:16px;font-weight:700;">Total: <span id="sumGrandTotal" style="color:#34D399;">$0.00</span></span>
+</div>
+
+<!-- Configuration Questions + Unit Types side by side -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+
+    <!-- Configuration Questions -->
+    <div class="bid-section" style="margin-bottom:0;">
+        <h3 style="margin:0 0 12px 0;">Job Configuration</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;">
+            <div class="bid-field">
+                <label class="form-label">Type of Build</label>
+                <select id="cfgBuildType" class="form-select" onchange="onConfigChange()">
+                    <option value="Straight Heat Cool">Straight Heat Cool</option>
+                    <option value="Heat Pump">Heat Pump</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">With or Without CRD</label>
+                <select id="cfgCRD" class="form-select" onchange="onConfigChange()">
+                    <option value="CRD">With CRD</option>
+                    <option value="No CRD">Without CRD</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">AHU Orientation</label>
+                <select id="cfgOrientation" class="form-select" onchange="onConfigChange()">
+                    <option value="Vertical">Vertical</option>
+                    <option value="Horizontal">Horizontal</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Type of Air Handler</label>
+                <select id="cfgAHUType" class="form-select" onchange="onConfigChange()">
+                    <option value="Wall Hanger">Wall Hanger Style</option>
+                    <option value="Closet">Closet Mount</option>
+                    <option value="Attic">Attic Install</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Drain Pan Needed?</label>
+                <select id="cfgDrainPan" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Mini Splits?</label>
+                <select id="cfgMiniSplits" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Built with Ductboard?</label>
+                <select id="cfgDuctboard" class="form-select" onchange="onConfigChange()">
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Exhaust Fan Type</label>
+                <select id="cfgExhaustType" class="form-select" onchange="onConfigChange()">
+                    <option value="Ceiling">Ceiling Exhaust Fan</option>
+                    <option value="Side Wall">Side Wall Exhaust Fan</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Wrapping Dryers and Boots?</label>
+                <select id="cfgWrapping" class="form-select" onchange="onConfigChange()">
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Using Pass-Throughs?</label>
+                <select id="cfgPassThroughs" class="form-select" onchange="onConfigChange()">
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Condenser Location</label>
+                <select id="cfgCondenserLoc" class="form-select" onchange="onConfigChange()">
+                    <option value="Ground">Ground</option>
+                    <option value="Roof">Roof</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Outside Air?</label>
+                <select id="cfgOutsideAir" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Range Hoods?</label>
+                <select id="cfgRangeHoods" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Zoned System?</label>
+                <select id="cfgZoned" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label"># Flex Bags per Drop</label>
+                <input type="number" id="cfgBagsPerDrop" class="form-input" value="0.75" min="0" step="0.25" onchange="onConfigChange()">
+            </div>
+            <div class="bid-field">
+                <label class="form-label"># Ductboard per Unit</label>
+                <input type="number" id="cfgDuctboardPerUnit" class="form-input" value="2" min="0" step="1" onchange="onConfigChange()">
+            </div>
+        </div>
+    </div>
+
+    <!-- Unit Types -->
+    <div class="bid-section" style="margin-bottom:0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 style="margin:0;">Unit Types</h3>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <select id="utPreset" class="form-select" style="width:160px;font-size:12px;">
+                    <option value="">+ Add Unit Type</option>
+                    <option value="studio">Studio</option>
+                    <option value="1b1b">1 Bed / 1 Bath</option>
+                    <option value="1b2b">1 Bed / 2 Bath</option>
+                    <option value="2b1b">2 Bed / 1 Bath</option>
+                    <option value="2b2b">2 Bed / 2 Bath</option>
+                    <option value="2b3b">2 Bed / 3 Bath</option>
+                    <option value="3b2b">3 Bed / 2 Bath</option>
+                    <option value="3b3b">3 Bed / 3 Bath</option>
+                    <option value="4b2b">4 Bed / 2 Bath</option>
+                    <option value="4b3b">4 Bed / 3 Bath</option>
+                    <option value="corridor">Corridor</option>
+                    <option value="clubhouse">Clubhouse</option>
+                    <option value="custom">Custom</option>
+                </select>
+                <button class="btn btn-secondary btn-small" onclick="addPresetUnitType()">Add</button>
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="unitTypesTable" style="font-size:12px;">
+                <thead>
+                    <tr>
+                        <th>Name</th><th style="width:50px;">Count</th><th style="width:45px;">Beds</th>
+                        <th style="width:45px;">Baths</th><th style="width:50px;">8" Drp</th>
+                        <th style="width:50px;">6" Drp</th><th style="width:45px;">Flrs</th>
+                        <th style="width:50px;">Tons</th><th style="width:50px;">CFM</th><th style="width:30px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="unitTypesBody"></tbody>
+                <tfoot id="unitTypesTotals"></tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Material Tables by Phase -->
+<div id="phaseSections"></div>
+
+<script>window.BID_ID = {{ bid_id }};</script>
+<script src="/static/takeoff.js?v=20260305c"></script>
+{% endblock %}

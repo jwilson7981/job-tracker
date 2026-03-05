@@ -45,7 +45,7 @@ async function loadJobWarranties() {
     const res = await fetch(`/api/warranty/job/${JOB_ID}`);
     const items = await res.json();
     const container = document.getElementById('warrantyItems');
-    if (!items.length) { container.innerHTML = '<div class="empty-state">No warranty items for this job.</div>'; return; }
+    if (!items.length) { container.innerHTML = '<div class="empty-state">No warranty items for this project.</div>'; return; }
     container.innerHTML = items.map(i => {
         const claimsHtml = i.claims.length ? i.claims.map(c => `
             <div class="claim-card">

@@ -11,15 +11,25 @@ if (window.SCHEDULE_PAGE === 'overview') {
 }
 
 async function initOverview() {
-    const [jobsRes, usersRes] = await Promise.all([fetch('/api/jobs/list'), fetch('/api/users/list')]);
-    schedJobs = await jobsRes.json();
-    schedUsers = await usersRes.json();
-    const sel = document.getElementById('schedJobFilter');
-    schedJobs.forEach(j => { const o = document.createElement('option'); o.value = j.id; o.textContent = j.name; sel.appendChild(o); });
-    // Load all events for phase counts
-    const res = await fetch('/api/schedule/events');
-    allEvents = await res.json();
-    renderJobCards();
+    try {
+        const [jobsRes, usersRes] = await Promise.all([fetch('/api/jobs/list'), fetch('/api/users/list')]);
+        schedJobs = await jobsRes.json();
+        schedUsers = await usersRes.json();
+        const sel = document.getElementById('schedJobFilter');
+        schedJobs.forEach(j => { const o = document.createElement('option'); o.value = j.id; o.textContent = j.name; sel.appendChild(o); });
+
+        // Auto-select job from URL parameter
+        var _urlJobId = new URLSearchParams(window.location.search).get('job_id');
+        if (_urlJobId) { sel.value = _urlJobId; }
+
+        // Load all events for phase counts
+        const res = await fetch('/api/schedule/events');
+        allEvents = await res.json();
+        if (_urlJobId) { onJobFilterChange(); } else { renderJobCards(); }
+    } catch (err) {
+        console.error('Schedule init error:', err);
+        document.getElementById('jobCardsGrid').innerHTML = '<p class="empty-state">Failed to load projects. Please refresh.</p>';
+    }
 }
 
 function onJobFilterChange() {
@@ -45,7 +55,7 @@ function onJobFilterChange() {
 function renderJobCards() {
     const grid = document.getElementById('jobCardsGrid');
     if (!schedJobs.length) {
-        grid.innerHTML = '<p class="empty-state">No jobs found.</p>';
+        grid.innerHTML = '<p class="empty-state">No projects found.</p>';
         return;
     }
     grid.innerHTML = schedJobs.map(j => {

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Team Pay - Job Setup{% endblock %}
+{% block title %}Team Pay - Project Setup{% endblock %}
 {% block content %}
 <div class="page-header">
     <div>
@@ -99,7 +99,7 @@
         </div>
         <form onsubmit="updateSchedule(event)">
             <div class="form-group">
-                <label class="form-label">Total Job Value</label>
+                <label class="form-label">Total Project Value</label>
                 <input type="number" id="esValue" class="form-input" step="0.01" required>
             </div>
             <div class="form-group">
@@ -121,7 +121,7 @@
             <h2>Quick Setup — Split Evenly</h2>
             <button class="modal-close" onclick="document.getElementById('quickSetupModal').style.display='none'">&times;</button>
         </div>
-        <p style="margin-bottom:12px;">Select team members to add and split the job value evenly among them.</p>
+        <p style="margin-bottom:12px;">Select team members to add and split the project value evenly among them.</p>
         <div id="qsUserList" style="margin-bottom:16px;"></div>
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('quickSetupModal').style.display='none'">Cancel</button>

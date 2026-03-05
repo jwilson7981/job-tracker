@@ -5,6 +5,9 @@
     <h1 id="pageTitle">{% if bid_id %}Edit Bid{% else %}New Bid{% endif %}</h1>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="saveBid()">Save Bid</button>
+        {% if current_user.role == 'owner' %}
+        <button class="btn btn-secondary" id="btnTakeoff" onclick="goToTakeoff()">Takeoff</button>
+        {% endif %}
         {% if bid_id %}
         <button class="btn btn-secondary" onclick="previewProposal()" id="btnPreviewProposal">View Proposal</button>
         <button class="btn btn-secondary" onclick="generateProposal()" id="btnGenerate">Generate Proposal</button>
@@ -102,9 +105,30 @@
     <!-- Materials -->
     <div class="bid-section">
         <h3>Equipment / Material Cost</h3>
+        <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+            <div style="flex:1;min-width:200px;">
+                <label class="form-label">Pull from Supplier Quote</label>
+                <select id="bidQuoteSelect" class="form-select" onchange="loadQuoteIntoBid()">
+                    <option value="">-- Manual Entry --</option>
+                </select>
+            </div>
+            <span id="bidQuoteInfo" style="font-size:12px;color:var(--gray-500);"></span>
+        </div>
+        <div id="takeoffInfoBar" style="display:none;margin-bottom:12px;padding:10px 16px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;font-size:13px;color:#065F46;display:none;">
+            Material subtotal from takeoff: <strong id="takeoffTotal">$0.00</strong>
+            — <a href="#" id="takeoffEditLink" style="color:#047857;font-weight:600;">Edit Takeoff</a>
+        </div>
         <div class="bid-form-grid">
+            <div class="bid-field"><label class="form-label">Material Subtotal ($)</label>
+                <input type="number" id="bidMatSubtotal" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Shipping ($)</label>
+                <input type="number" id="bidMatShipping" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Tax Rate (%)</label>
+                <input type="number" id="bidMatTaxRate" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+            <div class="bid-field"><label class="form-label">Tax Amount ($)</label>
+                <input type="text" id="bidMatTaxAmount" class="form-input calc-field" value="$0.00" readonly></div>
             <div class="bid-field"><label class="form-label">Total Material Cost ($)</label>
-                <input type="number" id="bidMaterialCost" class="form-input" value="0" min="0" step="0.01" oninput="recalculate()"></div>
+                <input type="text" id="bidMaterialCost" class="form-input calc-field" value="$0.00" readonly></div>
             <div class="bid-field"><label class="form-label">Material Cost / System</label>
                 <input type="text" id="bidMatPerSystem" class="form-input calc-field" value="$0.00" readonly></div>
             <div class="bid-field"><label class="form-label">Material Cost / Apartment</label>
@@ -295,18 +319,18 @@
     <div class="bid-row-2col">
         <div class="bid-section">
             <h3>Inclusions</h3>
-            <textarea id="bidInclusions" class="form-textarea" rows="6" placeholder="1 Year parts and labor warranty&#10;Manufacturer's Warranty per submittals&#10;Insurances, licenses, and required HVAC Permits&#10;Price includes sales tax"></textarea>
+            <textarea id="bidInclusions" class="form-textarea" rows="6" placeholder="Enter inclusions (one per line)"></textarea>
         </div>
         <div class="bid-section">
             <h3>Exclusions</h3>
-            <textarea id="bidExclusions" class="form-textarea" rows="6" placeholder="Cutting or coring any concrete, block, or brick&#10;Concrete work and Lifting&#10;Framed openings or structural support&#10;Condenser pads, Disconnects, and Whips&#10;Weather-tight of exterior and roof penetrations"></textarea>
+            <textarea id="bidExclusions" class="form-textarea" rows="6" placeholder="Enter exclusions (one per line)"></textarea>
         </div>
     </div>
 
-    <!-- Bid Description -->
+    <!-- Scope of Work -->
     <div class="bid-section">
-        <h3>Bid Description</h3>
-        <textarea id="bidDescription" class="form-textarea" rows="4" placeholder="Industry standard VE for..."></textarea>
+        <h3>Scope of Work</h3>
+        <textarea id="bidDescription" class="form-textarea" rows="6" placeholder="Install complete HVAC systems per plans and specifications&#10;Furnish and install all ductwork, piping, and equipment&#10;Provide all controls and thermostats&#10;System startup and testing"></textarea>
     </div>
 
     <!-- Notes -->
@@ -416,5 +440,5 @@
 {% endif %}
 
 <script>window.BID_ID = {{ bid_id }}; window.USER_ROLE = '{{ current_user.role }}';</script>
-<script src="/static/bids.js?v=20260304b"></script>
+<script src="/static/bids.js?v=20260304g"></script>
 {% endblock %}

@@ -178,7 +178,7 @@ function renderDetail() {
             <td>${j.awarded_date || '-'}</td>
         </tr>`).join('');
     } else {
-        jBody.innerHTML = '<tr><td colspan="4" class="empty-state">No jobs yet</td></tr>';
+        jBody.innerHTML = '<tr><td colspan="4" class="empty-state">No projects yet</td></tr>';
     }
 }
 

@@ -7,7 +7,7 @@ function loadJobs() {
         .then(function(r) { return r.json(); })
         .then(function(jobs) {
             var sel = document.getElementById('jobSelect');
-            sel.innerHTML = '<option value="">Choose a job...</option>';
+            sel.innerHTML = '<option value="">Choose a project...</option>';
             jobs.forEach(function(j) {
                 sel.innerHTML += '<option value="' + j.id + '">' + j.name + '</option>';
             });

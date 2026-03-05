@@ -19,7 +19,8 @@
         supplier_invoice: { label: 'Supplier Invoice',  dest: '/invoices',        icon: 'Invoices' },
         contract:         { label: 'Contract',          dest: '/contracts',       icon: 'Contracts' },
         license:          { label: 'License',           dest: '/licenses',        icon: 'Licenses' },
-        closeout:         { label: 'Closeout Document', dest: '/documents',       icon: 'Documents' }
+        closeout:         { label: 'Closeout Document', dest: '/documents',       icon: 'Documents' },
+        lien_waiver:      { label: 'Lien Waiver',       dest: '/lien-waivers',   icon: 'Lien Waivers' }
     };
 
     // ─── Create Overlay ─────────────────────────────────────────
@@ -63,6 +64,7 @@
                             '<option value="contract">Contract</option>' +
                             '<option value="license">License</option>' +
                             '<option value="closeout">Closeout Document</option>' +
+                            '<option value="lien_waiver">Lien Waiver</option>' +
                         '</select>' +
                     '</div>' +
                     '<div id="ddDestInfo" class="dd-dest-info">Files will be uploaded to <strong>Plans</strong></div>' +
@@ -113,7 +115,7 @@
             .then(function (jobs) { jobsCache = jobs; return jobs; });
     }
     function populateJobSelect(jobs) {
-        ddJobSelect.innerHTML = '<option value="">-- Select Job --</option>';
+        ddJobSelect.innerHTML = '<option value="">-- Select Project --</option>';
         jobs.forEach(function (j) {
             var opt = document.createElement('option');
             opt.value = j.id;
@@ -128,7 +130,7 @@
         var info = DOC_TYPE_LABELS[dt] || {};
         ddJobGroup.style.display = (dt === 'license') ? 'none' : 'block';
         if (dt === 'materials') {
-            ddDestInfo.innerHTML = 'Excel workbook will be imported into <strong>Material Management</strong> for the selected job';
+            ddDestInfo.innerHTML = 'Excel workbook will be imported into <strong>Material Management</strong> for the selected project';
         } else {
             ddDestInfo.innerHTML = 'Files will be uploaded to <strong>' + (info.icon || dt) + '</strong>';
         }
@@ -291,15 +293,34 @@
     });
 
     // ─── Modal Logic ────────────────────────────────────────────
+    function detectDocTypeFromPage() {
+        var path = window.location.pathname;
+        if (path.indexOf('/supplier-quotes') === 0) return 'supplier_quote';
+        if (path.indexOf('/invoices') === 0) return 'supplier_invoice';
+        if (path.indexOf('/plans') === 0) return 'plan';
+        if (path.indexOf('/submittals') === 0) return 'submittal';
+        if (path.indexOf('/contracts') === 0) return 'contract';
+        if (path.indexOf('/licenses') === 0) return 'license';
+        if (path.indexOf('/documents') === 0 || path.indexOf('/closeout') === 0) return 'closeout';
+        if (path.indexOf('/lien-waivers') === 0) return 'lien_waiver';
+        return 'materials';
+    }
+
     function showModal() {
         ddProgress.style.display = 'none';
         ddBulkActions.style.display = 'none';
         ddProgressBar.style.width = '0%';
         ddUploadBtn.disabled = false;
         ddUploadBtn.textContent = 'Upload Selected';
-        ddDocType.value = 'materials';
-        ddJobGroup.style.display = 'block';
-        ddDestInfo.innerHTML = 'Excel workbook will be imported into <strong>Material Management</strong> for the selected job';
+        var detectedType = detectDocTypeFromPage();
+        ddDocType.value = detectedType;
+        var info = DOC_TYPE_LABELS[detectedType] || {};
+        ddJobGroup.style.display = (detectedType === 'license') ? 'none' : 'block';
+        if (detectedType === 'materials') {
+            ddDestInfo.innerHTML = 'Excel workbook will be imported into <strong>Material Management</strong> for the selected project';
+        } else {
+            ddDestInfo.innerHTML = 'Files will be uploaded to <strong>' + (info.icon || detectedType) + '</strong>';
+        }
         loadJobs().then(populateJobSelect);
         modal.style.display = 'flex';
 
@@ -326,6 +347,14 @@
     ddCancelBtn.addEventListener('click', hideModal);
     ddModalClose.addEventListener('click', hideModal);
     modal.addEventListener('click', function (e) { if (e.target === modal) hideModal(); });
+
+    // Expose for external upload buttons
+    window.triggerDragDropUpload = function (files) {
+        if (files && files.length) {
+            droppedFiles = Array.from(files);
+        }
+        showModal();
+    };
 
     // ─── Upload Routes ──────────────────────────────────────────
     var UPLOAD_ROUTES = {
@@ -376,6 +405,12 @@
             fields: function (f, jobId) {
                 return { job_id: jobId, item_name: f.name.replace(/\.[^.]+$/, ''), item_type: 'Other' };
             }
+        },
+        lien_waiver: {
+            url: '/api/lien-waivers/upload-new',
+            fields: function (f, jobId) {
+                return { job_id: jobId };
+            }
         }
     };
 
@@ -385,7 +420,7 @@
         var jobId = ddJobSelect.value;
 
         if (docType !== 'license' && docType !== 'supplier_invoice' && !jobId) {
-            alert('Please select a job.');
+            alert('Please select a project.');
             return;
         }
 
@@ -596,7 +631,7 @@
         // Populate job selector
         var btJobSel = document.getElementById('btJobSelect');
         loadJobs().then(function (jobs) {
-            btJobSel.innerHTML = '<option value="">-- Select Job --</option>';
+            btJobSel.innerHTML = '<option value="">-- Select Project --</option>';
             jobs.forEach(function (j) {
                 var opt = document.createElement('option');
                 opt.value = j.id;
@@ -627,7 +662,7 @@
 
         var btJobId = document.getElementById('btJobSelect').value;
         if (!btJobId) {
-            alert('Please select a job for these invoices.');
+            alert('Please select a project for these invoices.');
             importBtn.disabled = false;
             importBtn.textContent = 'Import Invoices';
             progressDiv.style.display = 'none';

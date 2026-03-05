@@ -2,12 +2,12 @@
 {% block title %}Schedule Overview - Construction Management{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>Job Schedule</h1>
+    <h1>Project Schedule</h1>
 </div>
 
 <div class="manual-search-bar">
     <select id="schedJobFilter" class="form-select" onchange="onJobFilterChange()">
-        <option value="">All Jobs</option>
+        <option value="">All Projects</option>
     </select>
     <select id="schedStatusFilter" class="form-select" onchange="renderScheduleOverview()">
         <option value="">All Statuses</option>
@@ -32,7 +32,7 @@
         <table class="data-table schedule-timeline">
             <thead>
                 <tr>
-                    <th>Job</th>
+                    <th>Project</th>
                     <th>Phase</th>
                     <th>Start</th>
                     <th>End</th>
