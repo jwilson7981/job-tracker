@@ -22,41 +22,100 @@ var _allProjects = [];
 async function loadProjects() {
     const res = await fetch('/api/projects');
     _allProjects = await res.json();
+    renderProjects(_allProjects);
+}
+
+function renderProjects(projects) {
     const tbody = document.getElementById('projectsBody');
-    if (!_allProjects.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No projects.</td></tr>'; return; }
+    if (!projects.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No projects.</td></tr>'; return; }
     const canDelete = typeof USER_ROLE !== 'undefined' && (USER_ROLE === 'owner' || USER_ROLE === 'admin');
-    tbody.innerHTML = _allProjects.map(p => `<tr>
-        <td><a href="/projects/${p.id}" class="link">${p.name}</a></td>
+    tbody.innerHTML = projects.map(p => `<tr onclick="toggleProjectLinks(${p.id})" style="cursor:pointer;">
+        <td>
+            <span class="pj-expand-arrow" id="pjArrow${p.id}" style="display:inline-block;width:14px;font-size:10px;color:var(--gray-400);transition:transform .15s;">&#9654;</span>
+            <a href="/projects/${p.id}" class="link" onclick="event.stopPropagation();">${p.name}</a>
+        </td>
+        <td>${p.customer_name ? '<a href="/customers/'+p.customer_id+'" class="link" onclick="event.stopPropagation();">'+p.customer_name+'</a>' : '<span style="color:#9CA3AF;">—</span>'}</td>
         <td><span class="status-badge status-${p.status.toLowerCase().replace(/ /g,'-')}">${p.status}</span></td>
         <td>${p.location}</td>
+        <td>${p.tax_rate ? p.tax_rate + '%' : '<span style="color:#9CA3AF;">—</span>'}</td>
         <td class="cell-computed">${fmt(p.material_cost)}</td>
         <td class="cell-computed">${fmt(p.expenses)}</td>
         <td class="cell-computed">${p.open_service_calls > 0 ? '<span style="color:#D97706;font-weight:600;">'+p.open_service_calls+'</span>' : '0'}</td>
         <td class="cell-computed">${p.warranty_items}</td>
         <td>${(p.updated_at || '').substring(0, 10)}</td>
-        <td style="white-space:nowrap;">
+        <td style="white-space:nowrap;" onclick="event.stopPropagation();">
             <a href="/projects/${p.id}" class="btn btn-small btn-secondary">View</a>
-            <button class="btn btn-small btn-secondary" onclick="event.stopPropagation();editProject(${p.id})">Edit</button>
-            ${canDelete ? `<button class="btn btn-small btn-secondary" style="color:#EF4444;" onclick="event.stopPropagation();deleteProject(${p.id})">Del</button>` : ''}
+            <button class="btn btn-small btn-secondary" onclick="editProject(${p.id})">Edit</button>
+            ${canDelete ? `<button class="btn btn-small btn-secondary" style="color:#EF4444;" onclick="deleteProject(${p.id})">Del</button>` : ''}
+        </td>
+    </tr>
+    <tr id="pjLinks${p.id}" style="display:none;">
+        <td colspan="11" style="padding:0;border-top:none;">
+            <div style="padding:12px 16px 12px 28px;background:var(--gray-50,#f8fafc);border-top:1px dashed var(--gray-200,#e2e8f0);">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px 12px;">
+                    <a href="/projects/${p.id}" class="pj-qlink">&#9632; Dashboard</a>
+                    <a href="/plans?job_id=${p.id}" class="pj-qlink">&#128208; Plans</a>
+                    <a href="/supplier-quotes" class="pj-qlink">&#128203; Supplier Quotes</a>
+                    <a href="/bids" class="pj-qlink">&#9998; Bids</a>
+                    <a href="/schedule?job_id=${p.id}" class="pj-qlink">&#128197; Schedule</a>
+                    <a href="/contracts?job_id=${p.id}" class="pj-qlink">&#128203; Contracts</a>
+                    <a href="/permits?job_id=${p.id}" class="pj-qlink">&#128220; Permits</a>
+                    <a href="/submittals?job_id=${p.id}" class="pj-qlink">&#128230; Submittals</a>
+                    <a href="/rfis?job_id=${p.id}" class="pj-qlink">&#10067; RFIs</a>
+                    <a href="/change-orders?job_id=${p.id}" class="pj-qlink">&#128221; Change Orders</a>
+                    <a href="/materials/job/${p.id}" class="pj-qlink">&#9634; Materials</a>
+                    <a href="/documents" class="pj-qlink">&#128196; Documents</a>
+                    <a href="/photos" class="pj-qlink">&#128247; Photos</a>
+                    <a href="/payapps" class="pj-qlink">&#128179; Pay Apps</a>
+                    <a href="/lien-waivers?job_id=${p.id}" class="pj-qlink">&#128220; Lien Waivers</a>
+                    <a href="/warranty" class="pj-qlink">&#9745; Warranty</a>
+                    <a href="/service-calls" class="pj-qlink">&#9742; Service Calls</a>
+                </div>
+            </div>
         </td>
     </tr>`).join('');
 }
 
+function toggleProjectLinks(id) {
+    var row = document.getElementById('pjLinks' + id);
+    var arrow = document.getElementById('pjArrow' + id);
+    if (!row) return;
+    var isOpen = row.style.display !== 'none';
+    row.style.display = isOpen ? 'none' : 'table-row';
+    if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
+function filterProjects() {
+    const filter = document.getElementById('projectStatusFilter').value;
+    const filtered = filter ? _allProjects.filter(p => p.status === filter) : _allProjects;
+    renderProjects(filtered);
+}
+
 function editProject(id) {
-    const p = _allProjects.find(x => x.id === id);
+    var p = _allProjects.find(function(x) { return x.id === id; });
     if (!p) return;
-    // Need to fetch full job data for address fields
-    fetch('/api/job/' + id).then(r => r.json()).then(data => {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/job/' + id, true);
+    xhr.onload = function() {
+        if (xhr.status !== 200) { alert('Failed to load project details'); return; }
+        var data = JSON.parse(xhr.responseText);
+        var job = data.job || data;
         document.getElementById('editJobId').value = id;
-        document.getElementById('editJobName').value = data.name || '';
-        document.getElementById('editJobStatus').value = data.status || 'Needs Bid';
-        document.getElementById('editJobAddress').value = data.address || '';
-        document.getElementById('editJobCity').value = data.city || '';
-        document.getElementById('editJobState').value = data.state || '';
-        document.getElementById('editJobZip').value = data.zip_code || '';
-        document.getElementById('editJobTaxRate').value = data.tax_rate || '';
+        document.getElementById('editJobName').value = job.name || '';
+        document.getElementById('editJobStatus').value = job.status || 'Needs Bid';
+        document.getElementById('editJobAddress').value = job.address || '';
+        document.getElementById('editJobCity').value = job.city || '';
+        document.getElementById('editJobState').value = job.state || '';
+        document.getElementById('editJobZip').value = job.zip_code || '';
+        document.getElementById('editJobTaxRate').value = job.tax_rate || '';
+        document.getElementById('editJobCustomerId').value = job.customer_id || '';
+        // Look up customer name from the projects list
+        var proj = _allProjects.find(function(x) { return x.id === id; });
+        document.getElementById('editJobCustomerSearch').value = (proj && proj.customer_name) || '';
         document.getElementById('editJobModal').style.display = 'flex';
-    });
+    };
+    xhr.onerror = function() { alert('Network error loading project details'); };
+    xhr.send();
 }
 
 function hideEditJobModal() {
@@ -66,6 +125,7 @@ function hideEditJobModal() {
 async function updateProject(e) {
     e.preventDefault();
     const id = document.getElementById('editJobId').value;
+    const editCustId = document.getElementById('editJobCustomerId').value;
     const payload = {
         name: document.getElementById('editJobName').value.trim(),
         status: document.getElementById('editJobStatus').value,
@@ -73,6 +133,7 @@ async function updateProject(e) {
         city: document.getElementById('editJobCity').value.trim(),
         state: document.getElementById('editJobState').value.trim(),
         zip_code: document.getElementById('editJobZip').value.trim(),
+        customer_id: editCustId ? parseInt(editCustId) : null,
     };
     const taxVal = document.getElementById('editJobTaxRate').value;
     if (taxVal !== '') payload.tax_rate = parseFloat(taxVal) || 0;
@@ -110,10 +171,15 @@ async function loadProjectDetail() {
     const totalInvoiced = data.invoices.reduce((s, i) => s + (i.amount || 0), 0);
     const totalLabor = data.time_entries.reduce((s, t) => s + (t.hours || 0) * (t.hourly_rate || 0), 0);
 
-    // Project info bar (supplier account + PM assignment)
+    // Project info bar (customer + supplier account + PM assignment)
     const infoEl = document.getElementById('projectInfo');
     if (infoEl) {
         let infoHtml = '';
+        if (data.job.customer_id && data.job.customer_name) {
+            infoHtml += `<span><span class="text-muted">Customer:</span> <a href="/customers/${data.job.customer_id}" class="link" style="font-weight:600;">${data.job.customer_name}</a></span>`;
+        } else {
+            infoHtml += `<span><span class="text-muted">Customer:</span> <span style="color:#9CA3AF;">— Not linked —</span></span>`;
+        }
         if (data.job.supplier_account) {
             infoHtml += `<span><span class="text-muted">Supplier Account:</span> <strong>${data.job.supplier_account}</strong></span>`;
         }
@@ -186,6 +252,7 @@ function switchProjectTab(tab, btn) {
     if (tab === 'precon' && !window._preconLoaded) { loadPrecon(); window._preconLoaded = true; }
     if (tab === 'benchmarks' && !window._benchmarksLoaded) { loadBenchmarks(); window._benchmarksLoaded = true; }
     if (tab === 'billing' && !window._billingLoaded) { loadBillingSchedule(); window._billingLoaded = true; }
+    if (tab === 'documents' && !window._documentsLoaded) { loadDocuments(); initDocDropZone(); window._documentsLoaded = true; }
 }
 
 // ─── Pre-Con Meeting (Phase 4) ──────────────────────────────
@@ -387,5 +454,116 @@ async function deleteBillingMilestone(id) {
     if (!confirm('Delete this billing milestone?')) return;
     await fetch('/api/billing-schedule/' + id, { method: 'DELETE' });
     loadBillingSchedule();
+}
+
+// ─── Project Documents ──────────────────────────────────────
+
+function formatFileSize(bytes) {
+    if (!bytes) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var i = 0;
+    var size = bytes;
+    while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+    return size.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+async function loadDocuments() {
+    var tbody = document.getElementById('pDocuments');
+    if (!tbody) return;
+    try {
+        var res = await fetch('/api/projects/' + JOB_ID + '/documents');
+        var docs = await res.json();
+        if (!docs.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No documents uploaded yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = docs.map(function(d) {
+            return '<tr>' +
+                '<td><a href="javascript:void(0)" onclick="viewDocument(' + d.id + ')" class="link">' + (d.file_name || 'Unnamed') + '</a></td>' +
+                '<td><span class="status-badge">' + (d.category || 'Other') + '</span></td>' +
+                '<td>' + formatFileSize(d.file_size) + '</td>' +
+                '<td>' + (d.uploader_name || '') + '</td>' +
+                '<td>' + (d.created_at || '').substring(0, 10) + '</td>' +
+                '<td style="white-space:nowrap;">' +
+                    '<button class="btn btn-small btn-secondary" onclick="viewDocument(' + d.id + ')">View</button> ' +
+                    '<button class="btn btn-small btn-secondary" style="color:#EF4444;" onclick="deleteDocument(' + d.id + ')">Delete</button>' +
+                '</td></tr>';
+        }).join('');
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Error loading documents.</td></tr>';
+    }
+}
+
+function showDocUploadModal() {
+    document.getElementById('docFileInput').value = '';
+    document.getElementById('docCategory').value = 'Other';
+    document.getElementById('docNotes').value = '';
+    document.getElementById('docUploadModal').style.display = 'flex';
+}
+
+async function uploadDocument(e) {
+    if (e) e.preventDefault();
+    var fileInput = document.getElementById('docFileInput');
+    var files = fileInput.files;
+    if (!files || !files.length) { alert('Please select a file.'); return; }
+    var fd = new FormData();
+    for (var i = 0; i < files.length; i++) fd.append('files', files[i]);
+    fd.append('category', document.getElementById('docCategory').value);
+    fd.append('notes', document.getElementById('docNotes').value);
+    try {
+        var res = await fetch('/api/projects/' + JOB_ID + '/documents', { method: 'POST', body: fd });
+        var result = await res.json();
+        if (result.ok) {
+            document.getElementById('docUploadModal').style.display = 'none';
+            loadDocuments();
+        } else {
+            alert(result.error || 'Upload failed');
+        }
+    } catch (err) {
+        alert('Upload failed: ' + err.message);
+    }
+}
+
+function viewDocument(docId) {
+    window.open('/api/projects/' + JOB_ID + '/documents/' + docId + '/file', '_blank');
+}
+
+async function deleteDocument(docId) {
+    if (!confirm('Delete this document? This cannot be undone.')) return;
+    await fetch('/api/projects/' + JOB_ID + '/documents/' + docId, { method: 'DELETE' });
+    loadDocuments();
+}
+
+function initDocDropZone() {
+    var zone = document.getElementById('docDropZone');
+    if (!zone) return;
+    zone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--blue-500)';
+        zone.style.background = 'var(--blue-50, #eff6ff)';
+        zone.style.color = 'var(--blue-600, #2563eb)';
+    });
+    zone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--gray-300)';
+        zone.style.background = '';
+        zone.style.color = 'var(--gray-500)';
+    });
+    zone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        zone.style.borderColor = 'var(--gray-300)';
+        zone.style.background = '';
+        zone.style.color = 'var(--gray-500)';
+        var files = e.dataTransfer.files;
+        if (!files || !files.length) return;
+        var fd = new FormData();
+        for (var i = 0; i < files.length; i++) fd.append('files', files[i]);
+        fd.append('category', 'Other');
+        fd.append('notes', '');
+        fetch('/api/projects/' + JOB_ID + '/documents', { method: 'POST', body: fd })
+            .then(function(r) { return r.json(); })
+            .then(function(result) { if (result.ok) loadDocuments(); else alert(result.error || 'Upload failed'); })
+            .catch(function(err) { alert('Upload failed: ' + err.message); });
+    });
 }
 

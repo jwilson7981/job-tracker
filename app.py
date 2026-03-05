@@ -18,11 +18,37 @@ from claude_chatbot import generate_claude_response
 from duplicate_detector import check_duplicate
 from tax_rates import lookup_tax
 from werkzeug.security import check_password_hash, generate_password_hash
+import subprocess, tempfile
+try:
+    import weasyprint
+except Exception:
+    weasyprint = None
 
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.secret_key = os.environ.get('SECRET_KEY', 'construction-mgmt-secret-key-change-in-prod')
+
+# Initialize DB on import (needed for gunicorn)
+init_db()
+
+# One-time backfill: set tax rates from zip codes for existing projects
+def _backfill_tax_rates():
+    conn = get_db()
+    jobs = conn.execute("SELECT id, zip_code FROM jobs WHERE (tax_rate IS NULL OR tax_rate = 0) AND zip_code IS NOT NULL AND zip_code != ''").fetchall()
+    updated = 0
+    for job in jobs:
+        try:
+            info = lookup_tax(job['zip_code'])
+            if info.get('tax_rate'):
+                conn.execute('UPDATE jobs SET tax_rate = ? WHERE id = ?', (info['tax_rate'], job['id']))
+                updated += 1
+        except Exception:
+            pass
+    if updated:
+        conn.commit()
+    conn.close()
+_backfill_tax_rates()
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -539,11 +565,14 @@ def create_job():
             state = tax_info['state']
     tax_rate = tax_rate or 0
     supplier_account = (data.get('supplier_account') or '').strip()
+    customer_id = data.get('customer_id')
+    if customer_id is not None:
+        customer_id = int(customer_id) if customer_id else None
 
     conn = get_db()
     cursor = conn.execute(
-        'INSERT INTO jobs (name, status, address, city, state, zip_code, tax_rate, supplier_account) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        (name, 'Needs Bid', address, city, state, zip_code, tax_rate, supplier_account)
+        'INSERT INTO jobs (name, status, address, city, state, zip_code, tax_rate, supplier_account, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        (name, 'Needs Bid', address, city, state, zip_code, tax_rate, supplier_account, customer_id)
     )
     job_id = cursor.lastrowid
     conn.commit()
@@ -588,6 +617,10 @@ def update_job(job_id):
     if 'tax_rate' in data:
         conn.execute('UPDATE jobs SET tax_rate = ?, updated_at = datetime("now","localtime") WHERE id = ?',
                      (float(data['tax_rate'] or 0), job_id))
+    if 'customer_id' in data:
+        cid = data['customer_id']
+        conn.execute('UPDATE jobs SET customer_id = ?, updated_at = datetime("now","localtime") WHERE id = ?',
+                     (int(cid) if cid else None, job_id))
 
     conn.commit()
     conn.close()
@@ -1822,6 +1855,67 @@ def api_payroll_run_timesheet(run_id):
     conn.close()
     return jsonify({'ok': True, 'new_jobs': new_jobs})
 
+@app.route('/api/payroll/runs/<int:run_id>/copy-previous', methods=['GET'])
+@api_role_required('owner', 'admin')
+def api_payroll_run_copy_previous(run_id):
+    from datetime import datetime as dt, timedelta
+    conn = get_db()
+    run = conn.execute('SELECT * FROM payroll_runs WHERE id = ?', (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if run['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Run is not in Draft status'}), 400
+    # Find the most recent previous run
+    prev_run = conn.execute(
+        '''SELECT * FROM payroll_runs WHERE period_end < ? ORDER BY period_end DESC LIMIT 1''',
+        (run['period_start'],)
+    ).fetchone()
+    if not prev_run:
+        conn.close()
+        return jsonify({'error': 'No previous payroll run found'}), 404
+    # Get employees in the current run
+    cur_emps = conn.execute(
+        'SELECT user_id FROM payroll_run_employees WHERE payroll_run_id = ?', (run_id,)
+    ).fetchall()
+    cur_emp_ids = [e['user_id'] for e in cur_emps]
+    if not cur_emp_ids:
+        conn.close()
+        return jsonify({'entries': []})
+    # Get time entries from previous run for matching employees
+    placeholders = ','.join('?' * len(cur_emp_ids))
+    prev_entries = conn.execute(
+        f'''SELECT te.user_id, te.work_date, te.hours, te.job_id, j.name as job_name
+            FROM time_entries te
+            LEFT JOIN jobs j ON te.job_id = j.id
+            WHERE te.user_id IN ({placeholders})
+            AND te.work_date BETWEEN ? AND ?
+            ORDER BY te.user_id, te.work_date''',
+        cur_emp_ids + [prev_run['period_start'], prev_run['period_end']]
+    ).fetchall()
+    # Map by day offset: prev day 0 → current day 0, etc.
+    prev_start = dt.strptime(prev_run['period_start'], '%Y-%m-%d')
+    cur_start = dt.strptime(run['period_start'], '%Y-%m-%d')
+    cur_end = dt.strptime(run['period_end'], '%Y-%m-%d')
+    num_days = (cur_end - cur_start).days + 1
+    mapped = []
+    for entry in prev_entries:
+        entry_date = dt.strptime(entry['work_date'], '%Y-%m-%d')
+        offset = (entry_date - prev_start).days
+        if offset < 0 or offset >= num_days:
+            continue
+        new_date = (cur_start + timedelta(days=offset)).strftime('%Y-%m-%d')
+        mapped.append({
+            'user_id': entry['user_id'],
+            'work_date': new_date,
+            'hours': entry['hours'],
+            'job_id': entry['job_id'],
+            'job_name': entry['job_name'] or '',
+        })
+    conn.close()
+    return jsonify({'entries': mapped, 'from_run': prev_run['run_number']})
+
 @app.route('/api/payroll/runs/<int:run_id>/finalize', methods=['POST'])
 @api_role_required('owner', 'admin')
 def api_payroll_run_finalize(run_id):
@@ -2993,16 +3087,26 @@ def api_projects():
         service_count = conn.execute("SELECT COUNT(*) FROM service_calls WHERE job_id = ? AND status NOT IN ('Resolved','Closed')", (job['id'],)).fetchone()[0]
         warranty_count = conn.execute('SELECT COUNT(*) FROM warranty_items WHERE job_id = ?', (job['id'],)).fetchone()[0]
 
+        customer_name = None
+        customer_id = job['customer_id']
+        if customer_id:
+            cust = conn.execute('SELECT company_name FROM customers WHERE id = ?', (customer_id,)).fetchone()
+            if cust:
+                customer_name = cust['company_name']
+
         result.append({
             'id': job['id'],
             'name': job['name'],
             'status': job['status'],
             'location': f"{job['city'] or ''} {job['state'] or ''}".strip() or '-',
+            'tax_rate': job['tax_rate'] or 0,
             'material_cost': round(material_cost, 2),
             'expenses': round(expenses, 2),
             'open_service_calls': service_count,
             'warranty_items': warranty_count,
             'updated_at': job['updated_at'],
+            'customer_id': customer_id,
+            'customer_name': customer_name,
         })
     conn.close()
     return jsonify(result)
@@ -3040,9 +3144,17 @@ def api_project_detail(job_id):
            WHERE te.job_id = ? ORDER BY te.work_date DESC''', (job_id,)
     ).fetchall()
 
+    # Resolve customer name
+    job_dict = dict(job)
+    job_dict['customer_name'] = None
+    if job['customer_id']:
+        cust = conn.execute('SELECT company_name FROM customers WHERE id = ?', (job['customer_id'],)).fetchone()
+        if cust:
+            job_dict['customer_name'] = cust['company_name']
+
     conn.close()
     return jsonify({
-        'job': dict(job),
+        'job': job_dict,
         'material_cost': round(material_cost, 2),
         'expenses': [dict(e) for e in expenses],
         'payments': [dict(p) for p in payments],
@@ -3442,8 +3554,15 @@ def calculate_bid(data):
             per_diem_rate = 60
     per_diem_total = round(per_diem_rate * duration_days * crew_size, 2)
 
-    # Overhead
-    material_cost = float(data.get('material_cost', 0) or 0)
+    # Material cost breakdown
+    material_subtotal = float(data.get('material_subtotal', 0) or 0)
+    material_shipping = float(data.get('material_shipping', 0) or 0)
+    material_tax_rate = float(data.get('material_tax_rate', 0) or 0)
+    material_tax_amount = round(material_subtotal * material_tax_rate / 100, 2)
+    material_cost = round(material_subtotal + material_shipping + material_tax_amount, 2)
+    # Backward compat: if no breakdown fields but material_cost was sent directly
+    if material_subtotal == 0 and material_shipping == 0 and float(data.get('material_cost', 0) or 0) > 0:
+        material_cost = float(data.get('material_cost', 0) or 0)
     insurance_cost = float(data.get('insurance_cost', 0) or 0)
     permit_cost = float(data.get('permit_cost', 0) or 0)
     management_fee = float(data.get('management_fee', 0) or 0)
@@ -3492,6 +3611,7 @@ def calculate_bid(data):
         'duration_days': duration_days,
         'num_weeks': num_weeks,
         'labor_cost': labor_cost,
+        'material_cost': material_cost,
         'per_diem_rate': per_diem_rate,
         'per_diem_total': per_diem_total,
         'total_cost_to_build': total_cost_to_build,
@@ -3584,7 +3704,7 @@ def _bid_fields(data, calcs):
         data.get('job_id') or None, s('bid_name'), s('status', 'Draft'), s('project_type', 'Multi-Family'),
         i('num_apartments'), i('num_non_apartment_systems'), i('num_mini_splits'),
         i('has_clubhouse'), i('clubhouse_systems'), f('clubhouse_tons'), calcs['total_systems'],
-        f('total_tons'), f('price_per_ton'), f('material_cost'),
+        f('total_tons'), f('price_per_ton'), calcs['material_cost'],
         calcs['man_hours_per_system'], f('rough_in_hours', 15), f('ahu_install_hours', 1),
         f('condenser_install_hours', 1), f('trim_out_hours', 1), f('startup_hours', 2),
         calcs['total_man_hours'], i('crew_size', 4), f('hours_per_day', 8),
@@ -3604,6 +3724,7 @@ def _bid_fields(data, calcs):
         f('actual_bid_override'), s('bid_type'),
         f('labor_cost_override'), f('admin_costs'), s('admin_costs_notes'),
         f('housing_rate'), calcs['housing_months'], calcs['housing_total'],
+        f('material_subtotal'), f('material_shipping'), f('material_tax_rate'),
     )
 
 _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
@@ -3627,7 +3748,8 @@ _BID_INSERT_COLS = '''job_id, bid_name, status, project_type,
     inclusions, exclusions, bid_description, notes,
     profit_mode, profit_per_system, actual_bid_override, bid_type,
     labor_cost_override, admin_costs, admin_costs_notes,
-    housing_rate, housing_months, housing_total'''
+    housing_rate, housing_months, housing_total,
+    material_subtotal, material_shipping, material_tax_rate'''
 
 def _next_bid_number(conn):
     """Get next bid number starting from 2600."""
@@ -3791,8 +3913,8 @@ def api_preview_proposal(bid_id):
         'SELECT b.*, j.name as job_name FROM bids b LEFT JOIN jobs j ON b.job_id = j.id WHERE b.id = ?',
         (bid_id,)
     ).fetchone()
-    conn.close()
     if not bid:
+        conn.close()
         return jsonify({'error': 'Bid not found'}), 404
     bid = dict(bid)
     proposal_lines = conn.execute('SELECT * FROM bid_proposal_lines WHERE bid_id = ? ORDER BY sort_order, id', (bid_id,)).fetchall()
@@ -3830,36 +3952,11 @@ def api_generate_proposal(bid_id):
     filename = f"Proposal_{safe_name}_{bid_id}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    # Write HTML to a temp file for Chrome to render
-    import subprocess, tempfile
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
-
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
-
-        result = subprocess.run([
-            chrome,
-            '--headless',
-            '--disable-gpu',
-            '--no-sandbox',
-            '--disable-software-rasterizer',
-            f'--print-to-pdf={filepath}',
-            '--no-pdf-header-footer',
-            f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     return jsonify({'ok': True, 'filename': filename, 'path': f'/api/bids/{bid_id}/proposal/{filename}'})
 
@@ -4040,11 +4137,37 @@ def api_award_bid(bid_id):
         conn.close()
         return jsonify({'error': 'Bid not found'}), 404
     job_id = bid['job_id']
-    if not job_id:
-        conn.close()
-        return jsonify({'error': 'Bid must be linked to a job before awarding'}), 400
 
     today = datetime.now().strftime('%Y-%m-%d')
+
+    # Auto-create job from bid data if no job linked
+    if not job_id:
+        job_name = bid['bid_name'] or f'Bid #{bid_id}'
+        # Pull address info from customer if available
+        address = city = state = zip_code = ''
+        tax_rate = 0
+        customer_id = bid.get('customer_id')
+        if customer_id:
+            cust = conn.execute('SELECT * FROM customers WHERE id = ?', (customer_id,)).fetchone()
+            if cust:
+                address = cust['address'] or ''
+                city = cust['city'] or ''
+                state = cust['state'] or ''
+                zip_code = cust['zip_code'] or ''
+                if zip_code:
+                    tax_info = lookup_tax(zip_code)
+                    tax_rate = tax_info['tax_rate']
+                    if not city:
+                        city = tax_info['city']
+                    if not state:
+                        state = tax_info['state']
+        cursor = conn.execute(
+            'INSERT INTO jobs (name, status, address, city, state, zip_code, tax_rate, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (job_name, 'Needs Bid', address, city, state, zip_code, tax_rate, customer_id)
+        )
+        job_id = cursor.lastrowid
+        conn.execute('UPDATE bids SET job_id = ? WHERE id = ?', (job_id, bid_id))
+
     # 1. Set bid status to Accepted
     conn.execute("UPDATE bids SET status = 'Accepted', updated_at = datetime('now','localtime') WHERE id = ?", (bid_id,))
     # 2. Set job status to Awarded
@@ -4113,7 +4236,57 @@ def api_award_bid(bid_id):
     # Mark bidding steps complete on award
     for s in range(1, 9):
         conn.execute("UPDATE job_pipeline_steps SET status='complete', completed_date=date('now','localtime') WHERE job_id=? AND step_number=? AND status='pending'", (job_id, s))
-    # 7. Notify owners + PMs
+    # 7. Set project manager to user awarding the bid (if not already set)
+    conn.execute("UPDATE jobs SET project_manager_id = COALESCE(project_manager_id, ?), customer_id = COALESCE(customer_id, ?) WHERE id = ?",
+                 (session.get('user_id'), bid.get('customer_id'), job_id))
+
+    # 8. Auto-create pay app contract (if none exists for this job)
+    existing_contract = conn.execute('SELECT id FROM pay_app_contracts WHERE job_id = ?', (job_id,)).fetchone()
+    if not existing_contract:
+        gc_name = bid.get('contracting_gc') or ''
+        gc_contact = bid.get('gc_attention') or ''
+        gc_address = gc_email = gc_phone = ''
+        cust_id = bid.get('customer_id')
+        if cust_id:
+            cust = conn.execute('SELECT * FROM customers WHERE id = ?', (cust_id,)).fetchone()
+            if cust:
+                gc_address = f"{cust['address'] or ''}, {cust['city'] or ''} {cust['state'] or ''} {cust['zip_code'] or ''}".strip(', ')
+                gc_email = cust['contact_email'] or ''
+                gc_phone = cust['contact_phone'] or ''
+                if not gc_name:
+                    gc_name = cust['company_name'] or ''
+                if not gc_contact:
+                    gc_contact = cust['primary_contact'] or ''
+        job_row = conn.execute('SELECT name, address, city, state FROM jobs WHERE id = ?', (job_id,)).fetchone()
+        project_name = job_row['name'] if job_row else bid['bid_name'] or ''
+        project_address = f"{job_row['address'] or ''}, {job_row['city'] or ''} {job_row['state'] or ''}".strip(', ') if job_row else ''
+        conn.execute(
+            '''INSERT INTO pay_app_contracts (job_id, gc_name, gc_address, gc_contact, gc_email, gc_phone,
+               project_name, project_address, contract_for, contract_date,
+               original_contract_sum, retainage_work_pct, retainage_stored_pct, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (job_id, gc_name, gc_address, gc_contact, gc_email, gc_phone,
+             project_name, project_address, 'HVAC', today,
+             bid.get('total_bid') or 0, 10, 0, session.get('user_id'))
+        )
+
+    # 9. Auto-seed closeout checklist defaults
+    existing_checklist = conn.execute('SELECT id FROM closeout_checklists WHERE job_id = ?', (job_id,)).fetchone()
+    if not existing_checklist:
+        closeout_defaults = [
+            ('O&M Manual', 'O&M Manual'), ('Warranty Letter', 'Warranty Letter'),
+            ('As-Built Drawings', 'As-Built'), ('Start-Up Report', 'Start-Up Report'),
+            ('Balancing Report', 'Balancing Report'), ('Test Report', 'Test Report'),
+            ('Lien Waiver', 'Lien Waiver'), ('Certificate of Completion', 'Certificate of Completion'),
+            ('Permit Closeout', 'Permit'),
+        ]
+        for idx, (name, item_type) in enumerate(closeout_defaults):
+            conn.execute(
+                'INSERT INTO closeout_checklists (job_id, item_name, item_type, sort_order, created_by) VALUES (?,?,?,?,?)',
+                (job_id, name, item_type, idx, session.get('user_id'))
+            )
+
+    # 10. Notify owners + PMs
     users = conn.execute("SELECT id FROM users WHERE role IN ('owner','project_manager') AND is_active = 1").fetchall()
     job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
     conn.commit()
@@ -4121,6 +4294,339 @@ def api_award_bid(bid_id):
     for u in users:
         create_notification(u['id'], 'bid', f'Bid Awarded: {bid["bid_name"]}',
                           f'Job "{job["name"]}" has been awarded.', f'/projects/{job_id}')
+    return jsonify({'ok': True, 'job_id': job_id})
+
+# ─── Bid Takeoff ──────────────────────────────────────────────────
+
+@app.route('/takeoffs')
+@role_required('owner')
+def takeoffs_list():
+    return render_template('bids/takeoffs.html')
+
+@app.route('/api/takeoffs')
+@api_role_required('owner')
+def api_takeoffs_list():
+    conn = get_db()
+    # Pull from projects, join to bids to find takeoff data
+    jobs = conn.execute(
+        '''SELECT j.id as job_id, j.name as job_name, j.status as job_status, j.city, j.state,
+           j.updated_at,
+           b.id as bid_id, b.bid_name, b.material_subtotal,
+           (SELECT COUNT(*) FROM bid_takeoff_items WHERE bid_id = b.id) as item_count,
+           (SELECT COUNT(*) FROM bid_takeoff_items WHERE bid_id = b.id AND enabled = 1) as enabled_count,
+           (SELECT COUNT(*) FROM bid_takeoff_unit_types WHERE bid_id = b.id) as unit_type_count,
+           (SELECT COALESCE(SUM(unit_count), 0) FROM bid_takeoff_unit_types WHERE bid_id = b.id) as total_units
+           FROM jobs j
+           LEFT JOIN bids b ON b.job_id = j.id AND b.id = (
+               SELECT b2.id FROM bids b2 WHERE b2.job_id = j.id ORDER BY b2.updated_at DESC LIMIT 1
+           )
+           ORDER BY j.updated_at DESC'''
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in jobs])
+
+@app.route('/api/projects/<int:job_id>/takeoff/start', methods=['POST'])
+@api_role_required('owner')
+def api_start_takeoff_for_project(job_id):
+    """Find or create a bid for this project, return the bid_id for the takeoff page."""
+    conn = get_db()
+    # Find existing bid for this job
+    bid = conn.execute('SELECT id FROM bids WHERE job_id = ? ORDER BY updated_at DESC LIMIT 1', (job_id,)).fetchone()
+    if bid:
+        bid_id = bid['id']
+    else:
+        # Auto-create a bid from the project
+        job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
+        job_name = job['name'] if job else f'Project #{job_id}'
+        cursor = conn.execute(
+            "INSERT INTO bids (job_id, bid_name, status, created_by) VALUES (?, ?, 'Draft', ?)",
+            (job_id, job_name, session.get('user_id'))
+        )
+        bid_id = cursor.lastrowid
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'bid_id': bid_id})
+
+@app.route('/api/bids/<int:bid_id>/takeoff', methods=['DELETE'])
+@api_role_required('owner')
+def api_delete_takeoff(bid_id):
+    conn = get_db()
+    conn.execute('DELETE FROM bid_takeoff_items WHERE bid_id = ?', (bid_id,))
+    conn.execute('DELETE FROM bid_takeoff_unit_types WHERE bid_id = ?', (bid_id,))
+    conn.execute("UPDATE bids SET takeoff_config = '{}' WHERE id = ?", (bid_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+DEFAULT_TAKEOFF_ITEMS = [
+    # Rough-In
+    {'phase':'Rough-In','category':'Ductwork','part_name':'CRD','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':1},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'CRD Boot','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':2},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Exhaust Fan','sku':'','unit_price':0,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':3},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'8" Finger Tap','sku':'','unit_price':0,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':4},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'6" Finger Tap','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':5},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'8" to 6" Reducer','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':6},
+    {'phase':'Rough-In','category':'Flex Duct','part_name':'8" Flex R6 (25\')','sku':'','unit_price':0,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':7},
+    {'phase':'Rough-In','category':'Flex Duct','part_name':'6" Flex R6 (25\')','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':8},
+    {'phase':'Rough-In','category':'Flex Duct','part_name':'8" Flex R8 (25\')','sku':'','unit_price':0,'calc_basis':'per_8in_drop','qty_multiplier':0,'waste_pct':10,'enabled':0,'sort_order':9},
+    {'phase':'Rough-In','category':'Flex Duct','part_name':'6" Flex R8 (25\')','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':0,'waste_pct':10,'enabled':0,'sort_order':10},
+    {'phase':'Rough-In','category':'Insulation','part_name':'Duct Wrap (R6)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':11},
+    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Foil Tape','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':5,'enabled':1,'sort_order':12},
+    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Flex Fix Tape','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':13},
+    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Duct Tape','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':14},
+    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Mastic (bucket)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':15},
+    {'phase':'Rough-In','category':'Insulation','part_name':'Armaflex','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':16},
+    {'phase':'Rough-In','category':'Line Sets','part_name':'3/8" Line Set','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':17},
+    {'phase':'Rough-In','category':'Line Sets','part_name':'3/4" Line Set','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':18},
+    {'phase':'Rough-In','category':'Pipe','part_name':'Conductor Pipe','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7,'enabled':1,'sort_order':19},
+    {'phase':'Rough-In','category':'Wire','part_name':'Thermostat Wire (250\')','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':10,'enabled':1,'sort_order':20},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Dryer Box','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':21},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Duct Board','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':10,'enabled':1,'sort_order':22},
+    {'phase':'Rough-In','category':'Hardware','part_name':'Screws (box)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':23},
+    {'phase':'Rough-In','category':'Hardware','part_name':'Boca Plates','sku':'','unit_price':0,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':24},
+    {'phase':'Rough-In','category':'Fittings','part_name':'Adjustable 90s','sku':'','unit_price':0,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':25},
+    {'phase':'Rough-In','category':'Hardware','part_name':'Rails (10\')','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':5,'enabled':1,'sort_order':26},
+    {'phase':'Rough-In','category':'Hardware','part_name':'Zip Ties (bag)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':5,'enabled':1,'sort_order':27},
+    {'phase':'Rough-In','category':'Hardware','part_name':'Plumber Strap (roll)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':28},
+    {'phase':'Rough-In','category':'Sealant','part_name':'Fire Caulk','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':29},
+    {'phase':'Rough-In','category':'Sealant','part_name':'Silicone','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':30},
+
+    # Trim Out
+    {'phase':'Trim Out','category':'PVC','part_name':'PVC Pipe (10\')','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':10,'enabled':1,'sort_order':1},
+    {'phase':'Trim Out','category':'PVC','part_name':'PVC 90s','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':5,'enabled':1,'sort_order':2},
+    {'phase':'Trim Out','category':'PVC','part_name':'PVC Couplings','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':5,'enabled':1,'sort_order':3},
+    {'phase':'Trim Out','category':'PVC','part_name':'PVC Adapters','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':5,'enabled':1,'sort_order':4},
+    {'phase':'Trim Out','category':'PVC','part_name':'PVC Tees','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':5},
+    {'phase':'Trim Out','category':'PVC','part_name':'P-Traps','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':6},
+    {'phase':'Trim Out','category':'PVC','part_name':'PVC Cement','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':7},
+    {'phase':'Trim Out','category':'Controls','part_name':'Pump-Up','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':8},
+    {'phase':'Trim Out','category':'Controls','part_name':'Safe-T Switch','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':9},
+    {'phase':'Trim Out','category':'Electrical','part_name':'Wire Nuts (bag)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':5,'enabled':1,'sort_order':10},
+    {'phase':'Trim Out','category':'Brazing','part_name':'Solder','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':11},
+    {'phase':'Trim Out','category':'Fittings','part_name':'Locking Caps','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':3,'enabled':1,'sort_order':12},
+    {'phase':'Trim Out','category':'Refrigerant','part_name':'Refrigerant (jug)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':13},
+    {'phase':'Trim Out','category':'Grilles','part_name':'Supply Registers','sku':'','unit_price':0,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':14},
+    {'phase':'Trim Out','category':'Grilles','part_name':'Return Grilles','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':15},
+    {'phase':'Trim Out','category':'Grilles','part_name':'Pass-Through Grilles','sku':'','unit_price':0,'calc_basis':'per_bedroom','qty_multiplier':1,'waste_pct':3,'enabled':0,'sort_order':16},
+    {'phase':'Trim Out','category':'Filters','part_name':'Filters','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':17},
+    {'phase':'Trim Out','category':'Covers','part_name':'Vent Hood Covers','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':18},
+    {'phase':'Trim Out','category':'Hardware','part_name':'Anchor Kits','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':19},
+    {'phase':'Trim Out','category':'Drain','part_name':'Drain Pans','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':20},
+
+    # Equipment
+    {'phase':'Equipment','category':'Air Handlers','part_name':'1.5 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'2.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'2.5 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':1,'sort_order':3},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'3.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':1,'sort_order':4},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'3.5 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':1,'sort_order':5},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'4.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':1,'sort_order':6},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'5.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':1,'sort_order':7},
+    {'phase':'Equipment','category':'Condensers','part_name':'1.5 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':1,'sort_order':8},
+    {'phase':'Equipment','category':'Condensers','part_name':'2.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':1,'sort_order':9},
+    {'phase':'Equipment','category':'Condensers','part_name':'2.5 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':1,'sort_order':10},
+    {'phase':'Equipment','category':'Condensers','part_name':'3.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':1,'sort_order':11},
+    {'phase':'Equipment','category':'Condensers','part_name':'3.5 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':1,'sort_order':12},
+    {'phase':'Equipment','category':'Condensers','part_name':'4.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':1,'sort_order':13},
+    {'phase':'Equipment','category':'Condensers','part_name':'5.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':1,'sort_order':14},
+    {'phase':'Equipment','category':'Controls','part_name':'Thermostat (Standard)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':15},
+    {'phase':'Equipment','category':'Controls','part_name':'Thermostat (Smart)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':16},
+
+    # Startup/Other
+    {'phase':'Startup/Other','category':'Permits','part_name':'Permits','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Startup/Other','category':'Tools','part_name':'Sawzall Blades (pack)','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':2,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Startup/Other','category':'Tools','part_name':'Hole Saws','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':3},
+    {'phase':'Startup/Other','category':'Gas','part_name':'Acetylene Tank','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':4},
+    {'phase':'Startup/Other','category':'Gas','part_name':'Oxygen Tank','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':5},
+    {'phase':'Startup/Other','category':'Gas','part_name':'Nitrogen Tank','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':6},
+    {'phase':'Startup/Other','category':'Delivery','part_name':'Delivery/Freight','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':7},
+    {'phase':'Startup/Other','category':'Startup','part_name':'Startup Supplies','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':8},
+    {'phase':'Startup/Other','category':'Tools','part_name':'Misc Consumables','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':9},
+    {'phase':'Startup/Other','category':'Mini Splits','part_name':'Mini Split Indoor Unit','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':10},
+]
+
+@app.route('/bids/<int:bid_id>/takeoff')
+@role_required('owner')
+def bids_takeoff(bid_id):
+    return render_template('bids/takeoff.html', bid_id=bid_id)
+
+@app.route('/api/bids/<int:bid_id>/takeoff/unit-types')
+@api_role_required('owner')
+def api_takeoff_unit_types(bid_id):
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM bid_takeoff_unit_types WHERE bid_id = ? ORDER BY sort_order', (bid_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/bids/<int:bid_id>/takeoff/unit-types', methods=['POST'])
+@api_role_required('owner')
+def api_create_takeoff_unit_type(bid_id):
+    d = request.get_json()
+    conn = get_db()
+    max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM bid_takeoff_unit_types WHERE bid_id = ?', (bid_id,)).fetchone()[0]
+    cursor = conn.execute(
+        '''INSERT INTO bid_takeoff_unit_types (bid_id, name, unit_count, bedrooms, bathrooms,
+           drops_8in, drops_6in, stories, tons, cfm, sort_order)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+        (bid_id, d.get('name',''), d.get('unit_count',0), d.get('bedrooms',1), d.get('bathrooms',1),
+         d.get('drops_8in',0), d.get('drops_6in',0), d.get('stories',1),
+         d.get('tons',0), d.get('cfm',0), max_sort + 1)
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/unit-types/<int:ut_id>', methods=['PUT'])
+@api_role_required('owner')
+def api_update_takeoff_unit_type(bid_id, ut_id):
+    d = request.get_json()
+    conn = get_db()
+    conn.execute(
+        '''UPDATE bid_takeoff_unit_types SET name=?, unit_count=?, bedrooms=?, bathrooms=?,
+           drops_8in=?, drops_6in=?, stories=?, tons=?, cfm=?, sort_order=?
+           WHERE id=? AND bid_id=?''',
+        (d.get('name',''), d.get('unit_count',0), d.get('bedrooms',1), d.get('bathrooms',1),
+         d.get('drops_8in',0), d.get('drops_6in',0), d.get('stories',1),
+         d.get('tons',0), d.get('cfm',0), d.get('sort_order',0), ut_id, bid_id)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/unit-types/<int:ut_id>', methods=['DELETE'])
+@api_role_required('owner')
+def api_delete_takeoff_unit_type(bid_id, ut_id):
+    conn = get_db()
+    conn.execute('DELETE FROM bid_takeoff_unit_types WHERE id = ? AND bid_id = ?', (ut_id, bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/items')
+@api_role_required('owner')
+def api_takeoff_items(bid_id):
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM bid_takeoff_items WHERE bid_id = ? ORDER BY phase, sort_order', (bid_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/bids/<int:bid_id>/takeoff/items', methods=['POST'])
+@api_role_required('owner')
+def api_create_takeoff_item(bid_id):
+    d = request.get_json()
+    conn = get_db()
+    max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM bid_takeoff_items WHERE bid_id = ? AND phase = ?',
+                            (bid_id, d.get('phase','Rough-In'))).fetchone()[0]
+    cursor = conn.execute(
+        '''INSERT INTO bid_takeoff_items (bid_id, phase, category, part_name, sku, unit_price,
+           calc_basis, qty_multiplier, tons_match, waste_pct, enabled, qty_override, sort_order, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (bid_id, d.get('phase','Rough-In'), d.get('category',''), d.get('part_name','New Item'),
+         d.get('sku',''), d.get('unit_price',0), d.get('calc_basis','per_system'),
+         d.get('qty_multiplier',1), d.get('tons_match'), d.get('waste_pct',0),
+         d.get('enabled',1), d.get('qty_override'), max_sort + 1, d.get('notes',''))
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/items/bulk', methods=['PUT'])
+@api_role_required('owner')
+def api_bulk_save_takeoff(bid_id):
+    data = request.get_json()
+    conn = get_db()
+    # Save unit types
+    for ut in data.get('unit_types', []):
+        if ut.get('id'):
+            conn.execute(
+                '''UPDATE bid_takeoff_unit_types SET name=?, unit_count=?, bedrooms=?, bathrooms=?,
+                   drops_8in=?, drops_6in=?, stories=?, tons=?, cfm=?, sort_order=?
+                   WHERE id=? AND bid_id=?''',
+                (ut.get('name',''), ut.get('unit_count',0), ut.get('bedrooms',1), ut.get('bathrooms',1),
+                 ut.get('drops_8in',0), ut.get('drops_6in',0), ut.get('stories',1),
+                 ut.get('tons',0), ut.get('cfm',0), ut.get('sort_order',0), ut['id'], bid_id)
+            )
+    # Save items
+    for item in data.get('items', []):
+        if item.get('id'):
+            conn.execute(
+                '''UPDATE bid_takeoff_items SET phase=?, category=?, part_name=?, sku=?, unit_price=?,
+                   calc_basis=?, qty_multiplier=?, tons_match=?, waste_pct=?, enabled=?,
+                   qty_override=?, sort_order=?, notes=?
+                   WHERE id=? AND bid_id=?''',
+                (item.get('phase','Rough-In'), item.get('category',''), item.get('part_name',''),
+                 item.get('sku',''), item.get('unit_price',0), item.get('calc_basis','per_system'),
+                 item.get('qty_multiplier',1), item.get('tons_match'), item.get('waste_pct',0),
+                 item.get('enabled',1), item.get('qty_override'), item.get('sort_order',0),
+                 item.get('notes',''), item['id'], bid_id)
+            )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/items/<int:item_id>', methods=['DELETE'])
+@api_role_required('owner')
+def api_delete_takeoff_item(bid_id, item_id):
+    conn = get_db()
+    conn.execute('DELETE FROM bid_takeoff_items WHERE id = ? AND bid_id = ?', (item_id, bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/seed-defaults', methods=['POST'])
+@api_role_required('owner')
+def api_seed_takeoff_defaults(bid_id):
+    conn = get_db()
+    existing = conn.execute('SELECT COUNT(*) FROM bid_takeoff_items WHERE bid_id = ?', (bid_id,)).fetchone()[0]
+    if existing > 0:
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Items already exist'})
+    for item in DEFAULT_TAKEOFF_ITEMS:
+        conn.execute(
+            '''INSERT INTO bid_takeoff_items (bid_id, phase, category, part_name, sku, unit_price,
+               calc_basis, qty_multiplier, tons_match, waste_pct, enabled, sort_order)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (bid_id, item['phase'], item['category'], item['part_name'], item.get('sku',''),
+             item['unit_price'], item['calc_basis'], item['qty_multiplier'],
+             item.get('tons_match'), item['waste_pct'], item['enabled'], item['sort_order'])
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/config')
+@api_role_required('owner')
+def api_takeoff_config(bid_id):
+    conn = get_db()
+    row = conn.execute('SELECT takeoff_config FROM bids WHERE id = ?', (bid_id,)).fetchone()
+    conn.close()
+    import json as _json
+    cfg = _json.loads(row['takeoff_config'] or '{}') if row else {}
+    return jsonify(cfg)
+
+@app.route('/api/bids/<int:bid_id>/takeoff/config', methods=['PUT'])
+@api_role_required('owner')
+def api_update_takeoff_config(bid_id):
+    import json as _json
+    data = request.get_json()
+    conn = get_db()
+    conn.execute("UPDATE bids SET takeoff_config = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                 (_json.dumps(data), bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/takeoff/push-to-bid', methods=['POST'])
+@api_role_required('owner')
+def api_push_takeoff_to_bid(bid_id):
+    data = request.get_json()
+    total = data.get('total', 0)
+    conn = get_db()
+    conn.execute("UPDATE bids SET material_subtotal = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                 (total, bid_id))
+    conn.commit()
+    conn.close()
     return jsonify({'ok': True})
 
 # ─── Precon Meetings (Phase 4) ──────────────────────────────────
@@ -4619,25 +5125,63 @@ def api_payapps_contracts():
 @app.route('/api/jobs/<int:job_id>/customer-info')
 @api_role_required('owner', 'admin', 'project_manager')
 def api_job_customer_info(job_id):
-    """Get customer info linked to a job for auto-filling pay app contracts."""
+    """Get customer + bid + contract info linked to a job for auto-filling pay app contracts."""
     conn = get_db()
-    job = conn.execute('SELECT customer_id FROM jobs WHERE id = ?', (job_id,)).fetchone()
-    if not job or not job['customer_id']:
+    job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if not job:
         conn.close()
         return jsonify({})
-    cust = conn.execute('SELECT * FROM customers WHERE id = ?', (job['customer_id'],)).fetchone()
+    result = {}
+    # Pull bid data (most recent accepted or any bid linked to this job)
+    bid = conn.execute(
+        "SELECT * FROM bids WHERE job_id = ? ORDER BY CASE WHEN status='Accepted' THEN 0 ELSE 1 END, id DESC LIMIT 1",
+        (job_id,)
+    ).fetchone()
+    if bid:
+        result['contracting_gc'] = bid['contracting_gc'] or ''
+        result['gc_attention'] = bid['gc_attention'] or ''
+        result['total_bid'] = bid['total_bid'] or 0
+        result['bid_name'] = bid['bid_name'] or ''
+    # Pull customer data
+    if job['customer_id']:
+        cust = conn.execute('SELECT * FROM customers WHERE id = ?', (job['customer_id'],)).fetchone()
+        if cust:
+            addr_parts = [cust['address'] or '', (cust['city'] or '') + ' ' + (cust['state'] or '') + ' ' + (cust['zip_code'] or '')]
+            full_addr = ', '.join(p.strip() for p in addr_parts if p.strip())
+            result['company_name'] = cust['company_name'] or ''
+            result['address'] = full_addr
+            result['primary_contact'] = cust['primary_contact'] or ''
+            result['contact_email'] = cust['contact_email'] or ''
+            result['contact_phone'] = cust['contact_phone'] or ''
+    # Pull contract data (active contract for this job)
+    contract = conn.execute(
+        'SELECT * FROM contracts WHERE job_id = ? AND status = ? ORDER BY value DESC LIMIT 1',
+        (job_id, 'Active')
+    ).fetchone()
+    if not contract:
+        contract = conn.execute(
+            'SELECT * FROM contracts WHERE job_id = ? ORDER BY value DESC LIMIT 1',
+            (job_id,)
+        ).fetchone()
+    if contract:
+        # Use contract value as fallback for contract sum
+        if not result.get('total_bid') and contract['value']:
+            result['total_bid'] = contract['value']
+        # Contract date from contract upload_date
+        if contract['upload_date']:
+            result['contract_date'] = contract['upload_date']
+        # Contractor name as another fallback for GC name
+        if not result.get('contracting_gc') and contract['contractor']:
+            result['contracting_gc'] = contract['contractor']
+    # Job awarded date as fallback for contract date
+    if not result.get('contract_date') and job.get('awarded_date'):
+        result['contract_date'] = job['awarded_date']
+    # Project address from job
+    job_addr_parts = [job['address'] or '', (job['city'] or '') + ' ' + (job['state'] or '')]
+    result['project_address'] = ', '.join(p.strip() for p in job_addr_parts if p.strip())
+    result['project_name'] = job['name'] or ''
     conn.close()
-    if not cust:
-        return jsonify({})
-    addr_parts = [cust['address'] or '', (cust['city'] or '') + ' ' + (cust['state'] or '') + ' ' + (cust['zip_code'] or '')]
-    full_addr = ', '.join(p.strip() for p in addr_parts if p.strip())
-    return jsonify({
-        'company_name': cust['company_name'] or '',
-        'address': full_addr,
-        'primary_contact': cust['primary_contact'] or '',
-        'contact_email': cust['contact_email'] or '',
-        'contact_phone': cust['contact_phone'] or '',
-    })
+    return jsonify(result)
 
 @app.route('/api/payapps/contracts', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
@@ -4677,6 +5221,26 @@ def api_payapps_contract_detail(cid):
     result['job_name'] = job['name'] if job else ''
     conn.close()
     return jsonify(result)
+
+@app.route('/api/payapps/contracts/<int:cid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_contracts_update(cid):
+    data = request.get_json(force=True)
+    conn = get_db()
+    fields = []
+    params = []
+    for key in ('gc_name', 'gc_address', 'project_no', 'contract_for', 'contract_date',
+                'original_contract_sum', 'retainage_work_pct', 'retainage_stored_pct',
+                'gc_contact', 'gc_email', 'gc_phone'):
+        if key in data:
+            fields.append(f'{key} = ?')
+            params.append(data[key])
+    if fields:
+        params.append(cid)
+        conn.execute(f'UPDATE pay_app_contracts SET {", ".join(fields)} WHERE id = ?', params)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 @app.route('/api/payapps/contracts/<int:cid>', methods=['DELETE'])
 @api_role_required('owner', 'admin', 'project_manager')
@@ -4965,7 +5529,6 @@ def api_payapps_app_delete(aid):
 @api_role_required('owner', 'admin', 'project_manager')
 def api_payapps_generate_pdf(aid):
     """Generate G702/G703 PDF for a pay application."""
-    import subprocess, tempfile
 
     # Re-use the detail logic to get all data
     conn = get_db()
@@ -5150,31 +5713,16 @@ def api_payapps_generate_pdf(aid):
     filename = f"PayApp_{safe_name}_App{app_row['application_number']}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
+    if weasyprint is None:
+        conn.close()
+        return jsonify({'error': 'PDF generation is not available. WeasyPrint is not installed on the server. Please contact your administrator.'}), 500
 
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            conn.close()
-            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
-
-        result = subprocess.run([
-            chrome, '--headless', '--disable-gpu', '--no-sandbox',
-            '--disable-software-rasterizer', f'--print-to-pdf={filepath}',
-            '--no-pdf-header-footer', f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            conn.close()
-            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     # Save filename to DB
     conn.execute('UPDATE pay_applications SET pdf_file = ? WHERE id = ?', (filename, aid))
@@ -5331,6 +5879,43 @@ def api_payapps_view_signed(aid, filename):
     ext = os.path.splitext(filename)[1].lower()
     mime = 'application/pdf' if ext == '.pdf' else 'image/png' if ext == '.png' else 'image/jpeg'
     return send_file(filepath, mimetype=mime)
+
+@app.route('/api/payapps/contracts/<int:cid>/upload-existing', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_upload_existing(cid):
+    """Upload an already-submitted pay app PDF and create it as PA#N."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    period_to = request.form.get('period_to', '')
+    status = request.form.get('status', 'Submitted')
+    if status not in ('Draft', 'Submitted', 'Approved', 'Paid'):
+        status = 'Submitted'
+    conn = get_db()
+    max_num = conn.execute(
+        'SELECT MAX(application_number) FROM pay_applications WHERE contract_id = ?', (cid,)
+    ).fetchone()[0] or 0
+    app_number = max_num + 1
+    today = datetime.now().strftime('%Y-%m-%d')
+    cursor = conn.execute(
+        '''INSERT INTO pay_applications (contract_id, application_number, period_to, application_date, status, created_by)
+           VALUES (?,?,?,?,?,?)''',
+        (cid, app_number, period_to or today, today, status, session['user_id'])
+    )
+    aid = cursor.lastrowid
+    # Save the uploaded file as the signed copy
+    signed_dir = os.path.join(os.path.dirname(__file__), 'data', 'payapps_signed')
+    os.makedirs(signed_dir, exist_ok=True)
+    ext = os.path.splitext(f.filename)[1].lower() or '.pdf'
+    filename = f"signed_app_{aid}{ext}"
+    filepath = os.path.join(signed_dir, filename)
+    f.save(filepath)
+    conn.execute('UPDATE pay_applications SET signed_file = ? WHERE id = ?', (filename, aid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': aid, 'application_number': app_number})
 
 @app.route('/payapps/analytics')
 @role_required('owner', 'admin', 'project_manager')
@@ -5774,8 +6359,11 @@ def api_schedule_events():
         ).fetchall()
     result = [dict(r) for r in rows]
     conn.close()
-    # Check for upcoming due-date notifications
-    _check_schedule_notifications(result)
+    # Check for upcoming due-date notifications (don't let errors block the response)
+    try:
+        _check_schedule_notifications(result)
+    except Exception:
+        pass
     return jsonify(result)
 
 def _check_schedule_notifications(events):
@@ -7093,7 +7681,6 @@ def api_schedule_delete_plan(plan_id):
 @api_login_required
 def api_schedule_plan_pdf():
     """Generate a PDF of a backwards plan."""
-    import subprocess, tempfile
     data = request.get_json(force=True)
     job_id = data.get('job_id')
     if not job_id:
@@ -7127,30 +7714,11 @@ def api_schedule_plan_pdf():
     filename = f"Schedule_Plan_{safe_name}_{job_id}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
-
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
-
-        result = subprocess.run([
-            chrome, '--headless', '--disable-gpu', '--no-sandbox',
-            '--disable-software-rasterizer',
-            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
-            f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     return jsonify({'ok': True, 'filename': filename, 'path': f'/api/schedule/plan-pdf/{filename}'})
 
@@ -7798,31 +8366,11 @@ def api_generate_co_proposal(coid):
     filename = f"CO_{co['job_id']}_{co['co_number']}_{safe_title}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    import subprocess, tempfile
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
-
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            return jsonify({'error': 'Chrome not found. Install Google Chrome to generate PDFs.'}), 500
-
-        result = subprocess.run([
-            chrome, '--headless', '--disable-gpu', '--no-sandbox',
-            '--disable-software-rasterizer',
-            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
-            f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     # Store filename on CO
     conn2 = get_db()
@@ -8345,31 +8893,11 @@ def api_generate_transmittal(tid):
     filename = f"Transmittal_{trans['job_id']}_{trans['transmittal_number']}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    import subprocess, tempfile
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
-
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            return jsonify({'error': 'Chrome not found.'}), 500
-
-        result = subprocess.run([
-            chrome, '--headless', '--disable-gpu', '--no-sandbox',
-            '--disable-software-rasterizer',
-            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
-            f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     # Store filename
     conn2 = get_db()
@@ -8748,8 +9276,12 @@ def api_lien_waivers_list():
     status = request.args.get('status', '')
     wtype = request.args.get('type', '')
     conn = get_db()
-    sql = '''SELECT lw.*, j.name as job_name FROM lien_waivers lw
-             JOIN jobs j ON lw.job_id = j.id WHERE 1=1'''
+    sql = '''SELECT lw.*, j.name as job_name,
+             pa.application_number as pay_app_number, pa.period_to as pay_app_period
+             FROM lien_waivers lw
+             JOIN jobs j ON lw.job_id = j.id
+             LEFT JOIN pay_applications pa ON lw.pay_app_id = pa.id
+             WHERE 1=1'''
     params = []
     if job_id:
         sql += ' AND lw.job_id = ?'
@@ -8824,12 +9356,14 @@ def api_lien_waivers_create():
     current_payment = float(data.get('current_payment', 0))
     contract_balance = contract_amount - previous_payments - current_payment
 
+    pay_app_id = data.get('pay_app_id') or None
+
     cursor = conn.execute(
         '''INSERT INTO lien_waivers (job_id, waiver_number, waiver_type, waiver_date,
            title_company, file_number, state, county, contract_amount, previous_payments,
            current_payment, contract_balance, claimant, against_company, premises_description,
-           through_date, signer_name, signer_title, status, notes, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+           through_date, signer_name, signer_title, status, notes, created_by, pay_app_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (job_id, waiver_number,
          data.get('waiver_type', 'Conditional Progress'),
          data.get('waiver_date', datetime.now().strftime('%Y-%m-%d')),
@@ -8849,7 +9383,8 @@ def api_lien_waivers_create():
          data.get('signer_title', ''),
          'Draft',
          data.get('notes', ''),
-         session['user_id'])
+         session['user_id'],
+         pay_app_id)
     )
     conn.commit()
     new_id = cursor.lastrowid
@@ -8861,8 +9396,12 @@ def api_lien_waivers_create():
 def api_lien_waivers_get(wid):
     conn = get_db()
     row = conn.execute(
-        '''SELECT lw.*, j.name as job_name FROM lien_waivers lw
-           JOIN jobs j ON lw.job_id = j.id WHERE lw.id = ?''', (wid,)
+        '''SELECT lw.*, j.name as job_name,
+           pa.application_number as pay_app_number, pa.period_to as pay_app_period
+           FROM lien_waivers lw
+           JOIN jobs j ON lw.job_id = j.id
+           LEFT JOIN pay_applications pa ON lw.pay_app_id = pa.id
+           WHERE lw.id = ?''', (wid,)
     ).fetchone()
     conn.close()
     if not row:
@@ -8883,12 +9422,14 @@ def api_lien_waivers_update(wid):
     current_payment = float(data.get('current_payment', 0))
     contract_balance = contract_amount - previous_payments - current_payment
 
+    pay_app_id = data.get('pay_app_id') or None
+
     conn.execute(
         '''UPDATE lien_waivers SET waiver_type=?, waiver_date=?, title_company=?,
            file_number=?, state=?, county=?, contract_amount=?, previous_payments=?,
            current_payment=?, contract_balance=?, claimant=?, against_company=?,
            premises_description=?, through_date=?, signer_name=?, signer_title=?,
-           status=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?''',
+           status=?, notes=?, pay_app_id=?, updated_at=datetime('now','localtime') WHERE id=?''',
         (data.get('waiver_type', 'Conditional Progress'),
          data.get('waiver_date', ''),
          data.get('title_company', ''),
@@ -8907,6 +9448,7 @@ def api_lien_waivers_update(wid):
          data.get('signer_title', ''),
          data.get('status', 'Draft'),
          data.get('notes', ''),
+         pay_app_id,
          wid)
     )
     conn.commit()
@@ -8965,31 +9507,11 @@ def api_lien_waivers_generate(wid):
     filename = f"LienWaiver_{waiver['job_id']}_{waiver['waiver_number']}.pdf"
     filepath = os.path.join(proposals_dir, filename)
 
-    import subprocess, tempfile
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
-
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            return jsonify({'error': 'Chrome not found.'}), 500
-
-        result = subprocess.run([
-            chrome, '--headless', '--disable-gpu', '--no-sandbox',
-            '--disable-software-rasterizer',
-            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
-            f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            return jsonify({'error': f'PDF generation failed: {result.stderr[:200]}'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     # Store filename
     conn2 = get_db()
@@ -9027,6 +9549,55 @@ def api_lien_waivers_upload(wid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'filename': fname})
+
+@app.route('/api/lien-waivers/upload-new', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_lien_waivers_upload_new():
+    """Create a draft lien waiver and attach an uploaded file in one step (for drag-and-drop)."""
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': 'No file provided'}), 400
+    job_id = request.form.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'Job is required'}), 400
+    conn = get_db()
+    job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    job_name = job['name'] if job else ''
+    pay_app_id = request.form.get('pay_app_id') or None
+    max_num = conn.execute('SELECT MAX(waiver_number) FROM lien_waivers WHERE job_id = ?', (job_id,)).fetchone()[0] or 0
+    today = datetime.now().strftime('%Y-%m-%d')
+    cursor = conn.execute(
+        '''INSERT INTO lien_waivers (job_id, waiver_number, waiver_type, waiver_date, claimant,
+           premises_description, status, created_by, pay_app_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now','localtime'))''',
+        (job_id, max_num + 1, 'Conditional Progress', today, 'LGHVAC Mechanical, LLC',
+         job_name, 'Draft', session['user_id'], pay_app_id)
+    )
+    wid = cursor.lastrowid
+    from werkzeug.utils import secure_filename
+    fname = secure_filename(file.filename)
+    fname = f"{int(datetime.now().timestamp())}_{fname}"
+    file.save(os.path.join(LIEN_WAIVERS_DIR, fname))
+    conn.execute('UPDATE lien_waivers SET file_path = ? WHERE id = ?', (fname, wid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': wid})
+
+@app.route('/api/lien-waivers/pay-apps-for-job/<int:job_id>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_lien_waivers_payapps_for_job(job_id):
+    """Get all pay applications for a job (across all contracts) for lien waiver dropdown."""
+    conn = get_db()
+    rows = conn.execute(
+        '''SELECT pa.id, pa.application_number, pa.period_to, pa.status,
+           pac.gc_name, pac.project_name
+           FROM pay_applications pa
+           JOIN pay_app_contracts pac ON pa.contract_id = pac.id
+           WHERE pac.job_id = ?
+           ORDER BY pa.application_number''',
+        (job_id,)
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
 
 @app.route('/api/lien-waivers/<int:wid>/file')
 @api_role_required('owner', 'admin', 'project_manager')
@@ -13009,8 +13580,6 @@ def api_export_excel():
 @app.route('/api/export/pdf', methods=['POST'])
 @api_login_required
 def api_export_pdf():
-    import subprocess, tempfile
-
     payload = request.get_json(force=True)
     title = payload.get('title', 'Export')
     headers = payload.get('headers', [])
@@ -13026,30 +13595,11 @@ def api_export_pdf():
     safe = "".join(ch if ch.isalnum() or ch in ' -_' else '' for ch in filename)
     filepath = os.path.join(export_dir, f'{safe}.pdf')
 
-    with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w') as tmp:
-        tmp.write(html)
-        tmp_path = tmp.name
-
     try:
-        chrome_paths = [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-        chrome = next((p for p in chrome_paths if os.path.exists(p)), None)
-        if not chrome:
-            return jsonify({'error': 'Chrome not found'}), 500
-
-        subprocess.run([
-            chrome, '--headless', '--disable-gpu', '--no-sandbox',
-            '--disable-software-rasterizer',
-            f'--print-to-pdf={filepath}', '--no-pdf-header-footer',
-            f'file://{tmp_path}',
-        ], capture_output=True, text=True, timeout=30)
-
-        if not os.path.exists(filepath):
-            return jsonify({'error': 'PDF generation failed'}), 500
-    finally:
-        os.unlink(tmp_path)
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(os.path.abspath(__file__)))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
 
     return send_file(filepath, as_attachment=True, download_name=f'{safe}.pdf',
                      mimetype='application/pdf')
@@ -13817,6 +14367,7 @@ def photos_page():
 def api_list_photos():
     job_id = request.args.get('job_id', type=int)
     category = request.args.get('category', '')
+    album_id = request.args.get('album_id', '')
     conn = get_db()
     query = 'SELECT p.*, j.name as job_name, u.display_name as uploaded_by_name FROM job_photos p LEFT JOIN jobs j ON p.job_id = j.id LEFT JOIN users u ON p.uploaded_by = u.id WHERE 1=1'
     params = []
@@ -13826,6 +14377,11 @@ def api_list_photos():
     if category:
         query += ' AND p.category = ?'
         params.append(category)
+    if album_id == 'none':
+        query += ' AND p.album_id IS NULL'
+    elif album_id:
+        query += ' AND p.album_id = ?'
+        params.append(int(album_id))
     query += ' ORDER BY p.created_at DESC'
     photos = conn.execute(query, params).fetchall()
     conn.close()
@@ -13839,6 +14395,7 @@ def api_upload_photos():
         return jsonify({'error': 'Job required'}), 400
     category = request.form.get('category', 'General')
     caption = request.form.get('caption', '')
+    album_id = request.form.get('album_id') or None
     os.makedirs(os.path.join(app.root_path, 'data', 'photos'), exist_ok=True)
     files = request.files.getlist('files')
     if not files:
@@ -13850,9 +14407,9 @@ def api_upload_photos():
         filepath = os.path.join(app.root_path, 'data', 'photos', filename)
         f.save(filepath)
         cur = conn.execute(
-            '''INSERT INTO job_photos (job_id, file_path, caption, category, taken_date, uploaded_by)
-               VALUES (?,?,?,?,date('now','localtime'),?)''',
-            (job_id, f'data/photos/{filename}', caption, category, session.get('user_id'))
+            '''INSERT INTO job_photos (job_id, file_path, caption, category, taken_date, uploaded_by, album_id)
+               VALUES (?,?,?,?,date('now','localtime'),?,?)''',
+            (job_id, f'data/photos/{filename}', caption, category, session.get('user_id'), album_id)
         )
         ids.append(cur.lastrowid)
     conn.commit()
@@ -13879,6 +14436,75 @@ def api_delete_photo(pid):
         if os.path.exists(path):
             os.remove(path)
     conn.execute('DELETE FROM job_photos WHERE id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ─── Photo Albums ────────────────────────────────────────────────
+
+@app.route('/api/photos/albums')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_list_albums():
+    job_id = request.args.get('job_id', type=int)
+    if not job_id:
+        return jsonify([])
+    conn = get_db()
+    albums = conn.execute('''
+        SELECT a.*, COUNT(p.id) as photo_count,
+               (SELECT pp.id FROM job_photos pp WHERE pp.album_id = a.id ORDER BY pp.created_at DESC LIMIT 1) as cover_photo_id
+        FROM photo_albums a
+        LEFT JOIN job_photos p ON p.album_id = a.id
+        WHERE a.job_id = ?
+        GROUP BY a.id
+        ORDER BY a.name
+    ''', (job_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(a) for a in albums])
+
+@app.route('/api/photos/albums', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_create_album():
+    data = request.get_json()
+    job_id = data.get('job_id')
+    name = (data.get('name') or '').strip()
+    if not job_id or not name:
+        return jsonify({'error': 'Job and name required'}), 400
+    conn = get_db()
+    cur = conn.execute('INSERT INTO photo_albums (job_id, name) VALUES (?, ?)', (job_id, name))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+@app.route('/api/photos/albums/<int:aid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_album(aid):
+    data = request.get_json()
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Name required'}), 400
+    conn = get_db()
+    conn.execute('UPDATE photo_albums SET name = ? WHERE id = ?', (name, aid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/photos/albums/<int:aid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_album(aid):
+    conn = get_db()
+    conn.execute('UPDATE job_photos SET album_id = NULL WHERE album_id = ?', (aid,))
+    conn.execute('DELETE FROM photo_albums WHERE id = ?', (aid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/photos/<int:pid>/move', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_move_photo(pid):
+    data = request.get_json()
+    album_id = data.get('album_id')  # null = remove from album
+    conn = get_db()
+    conn.execute('UPDATE job_photos SET album_id = ? WHERE id = ?', (album_id, pid))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -14066,6 +14692,81 @@ def api_upcoming_billing():
     ''').fetchall()
     conn.close()
     return jsonify([dict(i) for i in items])
+
+# ─── Project Documents (General File Upload) ────────────────────────
+
+PROJECT_DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'project_docs')
+os.makedirs(PROJECT_DOCS_DIR, exist_ok=True)
+
+@app.route('/api/projects/<int:job_id>/documents')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_list_project_documents(job_id):
+    conn = get_db()
+    docs = conn.execute('''
+        SELECT pd.*, u.display_name as uploader_name
+        FROM project_documents pd
+        LEFT JOIN users u ON pd.uploaded_by = u.id
+        WHERE pd.job_id = ?
+        ORDER BY pd.created_at DESC
+    ''', (job_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(d) for d in docs])
+
+@app.route('/api/projects/<int:job_id>/documents', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_upload_project_document(job_id):
+    from werkzeug.utils import secure_filename
+    import mimetypes
+    files = request.files.getlist('files')
+    if not files or not files[0].filename:
+        return jsonify({'error': 'No file provided'}), 400
+    category = request.form.get('category', 'Other')
+    notes = request.form.get('notes', '')
+    conn = get_db()
+    uploaded = []
+    for file in files:
+        if not file.filename:
+            continue
+        fname = secure_filename(file.filename)
+        ts_fname = f"{int(datetime.now().timestamp())}_{fname}"
+        file.save(os.path.join(PROJECT_DOCS_DIR, ts_fname))
+        file_size = os.path.getsize(os.path.join(PROJECT_DOCS_DIR, ts_fname))
+        mime = mimetypes.guess_type(fname)[0] or 'application/octet-stream'
+        conn.execute('''
+            INSERT INTO project_documents (job_id, file_name, file_path, file_size, mime_type, category, notes, uploaded_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (job_id, fname, ts_fname, file_size, mime, category, notes, session.get('user_id')))
+        uploaded.append(fname)
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'uploaded': uploaded})
+
+@app.route('/api/projects/<int:job_id>/documents/<int:doc_id>/file')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_view_project_document(job_id, doc_id):
+    conn = get_db()
+    doc = conn.execute('SELECT * FROM project_documents WHERE id = ? AND job_id = ?', (doc_id, job_id)).fetchone()
+    conn.close()
+    if not doc or not doc['file_path']:
+        return 'Not found', 404
+    fpath = os.path.join(PROJECT_DOCS_DIR, doc['file_path'])
+    if not os.path.exists(fpath):
+        return 'File not found', 404
+    return send_file(fpath, mimetype=doc['mime_type'], download_name=doc['file_name'])
+
+@app.route('/api/projects/<int:job_id>/documents/<int:doc_id>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_project_document(job_id, doc_id):
+    conn = get_db()
+    doc = conn.execute('SELECT file_path FROM project_documents WHERE id = ? AND job_id = ?', (doc_id, job_id)).fetchone()
+    if doc and doc['file_path']:
+        fpath = os.path.join(PROJECT_DOCS_DIR, doc['file_path'])
+        if os.path.exists(fpath):
+            os.remove(fpath)
+    conn.execute('DELETE FROM project_documents WHERE id = ? AND job_id = ?', (doc_id, job_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 # ─── Certificates of Insurance (COI) ─────────────────────────────
 
