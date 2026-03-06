@@ -4359,89 +4359,159 @@ def api_delete_takeoff(bid_id):
     return jsonify({'ok': True})
 
 DEFAULT_TAKEOFF_ITEMS = [
-    # Rough-In
-    {'phase':'Rough-In','category':'Ductwork','part_name':'CRD','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':1},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'CRD Boot','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':2},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'Exhaust Fan','sku':'','unit_price':0,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':3},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'8" Finger Tap','sku':'','unit_price':0,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':4},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'6" Finger Tap','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':5},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'8" to 6" Reducer','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':6},
-    {'phase':'Rough-In','category':'Flex Duct','part_name':'8" Flex R6 (25\')','sku':'','unit_price':0,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':7},
-    {'phase':'Rough-In','category':'Flex Duct','part_name':'6" Flex R6 (25\')','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':8},
-    {'phase':'Rough-In','category':'Flex Duct','part_name':'8" Flex R8 (25\')','sku':'','unit_price':0,'calc_basis':'per_8in_drop','qty_multiplier':0,'waste_pct':10,'enabled':0,'sort_order':9},
-    {'phase':'Rough-In','category':'Flex Duct','part_name':'6" Flex R8 (25\')','sku':'','unit_price':0,'calc_basis':'per_6in_drop','qty_multiplier':0,'waste_pct':10,'enabled':0,'sort_order':10},
-    {'phase':'Rough-In','category':'Insulation','part_name':'Duct Wrap (R6)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':11},
-    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Foil Tape','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':5,'enabled':1,'sort_order':12},
-    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Flex Fix Tape','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':13},
-    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Duct Tape','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':14},
-    {'phase':'Rough-In','category':'Tape/Sealant','part_name':'Mastic (bucket)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':15},
-    {'phase':'Rough-In','category':'Insulation','part_name':'Armaflex','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':16},
-    {'phase':'Rough-In','category':'Line Sets','part_name':'3/8" Line Set','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':17},
-    {'phase':'Rough-In','category':'Line Sets','part_name':'3/4" Line Set','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':18},
-    {'phase':'Rough-In','category':'Pipe','part_name':'Conductor Pipe','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7,'enabled':1,'sort_order':19},
-    {'phase':'Rough-In','category':'Wire','part_name':'Thermostat Wire (250\')','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':10,'enabled':1,'sort_order':20},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'Dryer Box','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':21},
-    {'phase':'Rough-In','category':'Ductwork','part_name':'Duct Board','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':10,'enabled':1,'sort_order':22},
-    {'phase':'Rough-In','category':'Hardware','part_name':'Screws (box)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':23},
-    {'phase':'Rough-In','category':'Hardware','part_name':'Boca Plates','sku':'','unit_price':0,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':24},
-    {'phase':'Rough-In','category':'Fittings','part_name':'Adjustable 90s','sku':'','unit_price':0,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':25},
-    {'phase':'Rough-In','category':'Hardware','part_name':'Rails (10\')','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':5,'enabled':1,'sort_order':26},
-    {'phase':'Rough-In','category':'Hardware','part_name':'Zip Ties (bag)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':5,'enabled':1,'sort_order':27},
-    {'phase':'Rough-In','category':'Hardware','part_name':'Plumber Strap (roll)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':28},
-    {'phase':'Rough-In','category':'Sealant','part_name':'Fire Caulk','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':29},
-    {'phase':'Rough-In','category':'Sealant','part_name':'Silicone','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':30},
+    # ═══ Rough-In — from Takeoff_Template.xlsm rows 12-56 ═══
+    {'phase':'Rough-In','category':'CRD','part_name':'12x14 CRD W/165° Link','sku':'I-CRD50 12X14','unit_price':43,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':1},
+    {'phase':'Rough-In','category':'CRD','part_name':'Fire/Smoke Radiation Damper 12"x14"','sku':'FSD-111-1','unit_price':608,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':7.5,'enabled':0,'sort_order':2},
+    {'phase':'Rough-In','category':'CRD','part_name':'6x12x8 90° CRD Boot W/165° Link','sku':'50CRD-95-BT','unit_price':35,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':3},
+    {'phase':'Rough-In','category':'Boots','part_name':'8" Foam Boot','sku':'L7001','unit_price':16.06,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':4},
+    {'phase':'Rough-In','category':'Boots','part_name':'6" Foam Boot','sku':'','unit_price':12,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':5},
+    {'phase':'Rough-In','category':'Exhaust Fan','part_name':'Broan 688','sku':'688','unit_price':18.45,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':6},
+    {'phase':'Rough-In','category':'CRD','part_name':'80CFM Exhaust Fan','sku':'QTXEG080','unit_price':100.50,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':7},
+    {'phase':'Rough-In','category':'CRD','part_name':'4" Round CRD 165FB','sku':'55CRD 4"','unit_price':32,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':8},
+    {'phase':'Rough-In','category':'Duct Adapter','part_name':'6" Finger Saver ST Collar','sku':'L0090','unit_price':1.30,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':9},
+    {'phase':'Rough-In','category':'Duct Adapter','part_name':'8" Finger Saver ST Collar','sku':'L0092','unit_price':1.65,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':10},
+    {'phase':'Rough-In','category':'Duct Adapter','part_name':'8x6 Reducer 28GA','sku':'L0292','unit_price':5.80,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':11},
+    {'phase':'Rough-In','category':'Flex','part_name':'6" x 25\' Foil Flex R6 Bag','sku':'L1972','unit_price':31.46,'calc_basis':'flex_6r6','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':12},
+    {'phase':'Rough-In','category':'Flex','part_name':'6" x 25\' Foil Flex R8 Bag','sku':'L1939','unit_price':40.54,'calc_basis':'flex_6r8','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':13},
+    {'phase':'Rough-In','category':'Flex','part_name':'8" x 25\' Foil Flex R6 Bag','sku':'L1974','unit_price':37.56,'calc_basis':'flex_8r6','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':14},
+    {'phase':'Rough-In','category':'Flex','part_name':'8" x 25\' Foil Flex R8 Bag','sku':'L1941','unit_price':49.82,'calc_basis':'flex_8r8','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':15},
+    {'phase':'Rough-In','category':'Flex','part_name':'3M Fire Wrap','sku':'SA','unit_price':170,'calc_basis':'per_system','qty_multiplier':1.5,'waste_pct':7.5,'enabled':0,'sort_order':16},
+    {'phase':'Rough-In','category':'Flex','part_name':'FSK Duct Wrap R-6.0','sku':'L0475','unit_price':118,'calc_basis':'per_system','qty_multiplier':0.148,'waste_pct':7.5,'enabled':0,'sort_order':17},
+    {'phase':'Rough-In','category':'Line Set','part_name':'3/4 x 3/8 Tube Insulation Proflex','sku':'L0484','unit_price':0.284,'calc_basis':'per_system','qty_multiplier':50,'waste_pct':7.5,'enabled':1,'sort_order':18},
+    {'phase':'Rough-In','category':'Line Set','part_name':'3/8 OD x 50\' Refrig Tube','sku':'H0716','unit_price':57,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':19},
+    {'phase':'Rough-In','category':'Line Set','part_name':'3/4 OD x 50\' Refrig Tube','sku':'H0719','unit_price':130,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':20},
+    {'phase':'Rough-In','category':'Line Set','part_name':'Mini Split Line Set','sku':'','unit_price':217,'calc_basis':'fixed','qty_multiplier':3,'waste_pct':7.5,'enabled':0,'sort_order':21},
+    {'phase':'Rough-In','category':'Line Set','part_name':'3" Hanging Duct Strap Silver 300\'','sku':'M0069','unit_price':8.50,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':0,'sort_order':22},
+    {'phase':'Rough-In','category':'Round Pipe','part_name':'4" Adjustable 90 Ell','sku':'L0121','unit_price':2.99,'calc_basis':'adj_90','qty_multiplier':3,'waste_pct':7.5,'enabled':1,'sort_order':23},
+    {'phase':'Rough-In','category':'Round Pipe','part_name':'3" Adjustable 90','sku':'L0120','unit_price':2.99,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':24},
+    {'phase':'Rough-In','category':'Round Pipe','part_name':'4x3 Reducer','sku':'','unit_price':5.65,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':25},
+    {'phase':'Rough-In','category':'Round Pipe','part_name':'3" Conductor Pipe','sku':'L0463','unit_price':1.25,'calc_basis':'per_bathroom','qty_multiplier':2,'waste_pct':7.5,'enabled':0,'sort_order':26},
+    {'phase':'Rough-In','category':'Round Pipe','part_name':'4" Conductor Pipe','sku':'L0464','unit_price':1.60,'calc_basis':'conductor_pipe','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':27},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'14/4 SOOWA Cord 250\'','sku':'P3833','unit_price':1.495,'calc_basis':'fixed','qty_multiplier':150,'waste_pct':7.5,'enabled':0,'sort_order':28},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'18/8 Thermostat Wire Plenum 500\'','sku':'P2240','unit_price':0.565,'calc_basis':'per_system','qty_multiplier':100,'waste_pct':7.5,'enabled':1,'sort_order':29},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'4.25" Dryer Box 2x6','sku':'L3526','unit_price':32.50,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':30},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'1x48x120 Duct Board','sku':'L0470','unit_price':58,'calc_basis':'per_ductboard_config','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':31},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'#8 x 3/4" Hex Washer Screw','sku':'Q4659','unit_price':32.65,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':1,'sort_order':32},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'5"x18" 16GA Boca Plate Strap','sku':'M1322','unit_price':4.65,'calc_basis':'per_system','qty_multiplier':6,'waste_pct':7.5,'enabled':1,'sort_order':33},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'Black Duct Tape 2" 60YDS','sku':'L0444','unit_price':5.60,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':7.5,'enabled':1,'sort_order':34},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'Foil Tape 2.5" x 60YDS','sku':'L0494','unit_price':15.15,'calc_basis':'per_system','qty_multiplier':1.5,'waste_pct':7.5,'enabled':1,'sort_order':35},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'Flex Fix 3" x 120YDS','sku':'L0445','unit_price':13.17,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':7.5,'enabled':1,'sort_order':36},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'3/4 x 100\' Galv Hanger Iron Strap','sku':'M0091','unit_price':9,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':7.5,'enabled':1,'sort_order':37},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'26" Snap-On Rails','sku':'L0158','unit_price':0.70,'calc_basis':'rails','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':38},
+    {'phase':'Rough-In','category':'Shorts & Smalls','part_name':'36" Nylon Duct Strap','sku':'L0526','unit_price':0.30,'calc_basis':'zip_ties','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':39},
+    {'phase':'Rough-In','category':'Tools','part_name':'12" 6T Rough-In Blade 5PK','sku':'T3710','unit_price':26,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':7.5,'enabled':1,'sort_order':40},
+    {'phase':'Rough-In','category':'Tools','part_name':'4-3/8" Hole Saw','sku':'T0996','unit_price':44,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':1,'sort_order':41},
+    {'phase':'Rough-In','category':'Other','part_name':'Metacaulk MC150+ 5G Bucket','sku':'M1346','unit_price':258,'calc_basis':'per_system','qty_multiplier':0.071,'waste_pct':7.5,'enabled':1,'sort_order':42},
+    {'phase':'Rough-In','category':'Other','part_name':'Gray 1GAL Duct Sealant','sku':'M6003','unit_price':13,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':7.5,'enabled':1,'sort_order':43},
+    {'phase':'Rough-In','category':'Other','part_name':'10.1oz White Silicone','sku':'M1842','unit_price':5.90,'calc_basis':'per_venthood','qty_multiplier':0.167,'waste_pct':7.5,'enabled':1,'sort_order':44},
+    {'phase':'Rough-In','category':'Other','part_name':'2-1/2" Paint Chip Brush','sku':'M0725','unit_price':0.70,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':7.5,'enabled':1,'sort_order':45},
 
-    # Trim Out
-    {'phase':'Trim Out','category':'PVC','part_name':'PVC Pipe (10\')','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':10,'enabled':1,'sort_order':1},
-    {'phase':'Trim Out','category':'PVC','part_name':'PVC 90s','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':5,'enabled':1,'sort_order':2},
-    {'phase':'Trim Out','category':'PVC','part_name':'PVC Couplings','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':5,'enabled':1,'sort_order':3},
-    {'phase':'Trim Out','category':'PVC','part_name':'PVC Adapters','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':5,'enabled':1,'sort_order':4},
-    {'phase':'Trim Out','category':'PVC','part_name':'PVC Tees','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':5,'enabled':1,'sort_order':5},
-    {'phase':'Trim Out','category':'PVC','part_name':'P-Traps','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':6},
-    {'phase':'Trim Out','category':'PVC','part_name':'PVC Cement','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':7},
-    {'phase':'Trim Out','category':'Controls','part_name':'Pump-Up','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':8},
-    {'phase':'Trim Out','category':'Controls','part_name':'Safe-T Switch','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':9},
-    {'phase':'Trim Out','category':'Electrical','part_name':'Wire Nuts (bag)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':5,'enabled':1,'sort_order':10},
-    {'phase':'Trim Out','category':'Brazing','part_name':'Solder','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':5,'enabled':1,'sort_order':11},
-    {'phase':'Trim Out','category':'Fittings','part_name':'Locking Caps','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':3,'enabled':1,'sort_order':12},
-    {'phase':'Trim Out','category':'Refrigerant','part_name':'Refrigerant (jug)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':5,'enabled':1,'sort_order':13},
-    {'phase':'Trim Out','category':'Grilles','part_name':'Supply Registers','sku':'','unit_price':0,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':14},
-    {'phase':'Trim Out','category':'Grilles','part_name':'Return Grilles','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':15},
-    {'phase':'Trim Out','category':'Grilles','part_name':'Pass-Through Grilles','sku':'','unit_price':0,'calc_basis':'per_bedroom','qty_multiplier':1,'waste_pct':3,'enabled':0,'sort_order':16},
-    {'phase':'Trim Out','category':'Filters','part_name':'Filters','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':17},
-    {'phase':'Trim Out','category':'Covers','part_name':'Vent Hood Covers','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':18},
-    {'phase':'Trim Out','category':'Hardware','part_name':'Anchor Kits','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':3,'enabled':1,'sort_order':19},
-    {'phase':'Trim Out','category':'Drain','part_name':'Drain Pans','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':2,'enabled':1,'sort_order':20},
+    # ═══ Trim Out — from Takeoff_Template.xlsm rows 57-96 ═══
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3" 2-Piece Pump-Up','sku':'L0681','unit_price':3.80,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':7.5,'enabled':1,'sort_order':1},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'6" Pump Ups','sku':'L3311','unit_price':3.98,'calc_basis':'per_system','qty_multiplier':6,'waste_pct':7.5,'enabled':0,'sort_order':2},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'1QT Plumb-Tite Blue Cement','sku':'R0042','unit_price':14.95,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':1,'sort_order':3},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3/4 x 20\' PVC SCH 40 Pipe','sku':'R0071','unit_price':0.34,'calc_basis':'per_system','qty_multiplier':10,'waste_pct':7.5,'enabled':1,'sort_order':4},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3/4 PVC 90 Ell','sku':'R0311','unit_price':0.40,'calc_basis':'per_system','qty_multiplier':6,'waste_pct':7.5,'enabled':1,'sort_order':5},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3/4 PVC Coupling','sku':'R0341','unit_price':0.35,'calc_basis':'per_system','qty_multiplier':6,'waste_pct':7.5,'enabled':1,'sort_order':6},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3/4 PVC Male Adapter','sku':'R0351','unit_price':0.40,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':7.5,'enabled':1,'sort_order':7},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3/4" P-Trap Cond Drain PVC','sku':'L0680','unit_price':1.62,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':8},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'3/4 PVC Tee','sku':'R0331','unit_price':0.50,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':9},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'Condensate Switch Elbow Pipe Mount','sku':'K2501','unit_price':17.70,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':10},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'Orange Wire Nuts Jar 100','sku':'P1491','unit_price':5.48,'calc_basis':'per_system','qty_multiplier':0.08,'waste_pct':7.5,'enabled':1,'sort_order':11},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'1# 15% Silver Solder','sku':'M0434','unit_price':97,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':7.5,'enabled':1,'sort_order':12},
+    {'phase':'Trim Out','category':'Drain','part_name':'30x30 Drain Pan','sku':'','unit_price':38,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':13},
+    {'phase':'Trim Out','category':'Drain','part_name':'30x60 Drain Pan','sku':'','unit_price':44,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':14},
+    {'phase':'Trim Out','category':'Brazing','part_name':'Acetylene 10 Refill','sku':'M3511','unit_price':20,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':1,'sort_order':15},
+    {'phase':'Trim Out','category':'Brazing','part_name':'Oxygen 20 Refill','sku':'M3513','unit_price':10,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':1,'sort_order':16},
+    {'phase':'Trim Out','category':'Refrigerant','part_name':'R454B Refrigerant 20# Drum','sku':'K0286','unit_price':371.61,'calc_basis':'per_system','qty_multiplier':0.067,'waste_pct':7.5,'enabled':1,'sort_order':17},
+    {'phase':'Trim Out','category':'Fittings','part_name':'Silver Locking Caps 50 Pak','sku':'','unit_price':289,'calc_basis':'per_system','qty_multiplier':0.04,'waste_pct':7.5,'enabled':1,'sort_order':18},
+    {'phase':'Trim Out','category':'Shorts & Smalls','part_name':'Tie Wire','sku':'','unit_price':15.65,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':7.5,'enabled':0,'sort_order':19},
+    {'phase':'Trim Out','category':'Hardware','part_name':'#10 x 1" Anchor Kit 24ct','sku':'M0051','unit_price':7.22,'calc_basis':'per_venthood','qty_multiplier':0.04,'waste_pct':7.5,'enabled':1,'sort_order':20},
+    {'phase':'Trim Out','category':'Covers','part_name':'4" Black Venthood Widemouth','sku':'L3516','unit_price':17,'calc_basis':'venthood_covers','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':21},
+    {'phase':'Trim Out','category':'Filters','part_name':'20x20x1 Fiberglass Filter','sku':'L0453','unit_price':2.13,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':22},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'12"x6" 3-Way Stamped Supply Grill','sku':'L1736','unit_price':5.40,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':23},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'8" Supply Register','sku':'','unit_price':6.11,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':24},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'6" Supply Register','sku':'','unit_price':4.79,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':25},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'16x8 Return Grill (Pass Through)','sku':'L2280','unit_price':8.90,'calc_basis':'per_bedroom','qty_multiplier':2,'waste_pct':7.5,'enabled':0,'sort_order':26},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'24"x12" Stamped Return Grille','sku':'L1778','unit_price':7.40,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':27},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'30x14 Stamped Return','sku':'','unit_price':20,'calc_basis':'per_system','qty_multiplier':0,'waste_pct':7.5,'enabled':0,'sort_order':28},
+    {'phase':'Trim Out','category':'Register/Grill','part_name':'30x20 Stamped Return','sku':'L9989','unit_price':18.10,'calc_basis':'per_system','qty_multiplier':0,'waste_pct':7.5,'enabled':0,'sort_order':29},
+    {'phase':'Trim Out','category':'Zoning','part_name':'Two Story Zone','sku':'','unit_price':550,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':30},
 
-    # Equipment
-    {'phase':'Equipment','category':'Air Handlers','part_name':'1.5 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':1,'sort_order':1},
-    {'phase':'Equipment','category':'Air Handlers','part_name':'2.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':1,'sort_order':2},
-    {'phase':'Equipment','category':'Air Handlers','part_name':'2.5 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':1,'sort_order':3},
-    {'phase':'Equipment','category':'Air Handlers','part_name':'3.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':1,'sort_order':4},
-    {'phase':'Equipment','category':'Air Handlers','part_name':'3.5 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':1,'sort_order':5},
-    {'phase':'Equipment','category':'Air Handlers','part_name':'4.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':1,'sort_order':6},
-    {'phase':'Equipment','category':'Air Handlers','part_name':'5.0 Ton AHU','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':1,'sort_order':7},
-    {'phase':'Equipment','category':'Condensers','part_name':'1.5 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':1,'sort_order':8},
-    {'phase':'Equipment','category':'Condensers','part_name':'2.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':1,'sort_order':9},
-    {'phase':'Equipment','category':'Condensers','part_name':'2.5 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':1,'sort_order':10},
-    {'phase':'Equipment','category':'Condensers','part_name':'3.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':1,'sort_order':11},
-    {'phase':'Equipment','category':'Condensers','part_name':'3.5 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':1,'sort_order':12},
-    {'phase':'Equipment','category':'Condensers','part_name':'4.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':1,'sort_order':13},
-    {'phase':'Equipment','category':'Condensers','part_name':'5.0 Ton Condenser','sku':'','unit_price':0,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':1,'sort_order':14},
-    {'phase':'Equipment','category':'Controls','part_name':'Thermostat (Standard)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':15},
-    {'phase':'Equipment','category':'Controls','part_name':'Thermostat (Smart)','sku':'','unit_price':0,'calc_basis':'per_system','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':16},
+    # ═══ Equipment — from Takeoff_Template.xlsm rows 97-142 ═══
+    {'phase':'Equipment','category':'Air Handlers','part_name':'1.5T Front Return AHU 5KW R454B','sku':'K3730','unit_price':500,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'2.0 Ton Air Handler','sku':'','unit_price':506,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'2.5 Ton Air Handler','sku':'','unit_price':665.40,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':1,'sort_order':3},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'3.0 Ton Air Handler','sku':'','unit_price':770,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':1,'sort_order':4},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'3.5 Ton Air Handler','sku':'','unit_price':864,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':1,'sort_order':5},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'4.0 Ton Air Handler','sku':'','unit_price':958,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':1,'sort_order':6},
+    {'phase':'Equipment','category':'Air Handlers','part_name':'5.0 Ton Air Handler','sku':'','unit_price':1195.84,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':1,'sort_order':7},
+    {'phase':'Equipment','category':'Condensers','part_name':'1.5 Ton Condenser','sku':'','unit_price':820,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':1,'sort_order':8},
+    {'phase':'Equipment','category':'Condensers','part_name':'2.0 Ton Condenser','sku':'','unit_price':883,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':1,'sort_order':9},
+    {'phase':'Equipment','category':'Condensers','part_name':'2.5 Ton Condenser','sku':'','unit_price':1082.34,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':1,'sort_order':10},
+    {'phase':'Equipment','category':'Condensers','part_name':'3.0 Ton Condenser','sku':'','unit_price':1053,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':1,'sort_order':11},
+    {'phase':'Equipment','category':'Condensers','part_name':'3.5 Ton Condenser','sku':'','unit_price':1170,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':1,'sort_order':12},
+    {'phase':'Equipment','category':'Condensers','part_name':'4.0 Ton Condenser','sku':'','unit_price':1287,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':1,'sort_order':13},
+    {'phase':'Equipment','category':'Condensers','part_name':'5.0 Ton Condenser','sku':'','unit_price':1920.60,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':1,'sort_order':14},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'1.5T Heat Pump 208-230V','sku':'K0529','unit_price':1090,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':1.5,'waste_pct':0,'enabled':0,'sort_order':15},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'2.0 Ton Heat Pump','sku':'','unit_price':1095,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.0,'waste_pct':0,'enabled':0,'sort_order':16},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'2.5 Ton Heat Pump','sku':'','unit_price':1190,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':2.5,'waste_pct':0,'enabled':0,'sort_order':17},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'3.0 Ton Heat Pump','sku':'','unit_price':1465,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.0,'waste_pct':0,'enabled':0,'sort_order':18},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'3.5 Ton Heat Pump','sku':'','unit_price':1610,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3.5,'waste_pct':0,'enabled':0,'sort_order':19},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'4.0 Ton Heat Pump','sku':'','unit_price':1755,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':4.0,'waste_pct':0,'enabled':0,'sort_order':20},
+    {'phase':'Equipment','category':'Heat Pumps','part_name':'5.0 Ton Heat Pump','sku':'','unit_price':2148,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5.0,'waste_pct':0,'enabled':0,'sort_order':21},
+    {'phase':'Equipment','category':'Thermostat','part_name':'Heat Pump Thermostat','sku':'L0741','unit_price':39,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':22},
+    {'phase':'Equipment','category':'Thermostat','part_name':'Lyric T6 Programmable Thermostat','sku':'L5286','unit_price':52.50,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':7.5,'enabled':1,'sort_order':23},
 
-    # Startup/Other
-    {'phase':'Startup/Other','category':'Permits','part_name':'Permits','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':1},
-    {'phase':'Startup/Other','category':'Tools','part_name':'Sawzall Blades (pack)','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':2,'waste_pct':0,'enabled':1,'sort_order':2},
-    {'phase':'Startup/Other','category':'Tools','part_name':'Hole Saws','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':3},
-    {'phase':'Startup/Other','category':'Gas','part_name':'Acetylene Tank','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':4},
-    {'phase':'Startup/Other','category':'Gas','part_name':'Oxygen Tank','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':5},
-    {'phase':'Startup/Other','category':'Gas','part_name':'Nitrogen Tank','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':6},
-    {'phase':'Startup/Other','category':'Delivery','part_name':'Delivery/Freight','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':7},
-    {'phase':'Startup/Other','category':'Startup','part_name':'Startup Supplies','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':8},
-    {'phase':'Startup/Other','category':'Tools','part_name':'Misc Consumables','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':9},
-    {'phase':'Startup/Other','category':'Mini Splits','part_name':'Mini Split Indoor Unit','sku':'','unit_price':0,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':10},
+    # ═══ Startup/Other — from Takeoff_Template.xlsm rows 10-11, 144 ═══
+    {'phase':'Startup/Other','category':'License/Permit','part_name':'License','sku':'','unit_price':175,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Startup/Other','category':'License/Permit','part_name':'Permits','sku':'','unit_price':74.50,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Startup/Other','category':'Shipping','part_name':'Freight to Jobsite','sku':'','unit_price':3000,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':3},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'9K Mini Split Indoor','sku':'L9078','unit_price':255,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':4},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'9K Mini Split Outdoor','sku':'L9071','unit_price':615,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':5},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'12K Mini Split Indoor','sku':'L9080','unit_price':237,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':6},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'12K Mini Split Outdoor','sku':'L9073','unit_price':565,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':7},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'18K Mini Split Indoor','sku':'L6448','unit_price':573,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':8},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'18K Mini Split Outdoor HP','sku':'L6432','unit_price':1140,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':9},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'24K Mini Split Indoor','sku':'L9082','unit_price':305,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':10},
+    {'phase':'Startup/Other','category':'Mini Split','part_name':'24K Mini Split Outdoor','sku':'L9075','unit_price':720,'calc_basis':'fixed','qty_multiplier':0,'waste_pct':0,'enabled':0,'sort_order':11},
+
+    # ═══ Suggested Parts — common HVAC apartment items not in standard takeoff ═══
+    {'phase':'Suggested Parts','category':'Electrical','part_name':'30A Non-Fuse Disconnect','sku':'','unit_price':18,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':1},
+    {'phase':'Suggested Parts','category':'Electrical','part_name':'6\' Whip Kit 3/4" x 6\'','sku':'','unit_price':12,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':2},
+    {'phase':'Suggested Parts','category':'Electrical','part_name':'60A Non-Fuse Disconnect','sku':'','unit_price':24,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':3},
+    {'phase':'Suggested Parts','category':'Pads & Supports','part_name':'Condenser Pad 24x36x3','sku':'','unit_price':28,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':4},
+    {'phase':'Suggested Parts','category':'Pads & Supports','part_name':'Condenser Pad 36x36x3','sku':'','unit_price':38,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':5},
+    {'phase':'Suggested Parts','category':'Pads & Supports','part_name':'Anti-Vibration Pads 4pk','sku':'','unit_price':8,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':6},
+    {'phase':'Suggested Parts','category':'Pads & Supports','part_name':'Roof Condenser Stand/Curb','sku':'','unit_price':185,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':7},
+    {'phase':'Suggested Parts','category':'Pads & Supports','part_name':'Wall Hanger Bracket Kit','sku':'','unit_price':75,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':8},
+    {'phase':'Suggested Parts','category':'Penetrations','part_name':'4" Roof Flashing Boot','sku':'','unit_price':12,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':9},
+    {'phase':'Suggested Parts','category':'Penetrations','part_name':'3" Roof Flashing Boot','sku':'','unit_price':10,'calc_basis':'per_bathroom','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':10},
+    {'phase':'Suggested Parts','category':'Penetrations','part_name':'Galv Vent Screen 4"','sku':'','unit_price':2.50,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':11},
+    {'phase':'Suggested Parts','category':'Gas','part_name':'1/2" Gas Flex Connector 24"','sku':'','unit_price':16,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':12},
+    {'phase':'Suggested Parts','category':'Gas','part_name':'3/4" Gas Flex Connector 36"','sku':'','unit_price':22,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':13},
+    {'phase':'Suggested Parts','category':'Gas','part_name':'Gas Shut-Off Valve 1/2"','sku':'','unit_price':9,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':14},
+    {'phase':'Suggested Parts','category':'Condensate','part_name':'Condensate Pump','sku':'','unit_price':65,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':15},
+    {'phase':'Suggested Parts','category':'Condensate','part_name':'1/4" Vinyl Tubing 50\'','sku':'','unit_price':8,'calc_basis':'per_system','qty_multiplier':0.2,'waste_pct':0,'enabled':0,'sort_order':16},
+    {'phase':'Suggested Parts','category':'Line Set Fittings','part_name':'1/4" Flare Nut','sku':'','unit_price':1.50,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':0,'enabled':0,'sort_order':17},
+    {'phase':'Suggested Parts','category':'Line Set Fittings','part_name':'3/8" Flare Nut','sku':'','unit_price':1.75,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':0,'enabled':0,'sort_order':18},
+    {'phase':'Suggested Parts','category':'Line Set Fittings','part_name':'1/2" Flare Nut','sku':'','unit_price':2.25,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':0,'enabled':0,'sort_order':19},
+    {'phase':'Suggested Parts','category':'Line Set Fittings','part_name':'3/4" Flare Nut','sku':'','unit_price':2.75,'calc_basis':'per_system','qty_multiplier':4,'waste_pct':0,'enabled':0,'sort_order':20},
+    {'phase':'Suggested Parts','category':'Venting','part_name':'Range Hood Duct Kit 3.25x10','sku':'','unit_price':22,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':21},
+    {'phase':'Suggested Parts','category':'Venting','part_name':'Dryer Vent Hose 4" x 8\'','sku':'','unit_price':14,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':22},
+    {'phase':'Suggested Parts','category':'Safety','part_name':'Earthquake/Seismic Strap Kit','sku':'','unit_price':24,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':23},
+    {'phase':'Suggested Parts','category':'Safety','part_name':'CO Detector Combo','sku':'','unit_price':35,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':24},
+    {'phase':'Suggested Parts','category':'Dampers','part_name':'6" Round Balancing Damper','sku':'','unit_price':5.50,'calc_basis':'per_6in_drop','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':25},
+    {'phase':'Suggested Parts','category':'Dampers','part_name':'8" Round Balancing Damper','sku':'','unit_price':6.50,'calc_basis':'per_8in_drop','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':26},
+    {'phase':'Suggested Parts','category':'Dampers','part_name':'Motorized Zone Damper 10"','sku':'','unit_price':85,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':27},
+    {'phase':'Suggested Parts','category':'Insulation','part_name':'Insulation Hanger 12" 100pk','sku':'','unit_price':32,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':0,'enabled':0,'sort_order':28},
+    {'phase':'Suggested Parts','category':'Insulation','part_name':'3/8" Armaflex Pipe Insulation 6\'','sku':'','unit_price':4.50,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':0,'enabled':0,'sort_order':29},
+    {'phase':'Suggested Parts','category':'Consumables','part_name':'Nitrogen Tank Refill','sku':'','unit_price':35,'calc_basis':'per_system','qty_multiplier':0.05,'waste_pct':0,'enabled':0,'sort_order':30},
+    {'phase':'Suggested Parts','category':'Consumables','part_name':'Nylog Gasket/Thread Sealant','sku':'','unit_price':12,'calc_basis':'per_system','qty_multiplier':0.04,'waste_pct':0,'enabled':0,'sort_order':31},
+    {'phase':'Suggested Parts','category':'Consumables','part_name':'Vacuum Pump Oil Quart','sku':'','unit_price':16,'calc_basis':'per_system','qty_multiplier':0.04,'waste_pct':0,'enabled':0,'sort_order':32},
+    {'phase':'Suggested Parts','category':'Sheet Metal','part_name':'24x24x8 Drop-In Ceiling Box','sku':'','unit_price':18,'calc_basis':'per_total_drop','qty_multiplier':1,'waste_pct':7.5,'enabled':0,'sort_order':33},
+    {'phase':'Suggested Parts','category':'Sheet Metal','part_name':'Return Air Box','sku':'','unit_price':45,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':34},
+    {'phase':'Suggested Parts','category':'Sheet Metal','part_name':'Supply Plenum','sku':'','unit_price':55,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':35},
 ]
 
 @app.route('/bids/<int:bid_id>/takeoff')
@@ -4465,11 +4535,11 @@ def api_create_takeoff_unit_type(bid_id):
     max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM bid_takeoff_unit_types WHERE bid_id = ?', (bid_id,)).fetchone()[0]
     cursor = conn.execute(
         '''INSERT INTO bid_takeoff_unit_types (bid_id, name, unit_count, bedrooms, bathrooms,
-           drops_8in, drops_6in, stories, tons, cfm, sort_order)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+           drops_8in, drops_6in, stories, tons, cfm, sort_order, heat_kit)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
         (bid_id, d.get('name',''), d.get('unit_count',0), d.get('bedrooms',1), d.get('bathrooms',1),
          d.get('drops_8in',0), d.get('drops_6in',0), d.get('stories',1),
-         d.get('tons',0), d.get('cfm',0), max_sort + 1)
+         d.get('tons',0), d.get('cfm',0), max_sort + 1, d.get('heat_kit',''))
     )
     conn.commit()
     new_id = cursor.lastrowid
@@ -4483,11 +4553,11 @@ def api_update_takeoff_unit_type(bid_id, ut_id):
     conn = get_db()
     conn.execute(
         '''UPDATE bid_takeoff_unit_types SET name=?, unit_count=?, bedrooms=?, bathrooms=?,
-           drops_8in=?, drops_6in=?, stories=?, tons=?, cfm=?, sort_order=?
+           drops_8in=?, drops_6in=?, stories=?, tons=?, cfm=?, sort_order=?, heat_kit=?
            WHERE id=? AND bid_id=?''',
         (d.get('name',''), d.get('unit_count',0), d.get('bedrooms',1), d.get('bathrooms',1),
          d.get('drops_8in',0), d.get('drops_6in',0), d.get('stories',1),
-         d.get('tons',0), d.get('cfm',0), d.get('sort_order',0), ut_id, bid_id)
+         d.get('tons',0), d.get('cfm',0), d.get('sort_order',0), d.get('heat_kit',''), ut_id, bid_id)
     )
     conn.commit()
     conn.close()
@@ -4541,11 +4611,11 @@ def api_bulk_save_takeoff(bid_id):
         if ut.get('id'):
             conn.execute(
                 '''UPDATE bid_takeoff_unit_types SET name=?, unit_count=?, bedrooms=?, bathrooms=?,
-                   drops_8in=?, drops_6in=?, stories=?, tons=?, cfm=?, sort_order=?
+                   drops_8in=?, drops_6in=?, stories=?, tons=?, cfm=?, sort_order=?, heat_kit=?
                    WHERE id=? AND bid_id=?''',
                 (ut.get('name',''), ut.get('unit_count',0), ut.get('bedrooms',1), ut.get('bathrooms',1),
                  ut.get('drops_8in',0), ut.get('drops_6in',0), ut.get('stories',1),
-                 ut.get('tons',0), ut.get('cfm',0), ut.get('sort_order',0), ut['id'], bid_id)
+                 ut.get('tons',0), ut.get('cfm',0), ut.get('sort_order',0), ut.get('heat_kit',''), ut['id'], bid_id)
             )
     # Save items
     for item in data.get('items', []):
@@ -4595,6 +4665,25 @@ def api_seed_takeoff_defaults(bid_id):
     conn.close()
     return jsonify({'ok': True})
 
+@app.route('/api/bids/<int:bid_id>/takeoff/reset-defaults', methods=['POST'])
+@api_role_required('owner','admin')
+def api_reset_takeoff_defaults(bid_id):
+    """Delete all existing takeoff items and re-seed with current defaults."""
+    conn = get_db()
+    conn.execute('DELETE FROM bid_takeoff_items WHERE bid_id = ?', (bid_id,))
+    for item in DEFAULT_TAKEOFF_ITEMS:
+        conn.execute(
+            '''INSERT INTO bid_takeoff_items (bid_id, phase, category, part_name, sku, unit_price,
+               calc_basis, qty_multiplier, tons_match, waste_pct, enabled, sort_order)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (bid_id, item['phase'], item['category'], item['part_name'], item.get('sku',''),
+             item['unit_price'], item['calc_basis'], item['qty_multiplier'],
+             item.get('tons_match'), item['waste_pct'], item['enabled'], item['sort_order'])
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/bids/<int:bid_id>/takeoff/config')
 @api_role_required('owner')
 def api_takeoff_config(bid_id):
@@ -4628,6 +4717,152 @@ def api_push_takeoff_to_bid(bid_id):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+# ─── Takeoff PDF / Email ───────────────────────────────────────
+
+@app.route('/api/bids/<int:bid_id>/takeoff/generate-pdf', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_takeoff_generate_pdf(bid_id):
+    """Generate a material takeoff PDF from client-computed data."""
+    import json as _json
+    data = request.get_json()
+    conn = get_db()
+    bid = conn.execute('SELECT * FROM bids WHERE id = ?', (bid_id,)).fetchone()
+    unit_types_rows = conn.execute('SELECT * FROM bid_takeoff_unit_types WHERE bid_id = ? ORDER BY sort_order', (bid_id,)).fetchall()
+    cfg_row = conn.execute('SELECT takeoff_config FROM bids WHERE id = ?', (bid_id,)).fetchone()
+    conn.close()
+    if not bid:
+        return jsonify({'error': 'Bid not found'}), 404
+    bid = dict(bid)
+    unit_types = [dict(r) for r in unit_types_rows]
+    config = _json.loads(cfg_row['takeoff_config'] or '{}') if cfg_row else {}
+
+    # Items with calculated quantities come from the client
+    phase_items_data = data.get('phases', {})
+    phase_totals = data.get('phase_totals', {})
+    grand_total = data.get('grand_total', 0)
+
+    # Build phases list for template
+    phase_order = ['Rough-In', 'Trim Out', 'Equipment', 'Startup/Other', 'Suggested Parts']
+    phases = []
+    for p in phase_order:
+        items_list = phase_items_data.get(p, [])
+        if items_list:
+            phases.append((p, items_list))
+
+    # Unit type totals
+    ut_totals = {'systems': 0, 'bedrooms': 0, 'bathrooms': 0, 'drops_8': 0, 'drops_6': 0}
+    for ut in unit_types:
+        c = ut.get('unit_count', 0)
+        ut_totals['systems'] += c
+        ut_totals['bedrooms'] += c * (ut.get('bedrooms', 0))
+        ut_totals['bathrooms'] += c * (ut.get('bathrooms', 0))
+        ut_totals['drops_8'] += c * (ut.get('drops_8in', 0))
+        ut_totals['drops_6'] += c * (ut.get('drops_6in', 0))
+
+    # Config display
+    config_labels = {
+        'cfgBuildType': 'Build Type', 'cfgCRD': 'CRD', 'cfgOrientation': 'AHU Orientation',
+        'cfgAHUType': 'AHU Type', 'cfgDrainPan': 'Drain Pan', 'cfgMiniSplits': 'Mini Splits',
+        'cfgDuctboard': 'Ductboard', 'cfgExhaustType': 'Exhaust Fan', 'cfgWrapping': 'Wrapping',
+        'cfgDryerFireWrap': 'Dryer Fire Wrap', 'cfgPassThroughs': 'Pass-Throughs',
+        'cfgCondenserLoc': 'Condenser Loc', 'cfgOutsideAir': 'Outside Air',
+        'cfgRangeHoods': 'Range Hoods', 'cfgZoned': 'Zoned System',
+        'cfgBagsPerDrop': 'Bags/Drop', 'cfgDuctboardPerUnit': 'Ductboard/Unit'
+    }
+    config_display = [(config_labels.get(k, k), v) for k, v in config.items() if k in config_labels]
+
+    today = datetime.now().strftime('%B %d, %Y')
+    logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
+
+    html = render_template('bids/takeoff_pdf.html',
+        bid=bid, today=today, logo_path='file://' + logo_path,
+        unit_types=unit_types, ut_totals=ut_totals,
+        config_display=config_display, phases=phases,
+        phase_totals=phase_totals, grand_total=grand_total
+    )
+
+    takeoffs_dir = os.path.join(os.path.dirname(__file__), 'data', 'takeoffs')
+    os.makedirs(takeoffs_dir, exist_ok=True)
+    safe_name = ''.join(c if c.isalnum() or c in ' -_' else '' for c in (bid.get('bid_name') or 'takeoff')).strip()
+    filename = f"Takeoff_{safe_name}_{bid_id}.pdf"
+    filepath = os.path.join(takeoffs_dir, filename)
+
+    try:
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
+
+    return jsonify({'ok': True, 'filename': filename, 'path': f'/api/bids/{bid_id}/takeoff/pdf/{filename}'})
+
+
+@app.route('/api/bids/<int:bid_id>/takeoff/pdf/<filename>')
+@api_role_required('owner', 'admin')
+def api_download_takeoff_pdf(bid_id, filename):
+    """View or download a generated takeoff PDF."""
+    takeoffs_dir = os.path.join(os.path.dirname(__file__), 'data', 'takeoffs')
+    filepath = os.path.join(takeoffs_dir, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'PDF not found'}), 404
+    return send_file(filepath, mimetype='application/pdf')
+
+
+@app.route('/api/bids/<int:bid_id>/takeoff/email', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_email_takeoff(bid_id):
+    """Email the takeoff PDF to specified recipients."""
+    data = request.get_json()
+    recipients = [e.strip() for e in data.get('recipients', []) if e.strip()]
+    subject = data.get('subject', 'HVAC Material Takeoff')
+    body_text = data.get('body', '')
+
+    saved_settings = {}
+    settings_path = os.path.join(os.path.dirname(__file__), 'data', 'email_settings.json')
+    if os.path.exists(settings_path):
+        with open(settings_path) as f:
+            saved_settings = json.load(f)
+
+    smtp_host = data.get('smtp_host') or saved_settings.get('smtp_host', '')
+    smtp_port = int(data.get('smtp_port') or saved_settings.get('smtp_port', 587) or 587)
+    smtp_user = data.get('smtp_user') or saved_settings.get('smtp_user', '')
+    smtp_pass = data.get('smtp_pass') or saved_settings.get('smtp_pass', '')
+    from_email = data.get('from_email') or saved_settings.get('from_email', '') or smtp_user
+
+    if not recipients:
+        return jsonify({'error': 'No recipients specified'}), 400
+    if not smtp_host or not smtp_user:
+        return jsonify({'error': 'SMTP settings required. Configure in Settings or provide in request.'}), 400
+
+    takeoffs_dir = os.path.join(os.path.dirname(__file__), 'data', 'takeoffs')
+    pdf_files = [f for f in os.listdir(takeoffs_dir) if f.startswith('Takeoff_') and f.endswith(f'_{bid_id}.pdf')]
+    if not pdf_files:
+        return jsonify({'error': 'No takeoff PDF found. Generate the PDF first.'}), 404
+    pdf_path = os.path.join(takeoffs_dir, sorted(pdf_files)[-1])
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_text, 'plain'))
+
+        with open(pdf_path, 'rb') as f:
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(pdf_path)}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        return jsonify({'ok': True, 'sent_to': recipients})
+    except Exception as e:
+        return jsonify({'error': f'Email failed: {str(e)}'}), 500
+
 
 # ─── Precon Meetings (Phase 4) ──────────────────────────────────
 
@@ -5142,17 +5377,29 @@ def api_job_customer_info(job_id):
         result['gc_attention'] = bid['gc_attention'] or ''
         result['total_bid'] = bid['total_bid'] or 0
         result['bid_name'] = bid['bid_name'] or ''
-    # Pull customer data
-    if job['customer_id']:
-        cust = conn.execute('SELECT * FROM customers WHERE id = ?', (job['customer_id'],)).fetchone()
-        if cust:
-            addr_parts = [cust['address'] or '', (cust['city'] or '') + ' ' + (cust['state'] or '') + ' ' + (cust['zip_code'] or '')]
-            full_addr = ', '.join(p.strip() for p in addr_parts if p.strip())
-            result['company_name'] = cust['company_name'] or ''
-            result['address'] = full_addr
-            result['primary_contact'] = cust['primary_contact'] or ''
-            result['contact_email'] = cust['contact_email'] or ''
-            result['contact_phone'] = cust['contact_phone'] or ''
+        if bid['bid_number']:
+            result['project_no'] = bid['bid_number']
+    # Pull customer data — try job's customer_id, then bid's customer_id, then match by GC name
+    customer_id = job['customer_id']
+    if not customer_id and bid and 'customer_id' in bid.keys():
+        customer_id = bid['customer_id']
+    cust = None
+    if customer_id:
+        cust = conn.execute('SELECT * FROM customers WHERE id = ?', (customer_id,)).fetchone()
+    # Fallback: look up customer by contracting GC name
+    if not cust and result.get('contracting_gc'):
+        cust = conn.execute(
+            'SELECT * FROM customers WHERE company_name = ? AND is_active = 1',
+            (result['contracting_gc'],)
+        ).fetchone()
+    if cust:
+        addr_parts = [cust['address'] or '', (cust['city'] or '') + ' ' + (cust['state'] or '') + ' ' + (cust['zip_code'] or '')]
+        full_addr = ', '.join(p.strip() for p in addr_parts if p.strip())
+        result['company_name'] = cust['company_name'] or ''
+        result['address'] = full_addr
+        result['primary_contact'] = cust['primary_contact'] or ''
+        result['contact_email'] = cust['contact_email'] or ''
+        result['contact_phone'] = cust['contact_phone'] or ''
     # Pull contract data (active contract for this job)
     contract = conn.execute(
         'SELECT * FROM contracts WHERE job_id = ? AND status = ? ORDER BY value DESC LIMIT 1',
@@ -5167,12 +5414,33 @@ def api_job_customer_info(job_id):
         # Use contract value as fallback for contract sum
         if not result.get('total_bid') and contract['value']:
             result['total_bid'] = contract['value']
-        # Contract date from contract upload_date
-        if contract['upload_date']:
+        # Contract date — prefer the explicit contract_date field, fall back to upload_date
+        contract_cols = contract.keys()
+        if 'contract_date' in contract_cols and contract['contract_date']:
+            result['contract_date'] = contract['contract_date']
+        elif contract['upload_date']:
             result['contract_date'] = contract['upload_date']
         # Contractor name as another fallback for GC name
         if not result.get('contracting_gc') and contract['contractor']:
             result['contracting_gc'] = contract['contractor']
+        # If still no customer address, try looking up contractor as a customer
+        if not result.get('address') and contract['contractor']:
+            cust2 = conn.execute(
+                'SELECT * FROM customers WHERE company_name = ? AND is_active = 1',
+                (contract['contractor'],)
+            ).fetchone()
+            if cust2:
+                addr_parts = [cust2['address'] or '', (cust2['city'] or '') + ' ' + (cust2['state'] or '') + ' ' + (cust2['zip_code'] or '')]
+                full_addr = ', '.join(p.strip() for p in addr_parts if p.strip())
+                result['address'] = full_addr
+                if not result.get('company_name'):
+                    result['company_name'] = cust2['company_name'] or ''
+                if not result.get('primary_contact'):
+                    result['primary_contact'] = cust2['primary_contact'] or ''
+                if not result.get('contact_email'):
+                    result['contact_email'] = cust2['contact_email'] or ''
+                if not result.get('contact_phone'):
+                    result['contact_phone'] = cust2['contact_phone'] or ''
     # Job awarded date as fallback for contract date
     if not result.get('contract_date') and job.get('awarded_date'):
         result['contract_date'] = job['awarded_date']
@@ -8974,6 +9242,7 @@ def api_contracts_create():
         value = float(request.form.get('value', 0))
         status = request.form.get('status', 'Draft')
         notes = request.form.get('notes', '')
+        contract_date = request.form.get('contract_date', '')
         file = request.files.get('file')
         if file and file.filename:
             from werkzeug.utils import secure_filename
@@ -8993,12 +9262,13 @@ def api_contracts_create():
         value = float(data.get('value', 0))
         status = data.get('status', 'Draft')
         notes = data.get('notes', '')
+        contract_date = data.get('contract_date', '')
 
     cursor = conn.execute(
         '''INSERT INTO contracts (job_id, title, contractor, contract_type, file_path, file_hash,
-           upload_date, value, status, notes, created_by)
-           VALUES (?,?,?,?,?,?,date('now','localtime'),?,?,?,?)''',
-        (job_id, title, contractor, contract_type, file_path, file_hash, value, status, notes, session['user_id'])
+           upload_date, value, status, notes, created_by, contract_date)
+           VALUES (?,?,?,?,?,?,date('now','localtime'),?,?,?,?,?)''',
+        (job_id, title, contractor, contract_type, file_path, file_hash, value, status, notes, session['user_id'], contract_date)
     )
     conn.commit()
     new_id = cursor.lastrowid
@@ -9039,6 +9309,7 @@ def api_contracts_update(cid):
         value = float(request.form.get('value', 0))
         status = request.form.get('status', 'Draft')
         notes = request.form.get('notes', '')
+        contract_date = request.form.get('contract_date', '')
         file = request.files.get('file')
         if file and file.filename:
             from werkzeug.utils import secure_filename
@@ -9054,19 +9325,20 @@ def api_contracts_update(cid):
         value = float(data.get('value', 0))
         status = data.get('status', 'Draft')
         notes = data.get('notes', '')
+        contract_date = data.get('contract_date', '')
 
     if file_path_update:
         conn.execute(
             '''UPDATE contracts SET title=?, contractor=?, contract_type=?, value=?,
-               status=?, notes=?, file_path=?, upload_date=date('now','localtime'),
+               status=?, notes=?, contract_date=?, file_path=?, upload_date=date('now','localtime'),
                updated_at=datetime('now','localtime') WHERE id=?''',
-            (title, contractor, contract_type, value, status, notes, file_path_update, cid)
+            (title, contractor, contract_type, value, status, notes, contract_date, file_path_update, cid)
         )
     else:
         conn.execute(
             '''UPDATE contracts SET title=?, contractor=?, contract_type=?, value=?,
-               status=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?''',
-            (title, contractor, contract_type, value, status, notes, cid)
+               status=?, notes=?, contract_date=?, updated_at=datetime('now','localtime') WHERE id=?''',
+            (title, contractor, contract_type, value, status, notes, contract_date, cid)
         )
     conn.commit()
     conn.close()

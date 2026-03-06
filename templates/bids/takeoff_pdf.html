@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter landscape;
+    margin: 0.5in 0.6in;
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 8px;
+        color: #666;
+    }
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 9px; color: #222; line-height: 1.4; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 3px solid #1a5276; padding-bottom: 12px; }
+.header-logo img { max-height: 70px; }
+.header-info { text-align: right; font-size: 9px; color: #444; }
+.header-info .company { font-size: 13px; font-weight: 700; color: #1a5276; margin-bottom: 3px; }
+h1 { font-size: 18px; color: #1a5276; text-align: center; margin: 10px 0 16px; letter-spacing: 1px; }
+.meta-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 10px; }
+.meta-row .meta-block { }
+.meta-row .meta-block strong { color: #1a5276; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px; }
+
+/* Summary boxes */
+.summary-bar { display: flex; gap: 12px; margin-bottom: 14px; }
+.summary-box { flex: 1; background: #f0f5fa; border: 1px solid #1a5276; border-radius: 4px; padding: 6px 10px; text-align: center; }
+.summary-box .label { font-size: 8px; color: #666; text-transform: uppercase; }
+.summary-box .value { font-size: 14px; font-weight: 700; color: #1a5276; }
+.summary-box.grand { background: #1a5276; }
+.summary-box.grand .label { color: #a3c4dc; }
+.summary-box.grand .value { color: #fff; }
+
+/* Phase header */
+.phase-header { background: #1a5276; color: #fff; padding: 5px 10px; margin: 12px 0 4px; border-radius: 3px; display: flex; justify-content: space-between; align-items: center; }
+.phase-header h2 { font-size: 11px; margin: 0; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.phase-header .phase-total { font-size: 12px; font-weight: 700; }
+
+/* Material table */
+table.materials { width: 100%; border-collapse: collapse; font-size: 8.5px; margin-bottom: 8px; }
+table.materials th { background: #e8edf2; color: #333; font-weight: 600; padding: 4px 6px; text-align: left; border-bottom: 1.5px solid #1a5276; font-size: 8px; text-transform: uppercase; }
+table.materials td { padding: 3px 6px; border-bottom: 1px solid #e5e7eb; }
+table.materials tr:nth-child(even) { background: #fafbfc; }
+table.materials .num { text-align: right; }
+table.materials .cat { color: #666; font-size: 8px; }
+table.materials tfoot td { font-weight: 700; border-top: 2px solid #1a5276; padding-top: 5px; font-size: 9px; }
+
+/* Config section */
+.config-section { margin-bottom: 12px; }
+.config-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px 16px; font-size: 9px; }
+.config-item { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dotted #ddd; }
+.config-item .cfg-label { color: #666; }
+.config-item .cfg-value { font-weight: 600; }
+
+/* Unit types table */
+table.unit-types { width: 100%; border-collapse: collapse; font-size: 9px; margin-bottom: 10px; }
+table.unit-types th { background: #e8edf2; padding: 4px 8px; text-align: center; font-size: 8px; text-transform: uppercase; border-bottom: 1.5px solid #1a5276; }
+table.unit-types td { padding: 3px 8px; text-align: center; border-bottom: 1px solid #e5e7eb; }
+table.unit-types tfoot td { font-weight: 700; border-top: 2px solid #1a5276; }
+
+.page-break { page-break-before: always; }
+.footer-contact { margin-top: 16px; text-align: center; font-size: 9px; color: #666; border-top: 1px solid #ddd; padding-top: 6px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+    <div class="header-logo">
+        <img src="{{ logo_path }}" alt="LGHVAC">
+    </div>
+    <div class="header-info">
+        <div class="company">LGHVAC Mechanical, LLC</div>
+        3616 Utica Square Dr.<br>
+        Edmond, OK 73034<br>
+        Phone: 918-351-3092<br>
+        Email: lgsqoffice@gmail.com
+    </div>
+</div>
+
+<h1>MATERIAL TAKEOFF</h1>
+
+<!-- Project Info -->
+<div class="meta-row">
+    <div class="meta-block">
+        <strong>Project</strong>
+        {{ bid.bid_name or 'Untitled' }}
+        {% if bid.contracting_gc %}<br>GC: {{ bid.contracting_gc }}{% endif %}
+    </div>
+    <div class="meta-block" style="text-align:center;">
+        <strong>Bid #</strong>
+        {{ bid.bid_number or ('LG-%04d' % bid.id) }}
+    </div>
+    <div class="meta-block" style="text-align:right;">
+        <strong>Date</strong>
+        {{ today }}
+    </div>
+</div>
+
+<!-- Summary Boxes -->
+<div class="summary-bar">
+    <div class="summary-box">
+        <div class="label">Rough-In</div>
+        <div class="value">${{ '{:,.2f}'.format(phase_totals.get('Rough-In', 0)) }}</div>
+    </div>
+    <div class="summary-box">
+        <div class="label">Trim Out</div>
+        <div class="value">${{ '{:,.2f}'.format(phase_totals.get('Trim Out', 0)) }}</div>
+    </div>
+    <div class="summary-box">
+        <div class="label">Equipment</div>
+        <div class="value">${{ '{:,.2f}'.format(phase_totals.get('Equipment', 0)) }}</div>
+    </div>
+    <div class="summary-box">
+        <div class="label">Startup/Other</div>
+        <div class="value">${{ '{:,.2f}'.format(phase_totals.get('Startup/Other', 0)) }}</div>
+    </div>
+    {% if phase_totals.get('Suggested Parts', 0) > 0 %}
+    <div class="summary-box">
+        <div class="label">Suggested</div>
+        <div class="value">${{ '{:,.2f}'.format(phase_totals.get('Suggested Parts', 0)) }}</div>
+    </div>
+    {% endif %}
+    <div class="summary-box grand">
+        <div class="label">Grand Total</div>
+        <div class="value">${{ '{:,.2f}'.format(grand_total) }}</div>
+    </div>
+</div>
+
+<!-- Unit Types -->
+{% if unit_types %}
+<table class="unit-types">
+    <thead>
+        <tr>
+            <th style="text-align:left;">Unit Type</th>
+            <th>Count</th><th>Beds</th><th>Baths</th>
+            <th>8" Drops</th><th>6" Drops</th><th>Floors</th><th>Tons</th><th>Heat Kit</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for ut in unit_types %}
+        <tr>
+            <td style="text-align:left;">{{ ut.name }}</td>
+            <td>{{ ut.unit_count }}</td><td>{{ ut.bedrooms }}</td><td>{{ ut.bathrooms }}</td>
+            <td>{{ ut.drops_8in }}</td><td>{{ ut.drops_6in }}</td><td>{{ ut.stories }}</td><td>{{ ut.tons }}</td><td>{{ ut.heat_kit or '' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr>
+            <td style="text-align:left;">Totals</td>
+            <td>{{ ut_totals.systems }}</td><td>{{ ut_totals.bedrooms }}</td><td>{{ ut_totals.bathrooms }}</td>
+            <td>{{ ut_totals.drops_8 }}</td><td>{{ ut_totals.drops_6 }}</td><td>-</td><td>-</td><td></td>
+        </tr>
+    </tfoot>
+</table>
+{% endif %}
+
+<!-- Job Configuration -->
+{% if config_display %}
+<div class="config-section">
+    <div class="config-grid">
+        {% for label, value in config_display %}
+        <div class="config-item">
+            <span class="cfg-label">{{ label }}</span>
+            <span class="cfg-value">{{ value }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Material Tables by Phase -->
+{% for phase_name, phase_items in phases %}
+{% if phase_items %}
+{% if not loop.first and loop.index > 2 %}<div class="page-break"></div>{% endif %}
+<div class="phase-header">
+    <h2>{{ phase_name }} ({{ phase_items|length }} items)</h2>
+    <span class="phase-total">${{ '{:,.2f}'.format(phase_totals.get(phase_name, 0)) }}</span>
+</div>
+<table class="materials">
+    <thead>
+        <tr>
+            <th style="width:30%;">Part Name</th>
+            <th style="width:10%;">SKU</th>
+            <th style="width:12%;">Category</th>
+            <th class="num" style="width:9%;">Unit $</th>
+            <th class="num" style="width:8%;">Calc Qty</th>
+            <th class="num" style="width:6%;">Waste%</th>
+            <th class="num" style="width:9%;">Order Qty</th>
+            <th class="num" style="width:10%;">Extended</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in phase_items %}
+        <tr>
+            <td>{{ item.part_name }}</td>
+            <td>{{ item.sku or '' }}</td>
+            <td class="cat">{{ item.category }}</td>
+            <td class="num">${{ '{:,.2f}'.format(item.unit_price or 0) }}</td>
+            <td class="num">{{ '{:,.1f}'.format(item._calc_qty) }}</td>
+            <td class="num">{{ '{:.1f}'.format(item.waste_pct or 0) }}%</td>
+            <td class="num">{{ item._order_qty }}</td>
+            <td class="num">${{ '{:,.2f}'.format(item._extended) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        <tr>
+            <td colspan="7" style="text-align:right;">{{ phase_name }} Total:</td>
+            <td class="num">${{ '{:,.2f}'.format(phase_totals.get(phase_name, 0)) }}</td>
+        </tr>
+    </tfoot>
+</table>
+{% endif %}
+{% endfor %}
+
+<div class="footer-contact">
+    LGHVAC Mechanical, LLC &nbsp;|&nbsp; 918-351-3092 &nbsp;|&nbsp; lgsqoffice@gmail.com
+</div>
+
+</body>
+</html>

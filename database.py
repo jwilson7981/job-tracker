@@ -2210,6 +2210,16 @@ def init_db():
     if 'takeoff_config' not in bid_cols_tk:
         conn.execute("ALTER TABLE bids ADD COLUMN takeoff_config TEXT DEFAULT '{}'")
 
+    # Migration: add contract_date to contracts
+    contracts_cols = [row[1] for row in conn.execute("PRAGMA table_info(contracts)").fetchall()]
+    if 'contract_date' not in contracts_cols:
+        conn.execute("ALTER TABLE contracts ADD COLUMN contract_date TEXT DEFAULT ''")
+
+    # Migration: add heat_kit to bid_takeoff_unit_types
+    ut_cols = [row[1] for row in conn.execute("PRAGMA table_info(bid_takeoff_unit_types)").fetchall()]
+    if 'heat_kit' not in ut_cols:
+        conn.execute("ALTER TABLE bid_takeoff_unit_types ADD COLUMN heat_kit TEXT NOT NULL DEFAULT ''")
+
     # Seed default admin user if no users exist
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:
@@ -2260,6 +2270,39 @@ def init_db():
     for ch in default_channels:
         for u in active_users:
             conn.execute("INSERT OR IGNORE INTO tc_channel_members (channel_id, user_id) VALUES (?, ?)", (ch['id'], u['id']))
+
+    # Migration: remove CHECK constraint on bid_takeoff_items.calc_basis to allow new formula types
+    try:
+        tbl_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='bid_takeoff_items'").fetchone()
+        if tbl_sql and 'CHECK' in (tbl_sql[0] or ''):
+            conn.execute("""CREATE TABLE IF NOT EXISTS bid_takeoff_items_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bid_id INTEGER NOT NULL,
+                phase TEXT NOT NULL DEFAULT 'Rough-In',
+                category TEXT NOT NULL DEFAULT '',
+                part_name TEXT NOT NULL DEFAULT '',
+                sku TEXT DEFAULT '',
+                unit_price REAL NOT NULL DEFAULT 0,
+                calc_basis TEXT NOT NULL DEFAULT 'per_system',
+                qty_multiplier REAL NOT NULL DEFAULT 1,
+                tons_match REAL DEFAULT NULL,
+                waste_pct REAL NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                qty_override REAL DEFAULT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                notes TEXT DEFAULT '',
+                FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE
+            )""")
+            conn.execute("""INSERT INTO bid_takeoff_items_new
+                (id, bid_id, phase, category, part_name, sku, unit_price, calc_basis,
+                 qty_multiplier, tons_match, waste_pct, enabled, qty_override, sort_order, notes)
+                SELECT id, bid_id, phase, category, part_name, sku, unit_price, calc_basis,
+                 qty_multiplier, tons_match, waste_pct, enabled, qty_override, sort_order, notes
+                FROM bid_takeoff_items""")
+            conn.execute("DROP TABLE bid_takeoff_items")
+            conn.execute("ALTER TABLE bid_takeoff_items_new RENAME TO bid_takeoff_items")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()

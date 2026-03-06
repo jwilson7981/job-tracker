@@ -87,7 +87,7 @@ function renderContracts() {
     countEl.textContent = allContracts.length + ' contract' + (allContracts.length !== 1 ? 's' : '');
 
     if (!allContracts.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No contracts found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No contracts found.</td></tr>';
         return;
     }
 
@@ -125,6 +125,7 @@ function renderContracts() {
             <td>${c.contractor || '-'}</td>
             <td>${typeBadge}</td>
             <td style="text-align:right;font-weight:600;">${fmt(c.value)}</td>
+            <td style="font-size:13px;">${c.contract_date || '-'}</td>
             <td><span class="status-badge ${statusClass}">${c.status}</span></td>
             <td style="font-size:13px;color:var(--gray-500);">${c.created_at || '-'}</td>
             <td style="white-space:nowrap;">${actions}</td>
@@ -154,6 +155,7 @@ function showAddContract() {
     document.getElementById('contractStatus').value = 'Draft';
     document.getElementById('contractStatusGroup').style.display = 'none';
     document.getElementById('contractNotes').value = '';
+    document.getElementById('contractDate').value = '';
     document.getElementById('contractFile').value = '';
     document.getElementById('contractModal').style.display = 'flex';
 }
@@ -173,6 +175,7 @@ async function editContract(id) {
     document.getElementById('contractStatus').value = c.status || 'Draft';
     document.getElementById('contractStatusGroup').style.display = '';
     document.getElementById('contractNotes').value = c.notes || '';
+    document.getElementById('contractDate').value = c.contract_date || '';
     document.getElementById('contractFile').value = '';
     document.getElementById('contractModal').style.display = 'flex';
 }
@@ -214,6 +217,10 @@ async function viewContract(id) {
             <div>
                 <div style="font-size:13px;color:var(--gray-500);margin-bottom:2px;">Contract Value</div>
                 <div style="font-weight:700;font-size:18px;">${fmt(c.value)}</div>
+            </div>
+            <div>
+                <div style="font-size:13px;color:var(--gray-500);margin-bottom:2px;">Contract Date</div>
+                <div>${c.contract_date || '-'}</div>
             </div>
             <div>
                 <div style="font-size:13px;color:var(--gray-500);margin-bottom:2px;">Date Added</div>
@@ -268,6 +275,7 @@ async function saveContract(event) {
             fd.append('value', document.getElementById('contractValue').value || '0');
             fd.append('status', document.getElementById('contractStatus').value);
             fd.append('notes', document.getElementById('contractNotes').value);
+            fd.append('contract_date', document.getElementById('contractDate').value);
             fd.append('file', fileInput.files[0]);
             await fetch('/api/contracts/' + editingContractId, { method: 'PUT', body: fd });
         } else {
@@ -281,7 +289,8 @@ async function saveContract(event) {
                     contract_type: document.getElementById('contractType').value,
                     value: document.getElementById('contractValue').value || '0',
                     status: document.getElementById('contractStatus').value,
-                    notes: document.getElementById('contractNotes').value
+                    notes: document.getElementById('contractNotes').value,
+                    contract_date: document.getElementById('contractDate').value
                 })
             });
         }
@@ -294,6 +303,7 @@ async function saveContract(event) {
         fd.append('contract_type', document.getElementById('contractType').value);
         fd.append('value', document.getElementById('contractValue').value || '0');
         fd.append('notes', document.getElementById('contractNotes').value);
+        fd.append('contract_date', document.getElementById('contractDate').value);
         if (hasFile) fd.append('file', fileInput.files[0]);
         await fetch('/api/contracts', { method: 'POST', body: fd });
     }

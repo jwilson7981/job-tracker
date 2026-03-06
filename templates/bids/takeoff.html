@@ -8,6 +8,10 @@
         <button class="btn btn-primary" onclick="saveAllItems()">Save All</button>
         <button class="btn btn-secondary" onclick="pushToBid()" style="background:#16A34A;color:#fff;border-color:#16A34A;">Push to Bid</button>
         <button class="btn btn-secondary" onclick="addItem()">+ Add Item</button>
+        <button class="btn btn-secondary" onclick="generateTakeoffPDF()" style="background:#7C3AED;color:#fff;border-color:#7C3AED;">PDF</button>
+        <button class="btn btn-secondary" onclick="printTakeoff()">Print</button>
+        <button class="btn btn-secondary" onclick="showEmailTakeoff()">Email</button>
+        <button class="btn btn-secondary" onclick="resetToDefaults()" style="background:#DC2626;color:#fff;border-color:#DC2626;">Reset to Defaults</button>
         <a href="/bids/{{ bid_id }}" class="btn btn-secondary">Back to Bid</a>
     </div>
 </div>
@@ -19,6 +23,7 @@
     <span>Trim Out: <strong id="sumTrimOut">$0</strong></span>
     <span>Equipment: <strong id="sumEquipment">$0</strong></span>
     <span>Startup/Other: <strong id="sumStartup">$0</strong></span>
+    <span>Suggested: <strong id="sumSuggested">$0</strong></span>
     <span style="margin-left:auto;font-size:16px;font-weight:700;">Total: <span id="sumGrandTotal" style="color:#34D399;">$0.00</span></span>
 </div>
 
@@ -91,6 +96,13 @@
                 <select id="cfgWrapping" class="form-select" onchange="onConfigChange()">
                     <option value="Yes">Yes</option>
                     <option value="No">No</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Using Dryer Fire Wrap?</label>
+                <select id="cfgDryerFireWrap" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
                 </select>
             </div>
             <div class="bid-field">
@@ -167,10 +179,10 @@
             <table class="data-table" id="unitTypesTable" style="font-size:12px;">
                 <thead>
                     <tr>
-                        <th>Name</th><th style="width:50px;">Count</th><th style="width:45px;">Beds</th>
-                        <th style="width:45px;">Baths</th><th style="width:50px;">8" Drp</th>
-                        <th style="width:50px;">6" Drp</th><th style="width:45px;">Flrs</th>
-                        <th style="width:50px;">Tons</th><th style="width:50px;">CFM</th><th style="width:30px;"></th>
+                        <th>Name</th><th style="width:65px;">Count</th><th style="width:60px;">Beds</th>
+                        <th style="width:60px;">Baths</th><th style="width:65px;">8" Drp</th>
+                        <th style="width:65px;">6" Drp</th><th style="width:60px;">Flrs</th>
+                        <th style="width:65px;">Tons</th><th style="width:70px;">Heat Kit</th><th style="width:30px;"></th>
                     </tr>
                 </thead>
                 <tbody id="unitTypesBody"></tbody>
@@ -183,6 +195,34 @@
 <!-- Material Tables by Phase -->
 <div id="phaseSections"></div>
 
+<!-- Email Takeoff Modal -->
+<div class="modal-overlay" id="emailTakeoffModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Email Takeoff PDF</h2>
+            <button class="modal-close" onclick="document.getElementById('emailTakeoffModal').style.display='none'">&times;</button>
+        </div>
+        <div style="padding:0 4px;">
+            <div class="form-group">
+                <label class="form-label">Recipients (comma separated)</label>
+                <input type="text" id="takeoffEmailTo" class="form-input" placeholder="email@example.com">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="takeoffEmailSubject" class="form-input" value="HVAC Material Takeoff">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Message</label>
+                <textarea id="takeoffEmailBody" class="form-input" rows="3" placeholder="Optional message..." style="resize:vertical;"></textarea>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button class="btn btn-secondary" onclick="document.getElementById('emailTakeoffModal').style.display='none'">Cancel</button>
+                <button class="btn btn-primary" onclick="sendTakeoffEmail()">Send Email</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>window.BID_ID = {{ bid_id }};</script>
-<script src="/static/takeoff.js?v=20260305c"></script>
+<script src="/static/takeoff.js?v=20260305k"></script>
 {% endblock %}

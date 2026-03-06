@@ -57,10 +57,14 @@ async function initList() {
             document.getElementById('ncGcContact').value = c.gc_attention || c.primary_contact || '';
             document.getElementById('ncGcEmail').value = c.contact_email || '';
             document.getElementById('ncGcPhone').value = c.contact_phone || '';
+            // Project number from bid number
+            if (c.project_no) document.getElementById('ncProjNo').value = c.project_no;
             // Contract sum from bid total or contract value
             if (c.total_bid) document.getElementById('ncContractSum').value = c.total_bid;
             // Contract date from contract or job awarded date
             if (c.contract_date) document.getElementById('ncContractDate').value = c.contract_date;
+            // Default contract for
+            if (!document.getElementById('ncContractFor').value) document.getElementById('ncContractFor').value = 'HVAC System';
         } catch(e) {}
     });
     loadContracts();
@@ -93,7 +97,7 @@ function showNewContract() {
     document.getElementById('ncGcEmail').value = '';
     document.getElementById('ncGcPhone').value = '';
     document.getElementById('ncProjNo').value = '';
-    document.getElementById('ncContractFor').value = '';
+    document.getElementById('ncContractFor').value = 'HVAC System';
     document.getElementById('ncContractDate').value = '';
     document.getElementById('ncContractSum').value = '';
     document.getElementById('ncRetWork').value = '10';

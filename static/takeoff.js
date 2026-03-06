@@ -4,7 +4,7 @@ let items = [];
 let config = {};
 let _configLoaded = false;
 
-const PHASES = ['Rough-In', 'Trim Out', 'Equipment', 'Startup/Other'];
+const PHASES = ['Rough-In', 'Trim Out', 'Equipment', 'Startup/Other', 'Suggested Parts'];
 const CALC_OPTIONS = [
     { value: 'per_system', label: 'Per System' },
     { value: 'per_bedroom', label: 'Per Bedroom' },
@@ -14,6 +14,17 @@ const CALC_OPTIONS = [
     { value: 'per_total_drop', label: 'Per Total Drop' },
     { value: 'by_tonnage', label: 'By Tonnage' },
     { value: 'fixed', label: 'Fixed Qty' },
+    { value: 'flex_6r6', label: '6" Flex R6' },
+    { value: 'flex_6r8', label: '6" Flex R8' },
+    { value: 'flex_8r6', label: '8" Flex R6' },
+    { value: 'flex_8r8', label: '8" Flex R8' },
+    { value: 'conductor_pipe', label: 'Conductor Pipe' },
+    { value: 'adj_90', label: 'Adj 90 Formula' },
+    { value: 'venthood_covers', label: 'Venthood Covers' },
+    { value: 'per_venthood', label: 'Per Venthood' },
+    { value: 'rails', label: 'Rails Formula' },
+    { value: 'zip_ties', label: 'Zip Ties Formula' },
+    { value: 'per_ductboard_config', label: 'Ductboard/Unit' },
 ];
 
 const fmt = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -26,7 +37,7 @@ const CONFIG_FIELDS = [
     'cfgBuildType', 'cfgCRD', 'cfgOrientation', 'cfgAHUType', 'cfgDrainPan',
     'cfgMiniSplits', 'cfgDuctboard', 'cfgExhaustType', 'cfgWrapping',
     'cfgPassThroughs', 'cfgCondenserLoc', 'cfgOutsideAir', 'cfgRangeHoods',
-    'cfgZoned', 'cfgBagsPerDrop', 'cfgDuctboardPerUnit'
+    'cfgZoned', 'cfgDryerFireWrap', 'cfgBagsPerDrop', 'cfgDuctboardPerUnit'
 ];
 
 function loadConfigToUI() {
@@ -56,70 +67,119 @@ function onConfigChange() {
     });
 }
 
-// Auto-toggle items on/off and adjust multipliers based on config answers
+// Auto-toggle items on/off based on config answers (matches Excel Use? column logic)
 function applyConfigToItems() {
     if (!_configLoaded) return;
-    const cfg = config;
+    // Read from DOM elements (getCfg) so defaults work even if config key was never saved
+    const isCRD = getCfg('cfgCRD') === 'CRD';
+    const isHP = getCfg('cfgBuildType') === 'Heat Pump';
+    const isSidewall = getCfg('cfgExhaustType') === 'Side Wall';
+    const isCeiling = getCfg('cfgExhaustType') === 'Ceiling';
+    const isVertical = getCfg('cfgOrientation') === 'Vertical';
+    const isHorizontal = getCfg('cfgOrientation') === 'Horizontal';
 
     items.forEach(item => {
         const name = (item.part_name || '').toLowerCase();
         const cat = (item.category || '').toLowerCase();
-        const phase = item.phase;
+        const sku = (item.sku || '').toLowerCase();
 
-        // ── CRD items: off if "No CRD" ──
-        if (name.includes('crd') && !name.includes('boot')) {
-            item.enabled = cfg.cfgCRD === 'CRD' ? 1 : 0;
+        // ── CRD items: on when CRD ──
+        if (name.includes('12x14 crd') || name.includes('crd boot') || name.includes('8x6 reducer')) {
+            item.enabled = isCRD ? 1 : 0;
         }
-        if (name.includes('crd boot')) {
-            item.enabled = cfg.cfgCRD === 'CRD' ? 1 : 0;
+        // ── 80CFM CRD/Exhaust Fan: CRD + Ceiling exhaust ──
+        if (name.includes('80cfm') || sku === 'qtxeg080') {
+            item.enabled = (isCRD && isCeiling) ? 1 : 0;
         }
-
-        // ── Drain Pans: on/off ──
-        if (name.includes('drain pan')) {
-            item.enabled = cfg.cfgDrainPan === 'Yes' ? 1 : 0;
+        // ── 4" Round CRD: Outside Air + CRD ──
+        if (name.includes('round crd')) {
+            item.enabled = (getCfg('cfgOutsideAir') === 'Yes' && isCRD) ? 1 : 0;
         }
-
+        // ── Broan 688: Non-CRD or Sidewall exhaust ──
+        if (name.includes('broan 688') || sku === '688') {
+            item.enabled = (!isCRD || isSidewall) ? 1 : 0;
+        }
+        // ── 8" Foam Boot: Non-CRD only ──
+        if (name === '8" foam boot') {
+            item.enabled = !isCRD ? 1 : 0;
+        }
+        // ── 6" Foam Boot: Non-CRD only ──
+        if (name === '6" foam boot') {
+            item.enabled = !isCRD ? 1 : 0;
+        }
+        // ── Sidewall-only items: 3" Adj 90, 3" Conductor Pipe, 4x3 Reducer ──
+        if (name.includes('3" adjustable 90') || name.includes('3" conductor pipe')) {
+            item.enabled = isSidewall ? 1 : 0;
+        }
+        if (name === '4x3 reducer') {
+            item.enabled = (!isCRD || isSidewall) ? 1 : 0;
+        }
+        // ── Ductboard items: on/off ──
+        if (name.includes('duct board') || name.includes('boca plate')) {
+            item.enabled = getCfg('cfgDuctboard') === 'Yes' ? 1 : 0;
+        }
+        // ── Hanging Duct Strap: on when ductboard ──
+        if (name.includes('hanging duct strap') || (sku === 'm0069')) {
+            item.enabled = getCfg('cfgDuctboard') === 'Yes' ? 1 : 0;
+        }
+        // ── Drain Pans: depends on orientation + config ──
+        if (name.includes('30x30 drain pan')) {
+            item.enabled = (isVertical && getCfg('cfgDrainPan') === 'Yes') ? 1 : 0;
+        }
+        if (name.includes('30x60 drain pan')) {
+            item.enabled = (isHorizontal && getCfg('cfgDrainPan') === 'Yes') ? 1 : 0;
+        }
+        // ── 6" Pump Ups: Horizontal only ──
+        if (name.includes('6" pump ups')) {
+            item.enabled = isHorizontal ? 1 : 0;
+        }
         // ── Mini Split items: on/off ──
-        if (name.includes('mini split')) {
-            item.enabled = cfg.cfgMiniSplits === 'Yes' ? 1 : 0;
+        if (cat === 'mini split' || name.includes('mini split line set') || name.includes('14/4')) {
+            item.enabled = getCfg('cfgMiniSplits') === 'Yes' ? 1 : 0;
         }
-
-        // ── Ductboard: on/off + multiplier ──
-        if (name.includes('duct board') || name.includes('ductboard')) {
-            item.enabled = cfg.cfgDuctboard === 'Yes' ? 1 : 0;
-            if (cfg.cfgDuctboardPerUnit) {
-                item.qty_multiplier = parseFloat(cfg.cfgDuctboardPerUnit) || 2;
-            }
+        // ── Pass-throughs ──
+        if (name.includes('pass through')) {
+            item.enabled = getCfg('cfgPassThroughs') === 'Yes' ? 1 : 0;
         }
-
-        // ── Pass-throughs: on/off ──
-        if (name.includes('pass-through') || name.includes('pass through')) {
-            item.enabled = cfg.cfgPassThroughs === 'Yes' ? 1 : 0;
+        // ── Dryer Fire Wrap: separate config ──
+        if (name.includes('fire wrap') || sku === 'sa') {
+            item.enabled = getCfg('cfgDryerFireWrap') === 'Yes' ? 1 : 0;
         }
-
-        // ── Flex duct bags per drop multiplier ──
-        if (name.includes('flex') && (name.includes('r6') || name.includes('r8')) && name.includes("'")) {
-            const bagsPerDrop = parseFloat(cfg.cfgBagsPerDrop) || 0.75;
-            item.qty_multiplier = bagsPerDrop;
+        // ── Wrapping items: Duct Wrap, Tie Wire ──
+        if (name.includes('duct wrap') || name === 'tie wire') {
+            item.enabled = getCfg('cfgWrapping') === 'Yes' ? 1 : 0;
         }
-
-        // ── Duct wrap: off if no wrapping ──
-        if (name.includes('duct wrap') || (name.includes('wrapping') && cat.includes('insulation'))) {
-            item.enabled = cfg.cfgWrapping === 'Yes' ? 1 : 0;
+        // ── Silver Locking Caps: Ground condenser only ──
+        if (name.includes('locking caps')) {
+            item.enabled = getCfg('cfgCondenserLoc') === 'Ground' ? 1 : 0;
         }
-
-        // ── Build type: Heat Pump vs Straight Heat Cool ──
-        // Toggle between condensers and heat pumps based on build type
-        if (cat === 'condensers' && name.includes('condenser')) {
-            item.enabled = cfg.cfgBuildType === 'Straight Heat Cool' ? 1 : 0;
+        // ── Two Story Zone: Zoned only ──
+        if (name.includes('two story zone')) {
+            item.enabled = getCfg('cfgZoned') === 'Yes' ? 1 : 0;
         }
-        // If we later add heat pump line items, toggle them here:
-        // if (cat === 'heat pumps') { item.enabled = cfg.cfgBuildType === 'Heat Pump' ? 1 : 0; }
-
-        // ── R6 vs R8 flex: R6 default on, R8 default off ──
-        // (already handled by default enabled values, but config could override)
-        if (name.includes('flex r8')) {
-            // R8 stays as-is unless user manually toggles
+        // ── Build type: Condensers vs Heat Pumps ──
+        if (cat === 'condensers') {
+            item.enabled = !isHP ? 1 : 0;
+        }
+        if (cat === 'heat pumps') {
+            item.enabled = isHP ? 1 : 0;
+        }
+        // ── Thermostats: HP Thermostat vs Programmable ──
+        if (name.includes('heat pump thermostat')) {
+            item.enabled = isHP ? 1 : 0;
+        }
+        if (name.includes('programmable thermostat')) {
+            item.enabled = !isHP ? 1 : 0;
+        }
+        // ── CRD vs Non-CRD Supply Registers ──
+        if (name.includes('stamped supply')) {
+            item.enabled = isCRD ? 1 : 0;
+        }
+        if (name === '8" supply register') {
+            item.enabled = !isCRD ? 1 : 0;
+        }
+        if (name === '6" supply register') {
+            item.enabled = !isCRD ? 1 : 0;
         }
     });
 
@@ -173,53 +233,121 @@ async function init() {
 }
 
 // ─── Calculation Engine ──────────────────────────────────────
+function getCfg(id) {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+}
+
 function getUnitTotals() {
     let totalSystems = 0, totalBedrooms = 0, totalBathrooms = 0;
     let total8in = 0, total6in = 0, totalDrops = 0;
     const tonsCounts = {}; // tons_value -> count of units
+    // Flex bag totals — story-based R6/R8 split per Excel formula
+    let flex6r6 = 0, flex6r8 = 0, flex8r6 = 0, flex8r8 = 0;
+    const bagsPerDrop = parseFloat(getCfg('cfgBagsPerDrop')) || 0.75;
 
     unitTypes.forEach(ut => {
         const count = ut.unit_count || 0;
+        const stories = ut.stories || 1;
+        const d8 = (ut.drops_8in || 0) * count;
+        const d6 = (ut.drops_6in || 0) * count;
+
         totalSystems += count;
         totalBedrooms += count * (ut.bedrooms || 0);
         totalBathrooms += count * (ut.bathrooms || 0);
-        total8in += count * (ut.drops_8in || 0);
-        total6in += count * (ut.drops_6in || 0);
-        totalDrops += count * ((ut.drops_8in || 0) + (ut.drops_6in || 0));
+        total8in += d8;
+        total6in += d6;
+        totalDrops += d8 + d6;
         if (ut.tons > 0) {
             tonsCounts[ut.tons] = (tonsCounts[ut.tons] || 0) + count;
         }
+
+        // Flex bags: split between R6 and R8 based on # of stories
+        // 1-story=100% R8, 2=50/50, 3=67/33, 4=75/25, 5=80/20, 6+=84/16
+        // All floors use bags_per_drop factor. Top floor(s) get R8, lower floors get R6.
+        {
+            const r6pct = stories <= 1 ? 0 : stories === 2 ? 0.5 : stories === 3 ? 0.67 : stories === 4 ? 0.75 : stories === 5 ? 0.8 : 0.84;
+            const r8pct = 1 - r6pct;
+            flex6r6 += d6 * bagsPerDrop * r6pct;
+            flex6r8 += d6 * bagsPerDrop * r8pct;
+            flex8r6 += d8 * bagsPerDrop * r6pct;
+            flex8r8 += d8 * bagsPerDrop * r8pct;
+        }
     });
 
-    return { totalSystems, totalBedrooms, totalBathrooms, total8in, total6in, totalDrops, tonsCounts };
+    return { totalSystems, totalBedrooms, totalBathrooms, total8in, total6in, totalDrops, tonsCounts,
+             flex6r6, flex6r8, flex8r6, flex8r8 };
 }
 
-function calcItemQty(item, totals) {
+// Compute intermediate values for inter-item dependency formulas
+function getIntermediates(totals) {
+    const isCRD = getCfg('cfgCRD') === 'CRD';
+    const isCeiling = getCfg('cfgExhaustType') === 'Ceiling';
+    const isSidewall = getCfg('cfgExhaustType') === 'Side Wall';
+    const hasOutsideAir = getCfg('cfgOutsideAir') === 'Yes';
+
+    // Exhaust fan counts (per Excel logic)
+    const broan688 = (!isCRD || isSidewall) ? totals.totalBathrooms : 0;
+    const crdFan = (isCRD && isCeiling) ? totals.totalBathrooms : 0;
+    const roundCRD = (hasOutsideAir && isCRD) ? totals.totalSystems : 0;
+    const dryerBox = totals.totalSystems; // always 1 per system
+
+    // Boot counts
+    const crdBoots = isCRD ? totals.totalDrops : 0;
+    const foamBoots8 = !isCRD ? totals.total8in : 0;
+    const foamBoots6 = !isCRD ? totals.total6in : 0;
+    const totalBoots = crdBoots + foamBoots8 + foamBoots6;
+
+    // Venthood = exhaust fans + CRD fans + dryer boxes
+    const venthoodCovers = broan688 + crdFan + dryerBox;
+
+    return { broan688, crdFan, roundCRD, dryerBox, crdBoots, foamBoots8, foamBoots6, totalBoots, venthoodCovers };
+}
+
+function calcItemQty(item, totals, inter) {
     const m = item.qty_multiplier || 0;
-    let baseQty = 0;
+    const ductboardPerUnit = parseFloat(getCfg('cfgDuctboardPerUnit')) || 2;
     switch (item.calc_basis) {
-        case 'per_system':     baseQty = totals.totalSystems * m; break;
-        case 'per_bedroom':    baseQty = totals.totalBedrooms * m; break;
-        case 'per_bathroom':   baseQty = totals.totalBathrooms * m; break;
-        case 'per_8in_drop':   baseQty = totals.total8in * m; break;
-        case 'per_6in_drop':   baseQty = totals.total6in * m; break;
-        case 'per_total_drop': baseQty = totals.totalDrops * m; break;
-        case 'by_tonnage':
-            baseQty = (totals.tonsCounts[item.tons_match] || 0) * m;
-            break;
-        case 'fixed':          baseQty = m; break;
+        case 'per_system':     return totals.totalSystems * m;
+        case 'per_bedroom':    return totals.totalBedrooms * m;
+        case 'per_bathroom':   return totals.totalBathrooms * m;
+        case 'per_8in_drop':   return totals.total8in * m;
+        case 'per_6in_drop':   return totals.total6in * m;
+        case 'per_total_drop': return totals.totalDrops * m;
+        case 'by_tonnage':     return (totals.tonsCounts[item.tons_match] || 0) * m;
+        case 'fixed':          return m;
+        // ── Flex bags (story-based R6/R8 split from Excel) ──
+        case 'flex_6r6':       return totals.flex6r6 || 0;
+        case 'flex_6r8':       return totals.flex6r8 || 0;
+        case 'flex_8r6':       return totals.flex8r6 || 0;
+        case 'flex_8r8':       return totals.flex8r8 || 0;
+        // ── 4" Conductor Pipe: (CRD fans × 35) + (dryer boxes × 25) + (round CRDs × 25) ──
+        case 'conductor_pipe': return inter ? (inter.crdFan * 35) + (inter.dryerBox * 25) + (inter.roundCRD * 25) : 0;
+        // ── 4" Adj 90: (dryer + round CRD + CRD fan) × multiplier ──
+        case 'adj_90':         return inter ? (inter.dryerBox + inter.roundCRD + inter.crdFan) * m : 0;
+        // ── Venthood Covers: exhaust fans + CRD fans + dryer boxes ──
+        case 'venthood_covers': return inter ? inter.venthoodCovers : 0;
+        // ── Items that depend on venthood count ──
+        case 'per_venthood':   return inter ? inter.venthoodCovers * m : 0;
+        // ── Rails: (CRD boots + 8" foam boots + 6" foam boots × 2) × 2 ──
+        case 'rails':          return inter ? (inter.crdBoots + inter.foamBoots8 + inter.foamBoots6 * 2) * 2 : 0;
+        // ── Zip Ties: total boots × 4 ──
+        case 'zip_ties':       return inter ? inter.totalBoots * 4 : 0;
+        // ── Ductboard: per system × config ductboard_per_unit ──
+        case 'per_ductboard_config': return totals.totalSystems * ductboardPerUnit;
+        default:               return 0;
     }
-    return baseQty;
 }
 
 function recalcAll() {
     const totals = getUnitTotals();
+    const inter = getIntermediates(totals);
     const phaseTotals = {};
     let enabledCount = 0;
     let grandTotal = 0;
 
     items.forEach(item => {
-        const baseQty = calcItemQty(item, totals);
+        const baseQty = calcItemQty(item, totals, inter);
         item._calcQty = baseQty;
         const wasteMult = 1 + (item.waste_pct || 0) / 100;
         const orderQty = item.qty_override != null ? item.qty_override : Math.ceil(baseQty * wasteMult);
@@ -239,6 +367,8 @@ function recalcAll() {
     $('sumTrimOut').textContent = fmtShort(phaseTotals['Trim Out'] || 0);
     $('sumEquipment').textContent = fmtShort(phaseTotals['Equipment'] || 0);
     $('sumStartup').textContent = fmtShort(phaseTotals['Startup/Other'] || 0);
+    const sugEl = $('sumSuggested');
+    if (sugEl) sugEl.textContent = fmtShort(phaseTotals['Suggested Parts'] || 0);
     $('sumGrandTotal').textContent = fmt(grandTotal);
 
     // Update unit types totals row
@@ -272,20 +402,27 @@ function recalcAll() {
 function renderUnitTypes() {
     const tbody = $('unitTypesBody');
     if (!unitTypes.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No unit types. Click "+ Add Unit Type" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No unit types. Click "+ Add Unit Type" to get started.</td></tr>';
         return;
     }
     tbody.innerHTML = unitTypes.map((ut, idx) => `
         <tr data-ut-id="${ut.id}">
-            <td><input type="text" class="form-input ut-name" value="${(ut.name || '').replace(/"/g, '&quot;')}" style="min-width:140px;" onchange="updateUT(${idx},'name',this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.unit_count}" min="0" style="width:50px;" onchange="updateUT(${idx},'unit_count',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.bedrooms}" min="0" style="width:45px;" onchange="updateUT(${idx},'bedrooms',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.bathrooms}" min="0" style="width:45px;" onchange="updateUT(${idx},'bathrooms',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.drops_8in}" min="0" style="width:50px;" onchange="updateUT(${idx},'drops_8in',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.drops_6in}" min="0" style="width:50px;" onchange="updateUT(${idx},'drops_6in',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.stories}" min="1" style="width:45px;" onchange="updateUT(${idx},'stories',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.tons}" min="0" step="0.5" style="width:50px;" onchange="updateUT(${idx},'tons',+this.value)"></td>
-            <td><input type="number" class="form-input" value="${ut.cfm}" min="0" step="50" style="width:50px;" onchange="updateUT(${idx},'cfm',+this.value)"></td>
+            <td><input type="text" class="form-input ut-name" value="${(ut.name || '').replace(/"/g, '&quot;')}" style="min-width:160px;" onchange="updateUT(${idx},'name',this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.unit_count}" min="0" style="width:65px;text-align:center;" onchange="updateUT(${idx},'unit_count',+this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.bedrooms}" min="0" style="width:60px;text-align:center;" onchange="updateUT(${idx},'bedrooms',+this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.bathrooms}" min="0" style="width:60px;text-align:center;" onchange="updateUT(${idx},'bathrooms',+this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.drops_8in}" min="0" style="width:65px;text-align:center;" onchange="updateUT(${idx},'drops_8in',+this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.drops_6in}" min="0" style="width:65px;text-align:center;" onchange="updateUT(${idx},'drops_6in',+this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.stories}" min="1" style="width:60px;text-align:center;" onchange="updateUT(${idx},'stories',+this.value)"></td>
+            <td><input type="number" class="form-input" value="${ut.tons}" min="0" step="0.5" style="width:65px;text-align:center;" onchange="updateUT(${idx},'tons',+this.value)"></td>
+            <td><select class="form-select" style="width:70px;font-size:11px;" onchange="updateUT(${idx},'heat_kit',this.value)">
+                <option value=""${(ut.heat_kit||'')=== '' ? ' selected':''}></option>
+                <option value="5kw"${(ut.heat_kit||'')==='5kw' ? ' selected':''}>5kw</option>
+                <option value="7.5kw"${(ut.heat_kit||'')==='7.5kw' ? ' selected':''}>7.5kw</option>
+                <option value="10kw"${(ut.heat_kit||'')==='10kw' ? ' selected':''}>10kw</option>
+                <option value="15kw"${(ut.heat_kit||'')==='15kw' ? ' selected':''}>15kw</option>
+                <option value="20kw"${(ut.heat_kit||'')==='20kw' ? ' selected':''}>20kw</option>
+            </select></td>
             <td><button class="btn btn-secondary btn-small" onclick="deleteUnitType(${idx})" style="color:#EF4444;padding:2px 6px;">&times;</button></td>
         </tr>
     `).join('');
@@ -296,12 +433,12 @@ function renderUnitTypesTotals(totals) {
     if (!unitTypes.length) { tfoot.innerHTML = ''; return; }
     tfoot.innerHTML = `<tr style="font-weight:700;background:var(--gray-50);">
         <td>Totals</td>
-        <td>${totals.totalSystems}</td>
-        <td>${totals.totalBedrooms}</td>
-        <td>${totals.totalBathrooms}</td>
-        <td>${totals.total8in}</td>
-        <td>${totals.total6in}</td>
-        <td>-</td><td>-</td><td>-</td><td></td>
+        <td style="text-align:center;">${totals.totalSystems}</td>
+        <td style="text-align:center;">${totals.totalBedrooms}</td>
+        <td style="text-align:center;">${totals.totalBathrooms}</td>
+        <td style="text-align:center;">${totals.total8in}</td>
+        <td style="text-align:center;">${totals.total6in}</td>
+        <td>-</td><td>-</td><td></td><td></td>
     </tr>`;
 }
 
@@ -331,7 +468,7 @@ async function addPresetUnitType() {
     const key = sel.value;
     if (!key) return;
     const preset = UNIT_TYPE_PRESETS[key] || UNIT_TYPE_PRESETS.custom;
-    const ut = { name: preset.name, unit_count: 0, bedrooms: preset.bedrooms, bathrooms: preset.bathrooms, drops_8in: 0, drops_6in: 0, stories: 1, tons: 0, cfm: 0 };
+    const ut = { name: preset.name, unit_count: 0, bedrooms: preset.bedrooms, bathrooms: preset.bathrooms, drops_8in: 0, drops_6in: 0, stories: 1, tons: 0, heat_kit: '' };
     const res = await fetch(`/api/bids/${window.BID_ID}/takeoff/unit-types`, {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(ut)
@@ -356,6 +493,8 @@ async function deleteUnitType(idx) {
 
 // ─── Render Items ────────────────────────────────────────────
 function renderItems() {
+    const totals = getUnitTotals();
+    const inter = getIntermediates(totals);
     const container = $('phaseSections');
     container.innerHTML = PHASES.map(phase => {
         const phaseItems = items.filter(i => i.phase === phase);
@@ -373,13 +512,13 @@ function renderItems() {
                             <th style="width:30px;"></th>
                             <th>Part Name</th><th style="width:80px;">SKU</th><th style="width:90px;">Category</th>
                             <th style="width:80px;">Unit $</th><th style="width:110px;">Calc Basis</th>
-                            <th style="width:50px;">Mult</th><th style="width:55px;">Waste%</th>
-                            ${phase === 'Equipment' ? '<th style="width:50px;">Tons</th>' : ''}
-                            <th style="width:55px;">Calc Qty</th><th style="width:65px;">Order Qty</th>
+                            <th style="width:70px;">Mult</th><th style="width:75px;">Waste%</th>
+                            ${phase === 'Equipment' ? '<th style="width:55px;">Tons</th>' : ''}
+                            <th style="width:70px;">Calc Qty</th><th style="width:85px;">Order Qty</th>
                             <th style="width:80px;">Extended</th><th style="width:30px;"></th>
                         </tr></thead>
                         <tbody>
-                            ${phaseItems.map(item => renderItemRow(item, phase)).join('')}
+                            ${phaseItems.map(item => renderItemRow(item, phase, totals, inter)).join('')}
                             ${phaseItems.length === 0 ? `<tr><td colspan="13" class="empty-state">No items</td></tr>` : ''}
                         </tbody>
                     </table>
@@ -391,7 +530,11 @@ function renderItems() {
     recalcAll();
 }
 
-function renderItemRow(item, phase) {
+function renderItemRow(item, phase, totals, inter) {
+    const calcQty = (totals && inter) ? calcItemQty(item, totals, inter) : 0;
+    const wasteMult = 1 + (item.waste_pct || 0) / 100;
+    const orderQty = item.qty_override != null ? item.qty_override : Math.ceil(calcQty * wasteMult);
+    const extended = item.enabled ? orderQty * (item.unit_price || 0) : 0;
     const calcOpts = CALC_OPTIONS.map(o =>
         `<option value="${o.value}" ${item.calc_basis === o.value ? 'selected' : ''}>${o.label}</option>`
     ).join('');
@@ -403,13 +546,13 @@ function renderItemRow(item, phase) {
         <td><input type="text" class="form-input" value="${(item.category || '').replace(/"/g, '&quot;')}" style="width:90px;" onchange="updateItem(${item.id},'category',this.value)"></td>
         <td><input type="number" class="form-input" value="${item.unit_price}" min="0" step="0.01" style="width:80px;" onchange="updateItem(${item.id},'unit_price',+this.value)"></td>
         <td><select class="form-select" style="width:110px;font-size:11px;" onchange="updateItem(${item.id},'calc_basis',this.value)">${calcOpts}</select></td>
-        <td><input type="number" class="form-input" value="${item.qty_multiplier}" min="0" step="0.25" style="width:50px;" onchange="updateItem(${item.id},'qty_multiplier',+this.value)"></td>
-        <td><input type="number" class="form-input" value="${item.waste_pct}" min="0" step="1" style="width:55px;" onchange="updateItem(${item.id},'waste_pct',+this.value)"></td>
-        ${showTons ? `<td><input type="number" class="form-input" value="${item.tons_match || ''}" min="0" step="0.5" style="width:50px;" onchange="updateItem(${item.id},'tons_match',this.value?+this.value:null)"></td>` : ''}
-        <td class="calc-qty" style="text-align:right;font-weight:500;">0</td>
-        <td><input type="number" class="form-input order-qty" value="0" min="0" step="1" style="width:65px;text-align:right;"
+        <td><input type="number" class="form-input" value="${item.qty_multiplier}" min="0" step="0.25" style="width:70px;text-align:center;" onchange="updateItem(${item.id},'qty_multiplier',+this.value)"></td>
+        <td><input type="number" class="form-input" value="${item.waste_pct}" min="0" step="1" style="width:75px;text-align:center;" onchange="updateItem(${item.id},'waste_pct',+this.value)"></td>
+        ${showTons ? `<td><input type="number" class="form-input" value="${item.tons_match || ''}" min="0" step="0.5" style="width:55px;text-align:center;" onchange="updateItem(${item.id},'tons_match',this.value?+this.value:null)"></td>` : ''}
+        <td class="calc-qty" style="text-align:right;font-weight:500;">${Math.round(calcQty * 100) / 100}</td>
+        <td><input type="number" class="form-input order-qty" value="${Math.round(orderQty * 100) / 100}" min="0" step="1" style="width:85px;text-align:right;${item.qty_override != null ? 'background:#FEF3C7;' : ''}"
             onchange="overrideQty(${item.id}, this.value)" ondblclick="clearOverride(${item.id})"></td>
-        <td class="extended" style="text-align:right;font-weight:600;">$0.00</td>
+        <td class="extended" style="text-align:right;font-weight:600;">${fmt(extended)}</td>
         <td><button class="btn btn-secondary btn-small" onclick="deleteItem(${item.id})" style="color:#EF4444;padding:2px 6px;">&times;</button></td>
     </tr>`;
 }
@@ -438,7 +581,8 @@ function overrideQty(id, value) {
     const item = items.find(i => i.id === id);
     if (!item) return;
     const totals = getUnitTotals();
-    const baseQty = calcItemQty(item, totals);
+    const inter = getIntermediates(totals);
+    const baseQty = calcItemQty(item, totals, inter);
     const wasteMult = 1 + (item.waste_pct || 0) / 100;
     const autoQty = Math.ceil(baseQty * wasteMult);
     const entered = parseFloat(value) || 0;
@@ -484,11 +628,30 @@ async function deleteItem(id) {
     renderItems();
 }
 
+// ─── Reset to Defaults ────────────────────────────────────────
+async function resetToDefaults() {
+    if (!confirm('This will DELETE all current takeoff items and replace them with the latest defaults (correct SKUs, prices, and formulas from the master template).\n\nYour unit types and config will be kept.\n\nContinue?')) return;
+    try {
+        const res = await fetch(`/api/bids/${window.BID_ID}/takeoff/reset-defaults`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            const itRes = await fetch(`/api/bids/${window.BID_ID}/takeoff/items`);
+            items = await itRes.json();
+            applyConfigToItems();
+            renderItems();
+            alert('Reset complete — ' + items.length + ' items loaded from defaults.');
+        } else {
+            alert('Reset failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch(e) {
+        alert('Reset failed: ' + e.message);
+    }
+}
+
 // ─── Calculate All ────────────────────────────────────────────
 function calculateAll() {
     readConfigFromUI();
     applyConfigToItems();
-    recalcAll();
     // Flash the summary bar to confirm
     const bar = $('summaryBar');
     bar.style.transition = 'box-shadow 0.3s';
@@ -536,6 +699,91 @@ async function pushToBid() {
     });
     window._toastShown = true;
     alert(`Material subtotal updated to ${fmt(grandTotal)}`);
+}
+
+// ─── PDF / Print / Email ──────────────────────────────────────
+
+function buildPDFPayload() {
+    const totals = getUnitTotals();
+    const inter = getIntermediates(totals);
+    const phases = {};
+    const phaseTotals = {};
+    let grandTotal = 0;
+
+    PHASES.forEach(phase => {
+        const phaseItems = items.filter(i => i.phase === phase && i.enabled);
+        if (!phaseItems.length) return;
+        let phaseTotal = 0;
+        phases[phase] = phaseItems.map(item => {
+            const calcQty = calcItemQty(item, totals, inter);
+            const wasteMult = 1 + (item.waste_pct || 0) / 100;
+            const orderQty = item.qty_override != null ? item.qty_override : Math.ceil(calcQty * wasteMult);
+            const extended = orderQty * (item.unit_price || 0);
+            phaseTotal += extended;
+            return {
+                part_name: item.part_name, sku: item.sku || '', category: item.category || '',
+                unit_price: item.unit_price || 0, _calc_qty: Math.round(calcQty * 100) / 100,
+                waste_pct: item.waste_pct || 0, _order_qty: orderQty, _extended: Math.round(extended * 100) / 100
+            };
+        });
+        phaseTotals[phase] = Math.round(phaseTotal * 100) / 100;
+        grandTotal += phaseTotal;
+    });
+
+    return { phases, phase_totals: phaseTotals, grand_total: Math.round(grandTotal * 100) / 100 };
+}
+
+async function generateTakeoffPDF() {
+    await saveAllItems();
+    const payload = buildPDFPayload();
+    const res = await fetch(`/api/bids/${window.BID_ID}/takeoff/generate-pdf`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.ok && data.path) {
+        window.open(data.path, '_blank');
+    } else {
+        alert('PDF generation failed: ' + (data.error || 'Unknown error'));
+    }
+}
+
+function printTakeoff() {
+    window.print();
+}
+
+function showEmailTakeoff() {
+    document.getElementById('emailTakeoffModal').style.display = 'flex';
+}
+
+async function sendTakeoffEmail() {
+    const recipients = document.getElementById('takeoffEmailTo').value.split(',').map(e => e.trim()).filter(Boolean);
+    const subject = document.getElementById('takeoffEmailSubject').value;
+    const body = document.getElementById('takeoffEmailBody').value;
+
+    if (!recipients.length) { alert('Enter at least one email address.'); return; }
+
+    // Generate PDF first if needed
+    await saveAllItems();
+    const payload = buildPDFPayload();
+    const pdfRes = await fetch(`/api/bids/${window.BID_ID}/takeoff/generate-pdf`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const pdfData = await pdfRes.json();
+    if (!pdfData.ok) { alert('PDF generation failed: ' + (pdfData.error || 'Unknown')); return; }
+
+    const res = await fetch(`/api/bids/${window.BID_ID}/takeoff/email`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ recipients, subject, body })
+    });
+    const data = await res.json();
+    if (data.ok) {
+        document.getElementById('emailTakeoffModal').style.display = 'none';
+        alert('Takeoff emailed to: ' + data.sent_to.join(', '));
+    } else {
+        alert('Email failed: ' + (data.error || 'Unknown error'));
+    }
 }
 
 // ─── Start ───────────────────────────────────────────────────

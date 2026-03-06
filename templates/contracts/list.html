@@ -67,13 +67,14 @@
                 <th>Contractor</th>
                 <th>Type</th>
                 <th>Value</th>
+                <th>Contract Date</th>
                 <th>Status</th>
                 <th>Date Added</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody id="contractsBody">
-            <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="9" class="empty-state">Loading...</td></tr>
         </tbody>
     </table>
 </div>
@@ -107,7 +108,7 @@
                 <label class="form-label">Contractor</label>
                 <input type="text" id="contractContractor" class="form-input" placeholder="Contractor or vendor name">
             </div>
-            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
                 <div class="form-group">
                     <label class="form-label">Type</label>
                     <select id="contractType" class="form-select" required>
@@ -119,6 +120,10 @@
                 <div class="form-group">
                     <label class="form-label">Value ($)</label>
                     <input type="number" id="contractValue" class="form-input" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Contract Date</label>
+                    <input type="date" id="contractDate" class="form-input">
                 </div>
             </div>
             <div class="form-group" id="contractStatusGroup" style="display:none;">
