@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Commercial Takeoff{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 id="pageTitle">Commercial Takeoff</h1>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="calculateAll()" style="background:#2563EB;border-color:#2563EB;">Calculate</button>
+        <button class="btn btn-primary" onclick="saveAllItems()">Save All</button>
+        <button class="btn btn-secondary" onclick="pushToBid()" style="background:#16A34A;color:#fff;border-color:#16A34A;">Push to Bid</button>
+        <button class="btn btn-secondary" onclick="addItem()">+ Add Item</button>
+        <button class="btn btn-secondary" onclick="window.print()">Print</button>
+        <button class="btn btn-secondary" onclick="resetToDefaults()" style="background:#DC2626;color:#fff;border-color:#DC2626;">Reset to Defaults</button>
+        <a href="/bids/{{ bid_id }}" class="btn btn-secondary">Back to Bid</a>
+    </div>
+</div>
+
+<!-- Sticky Summary Bar -->
+<div id="summaryBar" style="position:sticky;top:0;z-index:50;background:#1E293B;color:#fff;padding:10px 16px;border-radius:8px;margin-bottom:16px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;font-size:13px;">
+    <span><strong id="sumEnabled">0</strong> items enabled</span>
+    <span>Rough-In: <strong id="sumRoughIn">$0</strong></span>
+    <span>Trim Out: <strong id="sumTrimOut">$0</strong></span>
+    <span>Equipment: <strong id="sumEquipment">$0</strong></span>
+    <span>Startup/Other: <strong id="sumStartup">$0</strong></span>
+    <span>Suggested: <strong id="sumSuggested">$0</strong></span>
+    <span style="margin-left:auto;font-size:16px;font-weight:700;">Total: <span id="sumGrandTotal" style="color:#34D399;">$0.00</span></span>
+</div>
+
+<!-- Configuration Questions + Systems side by side -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+
+    <!-- Commercial Configuration Questions -->
+    <div class="bid-section" style="margin-bottom:0;">
+        <h3 style="margin:0 0 12px 0;">Commercial Configuration</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;">
+            <div class="bid-field">
+                <label class="form-label">System Type</label>
+                <select id="cfgSystemType" class="form-select" onchange="onConfigChange()">
+                    <option value="RTU">RTU</option>
+                    <option value="Split System">Split System</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Heat Source</label>
+                <select id="cfgHeatSource" class="form-select" onchange="onConfigChange()">
+                    <option value="Gas">Gas</option>
+                    <option value="Electric">Electric</option>
+                    <option value="Heat Pump">Heat Pump</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Mounting</label>
+                <select id="cfgMounting" class="form-select" onchange="onConfigChange()">
+                    <option value="Rooftop">Rooftop</option>
+                    <option value="Ground Level">Ground Level</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Curb Adapters?</label>
+                <select id="cfgCurbAdapters" class="form-select" onchange="onConfigChange()">
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Economizers?</label>
+                <select id="cfgEconomizers" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Ductwork Type</label>
+                <select id="cfgDuctworkType" class="form-select" onchange="onConfigChange()">
+                    <option value="Sheet Metal">Sheet Metal</option>
+                    <option value="Flex">Flex</option>
+                    <option value="Both">Both</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Gas Piping Needed?</label>
+                <select id="cfgGasPiping" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Condensate</label>
+                <select id="cfgCondensate" class="form-select" onchange="onConfigChange()">
+                    <option value="Gravity Drain">Gravity Drain</option>
+                    <option value="Condensate Pump">Condensate Pump</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Controls</label>
+                <select id="cfgControls" class="form-select" onchange="onConfigChange()">
+                    <option value="Standard Thermostat">Standard Thermostat</option>
+                    <option value="Programmable">Programmable</option>
+                    <option value="BMS">BMS</option>
+                </select>
+            </div>
+            <div class="bid-field">
+                <label class="form-label">Disconnects Needed?</label>
+                <select id="cfgDisconnects" class="form-select" onchange="onConfigChange()">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Systems -->
+    <div class="bid-section" style="margin-bottom:0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 style="margin:0;">Systems</h3>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <select id="sysPreset" class="form-select" style="width:160px;font-size:12px;">
+                    <option value="">+ Add System</option>
+                    <option value="rtu1">RTU-1</option>
+                    <option value="rtu2">RTU-2</option>
+                    <option value="split1">Split-1</option>
+                    <option value="split2">Split-2</option>
+                    <option value="custom">Custom</option>
+                </select>
+                <button class="btn btn-secondary btn-small" onclick="addPresetSystem()">Add</button>
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="systemsTable" style="font-size:12px;">
+                <thead>
+                    <tr>
+                        <th>Name</th><th style="width:65px;">Count</th><th style="width:65px;">Tons</th>
+                        <th style="width:65px;">CFM</th><th style="width:75px;">Supply</th>
+                        <th style="width:75px;">Return</th><th style="width:30px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="systemsBody"></tbody>
+                <tfoot id="systemsTotals"></tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Material Tables by Phase -->
+<div id="phaseSections"></div>
+
+<script>window.BID_ID = {{ bid_id }};</script>
+<script src="/static/commercial_takeoff.js?v=20260305a"></script>
+{% endblock %}

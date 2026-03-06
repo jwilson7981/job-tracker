@@ -92,6 +92,11 @@
                 <a href="/contracts" class="sidebar-link {% if '/contracts' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128203;</span> Contracts
                 </a>
+                {% if current_user.role in ('owner', 'admin', 'project_manager', 'warehouse') %}
+                <a href="/orders" class="sidebar-link {% if '/orders' in request.path and '/material-orders' not in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128666;</span> Orders
+                </a>
+                {% endif %}
                 <a href="/permits" class="sidebar-link {% if '/permits' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128220;</span> Permits
                 </a>

@@ -23,7 +23,7 @@ function normalizeDate(val) {
     return val;
 }
 
-function showToast(msg) {
+function pageToast(msg) {
     window._toastShown = true;
     window.showToast(msg);
 }
@@ -126,7 +126,7 @@ async function saveContract(e) {
     });
     const data = await res.json();
     if (data.ok) {
-        showToast('Contract created');
+        pageToast('Contract created');
         document.getElementById('contractModal').style.display = 'none';
         window.location.href = '/payapps/contract/' + data.id;
         return;
@@ -207,7 +207,7 @@ async function saveContractEdit(e) {
     });
     var data = await res.json();
     if (data.ok) {
-        showToast('Contract updated successfully');
+        pageToast('Contract updated successfully');
         document.getElementById('editContractModal').style.display = 'none';
         loadContractDetail();
     } else {
@@ -358,7 +358,7 @@ async function uploadExistingPA(e) {
     var res = await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID + '/upload-existing', { method: 'POST', body: fd });
     var data = await res.json();
     if (data.ok) {
-        showToast('Pay App #' + data.application_number + ' uploaded');
+        pageToast('Pay App #' + data.application_number + ' uploaded');
         document.getElementById('uploadPaModal').style.display = 'none';
         loadApplications();
     } else {
@@ -565,7 +565,7 @@ async function saveAllEntries() {
     });
     const data = await res.json();
     if (data.ok) {
-        showToast('Pay application saved successfully');
+        pageToast('Pay application saved successfully');
     } else {
         alert(data.error || 'Failed to save');
     }
@@ -582,7 +582,7 @@ async function saveAppMeta() {
         })
     });
     document.getElementById('g702PeriodTo').textContent = fmtDate(periodTo);
-    showToast('Period date saved');
+    pageToast('Period date saved');
 }
 
 async function updateAppStatus(status) {
@@ -592,7 +592,7 @@ async function updateAppStatus(status) {
     });
     const data = await res.json();
     if (data.ok) {
-        showToast('Status updated to ' + status);
+        pageToast('Status updated to ' + status);
     }
 }
 
@@ -630,7 +630,7 @@ async function generatePayAppPDF() {
         const data = await res.json();
         if (data.ok && data.path) {
             window.open(data.path, '_blank');
-            showToast('PDF generated successfully');
+            pageToast('PDF generated successfully');
             // Update appData and show View button
             if (data.filename) appData.application.pdf_file = data.filename;
             const viewBtn = document.getElementById('viewPdfBtn');
@@ -666,7 +666,7 @@ async function uploadSignature(input) {
     const res = await fetch('/api/settings/signature', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.ok) {
-        showToast('Signature saved! It will appear on the next generated PDF.');
+        pageToast('Signature saved! It will appear on the next generated PDF.');
         loadSignaturePreview();
     } else {
         alert(data.error || 'Upload failed');
@@ -713,7 +713,7 @@ async function sendPayAppEmail(e) {
         if (data.error) {
             alert('Error: ' + data.error);
         } else {
-            showToast('Pay App sent to: ' + data.sent_to.join(', '));
+            pageToast('Pay App sent to: ' + data.sent_to.join(', '));
             document.getElementById('payappEmailModal').style.display = 'none';
         }
     } catch (err) {
@@ -731,7 +731,7 @@ async function uploadSignedCopy(input) {
     const res = await fetch('/api/payapps/applications/' + PA_APP_ID + '/signed', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.ok) {
-        showToast('Signed copy uploaded');
+        pageToast('Signed copy uploaded');
         appData.application.signed_file = data.filename;
         const signedBtn = document.getElementById('viewSignedBtn');
         if (signedBtn) signedBtn.style.display = '';

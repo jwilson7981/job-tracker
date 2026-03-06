@@ -110,41 +110,60 @@
     </div>
     <script>
     fetch('/api/heartbeat',{method:'POST'});setInterval(()=>fetch('/api/heartbeat',{method:'POST'}),60000);
-    // Global toast function available on all pages
-    if (!window.showToast) {
-        window.showToast = function(msg, color) {
+    // Global toast — prominent top-center with icon and animation
+    window.showToast = function(msg, color) {
+            var prev = document.getElementById('global-toast');
+            if (prev) prev.remove();
+            var isError = (color && color !== '#059669');
+            var icon = isError ? '\u2716' : '\u2714';
+            var bg = color || '#059669';
             var t = document.createElement('div');
-            t.textContent = msg;
-            t.style.cssText = 'position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:' + (color || '#059669') + ';color:#fff;padding:10px 24px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15);';
+            t.id = 'global-toast';
+            t.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);background:' + bg + ';color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:600;z-index:99999;box-shadow:0 8px 32px rgba(0,0,0,0.25);display:flex;align-items:center;gap:10px;animation:toast-in 0.3s ease;white-space:nowrap;';
+            var ic = document.createElement('span');
+            ic.textContent = icon;
+            ic.style.cssText = 'font-size:20px;line-height:1;';
+            t.appendChild(ic);
+            t.appendChild(document.createTextNode(msg));
             document.body.appendChild(t);
-            setTimeout(function() { t.remove(); }, 3000);
-        };
-    }
-    // Auto-toast: intercept fetch to show toast on successful save/generate operations
+            setTimeout(function() {
+                t.style.animation = 'toast-out 0.3s ease forwards';
+                setTimeout(function() { t.remove(); }, 300);
+            }, 3000);
+    };
+    // Auto-toast: intercept fetch to show toast on successful save/generate/delete + errors
     (function() {
         var origFetch = window.fetch;
         window.fetch = function(url, opts) {
             var method = (opts && opts.method || 'GET').toUpperCase();
             if (method === 'GET' || method === 'HEAD') return origFetch.apply(this, arguments);
-            // Skip heartbeat, check-duplicate, and other background calls
             var urlStr = typeof url === 'string' ? url : (url && url.url) || '';
             if (urlStr.indexOf('/heartbeat') !== -1 || urlStr.indexOf('/check-duplicate') !== -1 || urlStr.indexOf('/detect-pdf') !== -1) {
                 return origFetch.apply(this, arguments);
             }
             return origFetch.apply(this, arguments).then(function(response) {
-                // Clone so the original consumer can still read it
                 var clone = response.clone();
                 clone.json().then(function(data) {
                     if (data && data.ok === true && !data._noToast) {
-                        // Only show if no toast was already shown (pages with custom toasts set _toastShown)
                         if (!window._toastShown) {
-                            var action = method === 'DELETE' ? 'Deleted' : (urlStr.indexOf('generate') !== -1 || urlStr.indexOf('pdf') !== -1) ? 'Generated' : 'Saved';
+                            var isUpload = opts && opts.body instanceof FormData;
+                            var action = method === 'DELETE' ? 'Deleted' : (urlStr.indexOf('generate') !== -1 || urlStr.indexOf('pdf') !== -1) ? 'Generated' : isUpload ? 'Uploaded' : 'Saved';
                             window.showToast(action + ' successfully');
                         }
                         window._toastShown = false;
+                    } else if (data && (data.ok === false || data.error) && !data._noToast) {
+                        window.showToast(data.error || 'Operation failed', '#DC2626');
+                        window._toastShown = false;
                     }
-                }).catch(function() {});
+                }).catch(function() {
+                    if (!response.ok) {
+                        window.showToast('Something went wrong — please try again', '#DC2626');
+                    }
+                });
                 return response;
+            }).catch(function(err) {
+                window.showToast('Connection error — please try again', '#DC2626');
+                throw err;
             });
         };
     })();

@@ -219,10 +219,10 @@ function renderRunHeader() {
         actions.innerHTML =
             '<button class="btn btn-secondary" onclick="copyFromLastPeriod()" title="Pre-fill grid from previous payroll run">Copy From Last Period</button>' +
             '<button class="btn btn-primary" onclick="saveTimesheet()">Save All</button>' +
-            '<button class="btn btn-secondary" onclick="finalizeRun()" style="background:#059669;color:#fff;">Finalize</button>' +
             '<button class="btn btn-secondary" onclick="deleteRunDetail()" style="color:#EF4444;">Delete Run</button>';
     } else {
-        actions.innerHTML = '<button class="btn btn-secondary" onclick="reopenRun()">Reopen (Owner)</button>' +
+        actions.innerHTML = '<button class="btn btn-secondary" onclick="showPayrollSummary()">View Summary</button>' +
+            '<button class="btn btn-secondary" onclick="reopenRun()">Reopen (Owner)</button>' +
             '<button class="btn btn-secondary" onclick="deleteRunDetail()" style="color:#EF4444;">Delete Run</button>';
     }
     recalcKpis();
@@ -544,7 +544,7 @@ function copyFromLastPeriod() {
         });
         _hasCopiedEntries = true;
         recalcTotals();
-        showToast('Copied ' + filledCount + ' entries from Run #' + data.from_run);
+        pageToast('Copied ' + filledCount + ' entries from Run #' + data.from_run);
     };
     xhr.onerror = function() { alert('Network error copying from previous period.'); };
     xhr.send();
@@ -648,7 +648,7 @@ function applyFillWeek(uid, btn) {
 
     popover.remove();
     recalcTotals();
-    showToast('Filled ' + filledCount + ' days with ' + hours + 'h on ' + jobName);
+    pageToast('Filled ' + filledCount + ' days with ' + hours + 'h on ' + jobName);
 }
 
 // ─── Copy Day (per employee) ─────────────────────────────────────
@@ -727,7 +727,7 @@ function copyDay(uid) {
     }
 
     recalcTotals();
-    showToast('Copied ' + sourceDayName + ' to ' + filledCount + ' other days');
+    pageToast('Copied ' + sourceDayName + ' to ' + filledCount + ' other days');
 }
 
 // ─── Unchanged entry warning check ──────────────────────────────
@@ -800,8 +800,9 @@ function saveTimesheet(callback) {
                 div.removeAttribute('data-copied');
             });
             _hasCopiedEntries = false;
-            showToast('Timesheet saved successfully');
+            pageToast('Timesheet saved successfully');
             if (callback) callback();
+            else showPayrollSummary();
         } else {
             try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to save'); }
             catch(e) { alert('Failed to save timesheet'); }
@@ -811,29 +812,88 @@ function saveTimesheet(callback) {
     xhr.send(JSON.stringify({ entries: entries }));
 }
 
-function showToast(msg) {
+function pageToast(msg) {
     window._toastShown = true;
     window.showToast(msg);
 }
 
-function finalizeRun() {
+function finalizeFromSummary() {
     if (!confirm('Finalize this payroll run? All entries will be approved and locked.')) return;
-    if (!checkUnchangedCopied()) return;
-    saveTimesheet(function() {
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/finalize', true);
-        xhr.onload = function() {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                showToast('Payroll run finalized');
-                loadRunDetail();
-            } else {
-                try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to finalize'); }
-                catch(e) { alert('Failed to finalize'); }
-            }
-        };
-        xhr.onerror = function() { alert('Network error finalizing run.'); };
-        xhr.send();
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/finalize', true);
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            closePayrollSummary();
+            pageToast('Payroll run finalized');
+            loadRunDetail();
+        } else {
+            try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to finalize'); }
+            catch(e) { alert('Failed to finalize'); }
+        }
+    };
+    xhr.onerror = function() { alert('Network error finalizing run.'); };
+    xhr.send();
+}
+
+// ─── Payroll Summary Modal ──────────────────────────────────────
+function showPayrollSummary() {
+    var run = _runData.run;
+    var employees = _runData.employees;
+    var isFinalized = run.status === 'Finalized';
+
+    // Header
+    document.getElementById('summaryTitle').textContent = 'Payroll Summary \u2014 ' + formatPeriod(run.period_start, run.period_end);
+    document.getElementById('summarySubheader').textContent = 'Run #' + run.run_number + (run.check_date ? ' | Check Date: ' + run.check_date : '');
+
+    // Build rows
+    var rows = [];
+    var totalHours = 0, totalPay = 0;
+
+    employees.forEach(function(emp) {
+        var empHours = 0, empPay = 0;
+        if (isFinalized) {
+            empHours = emp.total_hours || 0;
+            empPay = emp.gross_pay || 0;
+        } else {
+            document.querySelectorAll('.ts-cell-entries[data-uid="' + emp.user_id + '"] .ts-hrs-cell').forEach(function(inp) {
+                empHours += parseFloat(inp.value) || 0;
+            });
+            empPay = empHours * (emp.hourly_rate || 0);
+        }
+        totalHours += empHours;
+        totalPay += empPay;
+        rows.push({ name: emp.display_name, rate: emp.hourly_rate || 0, hours: empHours, pay: empPay });
     });
+
+    document.getElementById('summaryBody').innerHTML = rows.map(function(r) {
+        return '<tr>' +
+            '<td>' + r.name + '</td>' +
+            '<td style="text-align:right;">' + fmtMoney(r.rate) + '</td>' +
+            '<td style="text-align:right;">' + r.hours.toFixed(1) + '</td>' +
+            '<td style="text-align:right;">' + fmtMoney(r.pay) + '</td>' +
+        '</tr>';
+    }).join('');
+
+    document.getElementById('summaryTotalHours').textContent = totalHours.toFixed(1);
+    document.getElementById('summaryTotalPay').textContent = fmtMoney(totalPay);
+
+    // Finalized info
+    var infoEl = document.getElementById('summaryFinalizedInfo');
+    if (isFinalized) {
+        infoEl.style.display = 'block';
+        infoEl.textContent = 'Finalized' + (run.finalized_by ? ' by ' + run.finalized_by : '') + (run.finalized_at ? ' on ' + run.finalized_at : '');
+    } else {
+        infoEl.style.display = 'none';
+    }
+
+    // Show/hide Finalize button
+    document.getElementById('summaryFinalizeBtn').style.display = isFinalized ? 'none' : '';
+
+    document.getElementById('payrollSummaryModal').style.display = 'flex';
+}
+
+function closePayrollSummary() {
+    document.getElementById('payrollSummaryModal').style.display = 'none';
 }
 
 function reopenRun() {
@@ -842,7 +902,7 @@ function reopenRun() {
     xhr.open('POST', '/api/payroll/runs/' + RUN_ID + '/reopen', true);
     xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300) {
-            showToast('Payroll run reopened');
+            pageToast('Payroll run reopened');
             loadRunDetail();
         } else {
             try { var err = JSON.parse(xhr.responseText); alert(err.error || 'Failed to reopen'); }

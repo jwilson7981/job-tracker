@@ -6,6 +6,41 @@ var albumsList = [];
 var currentAlbum = null;   // null = top-level view, number = inside album
 var movePhotoId = null;    // photo being moved
 
+/* ─── Client-side image compression ──────────────────────────── */
+function compressImage(file, maxWidth, quality) {
+    maxWidth = maxWidth || 1600;
+    quality = quality || 0.8;
+    return new Promise(function(resolve) {
+        if (!file.type.startsWith('image/')) { resolve(file); return; }
+        var img = new Image();
+        var url = URL.createObjectURL(file);
+        img.onload = function() {
+            URL.revokeObjectURL(url);
+            var w = img.width, h = img.height;
+            if (w <= maxWidth) {
+                // already small enough — still re-encode as JPEG for consistency
+                var c = document.createElement('canvas');
+                c.width = w; c.height = h;
+                c.getContext('2d').drawImage(img, 0, 0);
+                c.toBlob(function(blob) {
+                    resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+                }, 'image/jpeg', quality);
+                return;
+            }
+            var ratio = maxWidth / w;
+            var newW = maxWidth, newH = Math.round(h * ratio);
+            var c = document.createElement('canvas');
+            c.width = newW; c.height = newH;
+            c.getContext('2d').drawImage(img, 0, 0, newW, newH);
+            c.toBlob(function(blob) {
+                resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+            }, 'image/jpeg', quality);
+        };
+        img.onerror = function() { URL.revokeObjectURL(url); resolve(file); };
+        img.src = url;
+    });
+}
+
 function loadJobs() {
     fetch('/api/jobs')
         .then(function(r) { return r.json(); })
@@ -275,25 +310,41 @@ function showUploadModal() {
 
 function uploadPhotos(e) {
     e.preventDefault();
-    var formData = new FormData();
-    formData.append('job_id', document.getElementById('uploadJob').value);
-    formData.append('category', document.getElementById('uploadCategory').value);
-    formData.append('caption', document.getElementById('uploadCaption').value);
-    var albumId = document.getElementById('uploadAlbum').value;
-    if (albumId) formData.append('album_id', albumId);
+    var btn = e.target.querySelector('button[type="submit"]');
+    var origText = btn.textContent;
+    btn.textContent = 'Uploading...';
+    btn.disabled = true;
+
     var files = document.getElementById('uploadFiles').files;
+    var promises = [];
     for (var i = 0; i < files.length; i++) {
-        formData.append('files', files[i]);
+        promises.push(compressImage(files[i]));
     }
-    fetch('/api/photos', { method: 'POST', body: formData })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.ok) {
-                document.getElementById('uploadModal').style.display = 'none';
-                loadAlbums();
-                loadPhotos();
-            }
-        });
+    Promise.all(promises).then(function(compressed) {
+        var formData = new FormData();
+        formData.append('job_id', document.getElementById('uploadJob').value);
+        formData.append('category', document.getElementById('uploadCategory').value);
+        formData.append('caption', document.getElementById('uploadCaption').value);
+        var albumId = document.getElementById('uploadAlbum').value;
+        if (albumId) formData.append('album_id', albumId);
+        compressed.forEach(function(f) { formData.append('files', f); });
+        return fetch('/api/photos', { method: 'POST', body: formData });
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.textContent = origText;
+        btn.disabled = false;
+        if (data.ok) {
+            document.getElementById('uploadModal').style.display = 'none';
+            loadAlbums();
+            loadPhotos();
+        }
+    })
+    .catch(function() {
+        btn.textContent = origText;
+        btn.disabled = false;
+        alert('Upload failed. Please try again.');
+    });
 }
 
 function showCameraModal() {
@@ -315,22 +366,37 @@ function showCameraModal() {
 
 function takePhoto(e) {
     e.preventDefault();
-    var formData = new FormData();
-    formData.append('job_id', document.getElementById('cameraJob').value);
-    formData.append('category', document.getElementById('cameraCategory').value);
-    formData.append('caption', document.getElementById('cameraCaption').value);
-    var albumId = document.getElementById('cameraAlbum').value;
-    if (albumId) formData.append('album_id', albumId);
-    formData.append('files', document.getElementById('cameraFile').files[0]);
-    fetch('/api/photos', { method: 'POST', body: formData })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.ok) {
-                document.getElementById('cameraModal').style.display = 'none';
-                loadAlbums();
-                loadPhotos();
-            }
-        });
+    var btn = e.target.querySelector('button[type="submit"]');
+    var origText = btn.textContent;
+    btn.textContent = 'Uploading...';
+    btn.disabled = true;
+
+    var file = document.getElementById('cameraFile').files[0];
+    compressImage(file).then(function(compressed) {
+        var formData = new FormData();
+        formData.append('job_id', document.getElementById('cameraJob').value);
+        formData.append('category', document.getElementById('cameraCategory').value);
+        formData.append('caption', document.getElementById('cameraCaption').value);
+        var albumId = document.getElementById('cameraAlbum').value;
+        if (albumId) formData.append('album_id', albumId);
+        formData.append('files', compressed);
+        return fetch('/api/photos', { method: 'POST', body: formData });
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.textContent = origText;
+        btn.disabled = false;
+        if (data.ok) {
+            document.getElementById('cameraModal').style.display = 'none';
+            loadAlbums();
+            loadPhotos();
+        }
+    })
+    .catch(function() {
+        btn.textContent = origText;
+        btn.disabled = false;
+        alert('Upload failed. Please try again.');
+    });
 }
 
 /* ─── Delete / Lightbox ──────────────────────────────────────── */

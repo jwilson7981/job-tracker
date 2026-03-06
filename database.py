@@ -370,6 +370,40 @@ def init_db():
 
         /* ─── Bid Takeoff ─── */
 
+        CREATE TABLE IF NOT EXISTS bid_commercial_takeoff_systems (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bid_id INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            system_count INTEGER NOT NULL DEFAULT 1,
+            tons REAL NOT NULL DEFAULT 0,
+            cfm REAL NOT NULL DEFAULT 0,
+            supply_runs INTEGER NOT NULL DEFAULT 0,
+            return_runs INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS bid_commercial_takeoff_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bid_id INTEGER NOT NULL,
+            phase TEXT NOT NULL DEFAULT 'Rough-In',
+            category TEXT NOT NULL DEFAULT '',
+            part_name TEXT NOT NULL DEFAULT '',
+            sku TEXT DEFAULT '',
+            unit_price REAL NOT NULL DEFAULT 0,
+            calc_basis TEXT NOT NULL DEFAULT 'per_system'
+                CHECK(calc_basis IN ('per_system','per_supply_run','per_return_run',
+                    'per_total_run','by_tonnage','fixed','per_ton_total')),
+            qty_multiplier REAL NOT NULL DEFAULT 1,
+            tons_match REAL DEFAULT NULL,
+            waste_pct REAL NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            qty_override REAL DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            notes TEXT DEFAULT '',
+            FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS bid_takeoff_unit_types (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bid_id INTEGER NOT NULL,
@@ -2215,6 +2249,10 @@ def init_db():
     if 'contract_date' not in contracts_cols:
         conn.execute("ALTER TABLE contracts ADD COLUMN contract_date TEXT DEFAULT ''")
 
+    # Migration: add commercial_takeoff_config JSON to bids
+    if 'commercial_takeoff_config' not in bid_cols_tk:
+        conn.execute("ALTER TABLE bids ADD COLUMN commercial_takeoff_config TEXT DEFAULT '{}'")
+
     # Migration: add heat_kit to bid_takeoff_unit_types
     ut_cols = [row[1] for row in conn.execute("PRAGMA table_info(bid_takeoff_unit_types)").fetchall()]
     if 'heat_kit' not in ut_cols:
@@ -2303,6 +2341,54 @@ def init_db():
             conn.execute("ALTER TABLE bid_takeoff_items_new RENAME TO bid_takeoff_items")
     except Exception:
         pass
+
+    # ─── Material Orders tables ──────────────────────────────────
+    conn.execute('''CREATE TABLE IF NOT EXISTS material_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL,
+        quote_id INTEGER,
+        bid_id INTEGER,
+        takeoff_type TEXT NOT NULL DEFAULT 'residential',
+        order_number TEXT DEFAULT '',
+        supplier_name TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'Draft'
+            CHECK(status IN ('Draft','Submitted','Confirmed','Partial','Received')),
+        subtotal REAL DEFAULT 0,
+        tax_amount REAL DEFAULT 0,
+        freight REAL DEFAULT 0,
+        total REAL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        submitted_date TEXT DEFAULT '',
+        confirmed_date TEXT DEFAULT '',
+        expected_delivery TEXT DEFAULT '',
+        received_date TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+        FOREIGN KEY (quote_id) REFERENCES supplier_quotes(id) ON DELETE SET NULL,
+        FOREIGN KEY (bid_id) REFERENCES bids(id) ON DELETE SET NULL,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS material_order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        line_number INTEGER NOT NULL DEFAULT 0,
+        sku TEXT DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        quote_qty REAL DEFAULT 0,
+        takeoff_qty REAL DEFAULT 0,
+        order_qty REAL DEFAULT 0,
+        received_qty REAL DEFAULT 0,
+        unit_price REAL DEFAULT 0,
+        extended_price REAL DEFAULT 0,
+        takeoff_sku TEXT DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'manual',
+        discrepancy TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        FOREIGN KEY (order_id) REFERENCES material_orders(id) ON DELETE CASCADE
+    )''')
 
     conn.commit()
     conn.close()

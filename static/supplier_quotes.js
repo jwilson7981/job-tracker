@@ -189,7 +189,7 @@ async function saveQuote() {
     });
     const data = await res.json();
     if (data.ok) {
-        showToast('Quote saved.');
+        pageToast('Quote saved.');
     } else {
         alert(data.error || 'Failed to save.');
     }
@@ -205,7 +205,7 @@ async function saveItems() {
     if (data.ok) {
         document.getElementById('qSubtotal').value = fmt(data.subtotal);
         recalcTotal();
-        showToast('Line items saved.');
+        pageToast('Line items saved.');
     } else {
         alert(data.error || 'Failed to save items.');
     }
@@ -226,7 +226,7 @@ async function uploadFile() {
         link.href = '/api/supplier-quotes/' + window.QUOTE_ID + '/file';
         link.style.display = '';
         if (quoteData) quoteData.file_path = data.file_path;
-        showToast('File uploaded.');
+        pageToast('File uploaded.');
         input.value = '';
     } else {
         alert(data.error || 'Upload failed.');
@@ -241,7 +241,7 @@ async function selectAsBaseline() {
         document.getElementById('baselineIndicator').style.display = '';
         document.getElementById('btnBaseline').style.display = 'none';
         document.getElementById('qStatus').value = 'Selected';
-        showToast('Quote selected as baseline.');
+        pageToast('Quote selected as baseline.');
     } else {
         alert(data.error || 'Failed to select baseline.');
     }
@@ -260,17 +260,9 @@ async function deleteQuote() {
 
 // ─── Toast ──────────────────────────────────────────────────────
 
-function showToast(msg) {
-    let toast = document.getElementById('sq-toast');
-    if (!toast) {
-        toast = document.createElement('div');
-        toast.id = 'sq-toast';
-        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 24px;border-radius:8px;font-size:14px;z-index:9999;opacity:0;transition:opacity .3s;';
-        document.body.appendChild(toast);
-    }
-    toast.textContent = msg;
-    toast.style.opacity = '1';
-    setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+function pageToast(msg) {
+    window._toastShown = true;
+    window.showToast(msg);
 }
 
 // ─── Parse PDF ──────────────────────────────────────────────────
@@ -284,7 +276,7 @@ async function parsePdf() {
         const res = await fetch('/api/supplier-quotes/' + window.QUOTE_ID + '/parse', {method: 'POST'});
         const data = await res.json();
         if (data.ok) {
-            showToast(`Parsed ${data.items_parsed} line items.`);
+            pageToast(`Parsed ${data.items_parsed} line items.`);
             loadQuote();
         } else {
             alert(data.error || 'Failed to parse PDF.');
@@ -394,7 +386,7 @@ async function runPriceCheck() {
         }
         closePriceCheckModal();
         renderPriceCheck(data);
-        showToast('Price check complete.');
+        pageToast('Price check complete.');
     } catch (e) {
         alert('Error: ' + e.message);
     } finally {

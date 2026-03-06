@@ -577,7 +577,7 @@ def create_job():
     job_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    return jsonify({'id': job_id, 'name': name}), 201
+    return jsonify({'ok': True, 'id': job_id, 'name': name}), 201
 
 @app.route('/api/job/<int:job_id>')
 @api_login_required
@@ -752,6 +752,7 @@ def save_line_items(job_id):
     conn.commit()
 
     result = get_job_data(conn, job_id)
+    result['ok'] = True
     conn.close()
     return jsonify(result)
 
@@ -804,6 +805,7 @@ def _save_entries(job_id, table_name, data):
     conn.commit()
 
     result = get_job_data(conn, job_id)
+    result['ok'] = True
     conn.close()
     return jsonify(result)
 
@@ -878,6 +880,7 @@ def revert_version(job_id, vid):
     conn.commit()
 
     result = get_job_data(conn, job_id)
+    result['ok'] = True
     conn.close()
     return jsonify(result)
 
@@ -4879,6 +4882,268 @@ def api_email_takeoff(bid_id):
         return jsonify({'ok': True, 'sent_to': recipients})
     except Exception as e:
         return jsonify({'error': f'Email failed: {str(e)}'}), 500
+
+
+# ─── Commercial Takeoff ──────────────────────────────────────────
+
+DEFAULT_COMMERCIAL_TAKEOFF_ITEMS = [
+    # ═══ Rough-In (~20 items) ═══
+    {'phase':'Rough-In','category':'Curbs','part_name':'RTU Curb/Adapter','sku':'','unit_price':450,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Sheet Metal Supply Duct (4\' section)','sku':'','unit_price':65,'calc_basis':'per_supply_run','qty_multiplier':3,'waste_pct':10,'enabled':1,'sort_order':2},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Sheet Metal Return Duct (4\' section)','sku':'','unit_price':75,'calc_basis':'per_return_run','qty_multiplier':2,'waste_pct':10,'enabled':1,'sort_order':3},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Spiral Pipe 6" x 5\'','sku':'','unit_price':18,'calc_basis':'per_supply_run','qty_multiplier':2,'waste_pct':10,'enabled':1,'sort_order':4},
+    {'phase':'Rough-In','category':'Ductwork','part_name':'Spiral Pipe 8" x 5\'','sku':'','unit_price':24,'calc_basis':'per_supply_run','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':5},
+    {'phase':'Rough-In','category':'Flex','part_name':'6" x 25\' Flex Duct R6','sku':'L1972','unit_price':31.46,'calc_basis':'per_supply_run','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':6},
+    {'phase':'Rough-In','category':'Flex','part_name':'8" x 25\' Flex Duct R6','sku':'L1974','unit_price':37.56,'calc_basis':'per_supply_run','qty_multiplier':1,'waste_pct':10,'enabled':1,'sort_order':7},
+    {'phase':'Rough-In','category':'Flex','part_name':'10" x 25\' Flex Duct R6','sku':'','unit_price':48,'calc_basis':'per_supply_run','qty_multiplier':0.5,'waste_pct':10,'enabled':0,'sort_order':8},
+    {'phase':'Rough-In','category':'Fittings','part_name':'Duct Transitions','sku':'','unit_price':28,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':10,'enabled':1,'sort_order':9},
+    {'phase':'Rough-In','category':'Dampers','part_name':'Fire Dampers','sku':'','unit_price':85,'calc_basis':'per_total_run','qty_multiplier':0.25,'waste_pct':0,'enabled':1,'sort_order':10},
+    {'phase':'Rough-In','category':'Dampers','part_name':'Volume Dampers','sku':'','unit_price':22,'calc_basis':'per_supply_run','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':11},
+    {'phase':'Rough-In','category':'Tape & Sealant','part_name':'Duct Sealant 1 GAL','sku':'M6003','unit_price':13,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':12},
+    {'phase':'Rough-In','category':'Tape & Sealant','part_name':'Foil Tape 2.5" x 60YDS','sku':'L0494','unit_price':15.15,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':0,'enabled':1,'sort_order':13},
+    {'phase':'Rough-In','category':'Tape & Sealant','part_name':'Black Duct Tape 2" 60YDS','sku':'L0444','unit_price':5.60,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':0,'enabled':1,'sort_order':14},
+    {'phase':'Rough-In','category':'Hangers','part_name':'Duct Hangers / Trapeze','sku':'','unit_price':8,'calc_basis':'per_total_run','qty_multiplier':3,'waste_pct':10,'enabled':1,'sort_order':15},
+    {'phase':'Rough-In','category':'Hangers','part_name':'Hanger Strap 3/4" x 100\'','sku':'M0091','unit_price':9,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':0,'enabled':1,'sort_order':16},
+    {'phase':'Rough-In','category':'Wire','part_name':'18/8 Thermostat Wire 500\'','sku':'P2240','unit_price':0.565,'calc_basis':'per_system','qty_multiplier':150,'waste_pct':0,'enabled':1,'sort_order':17},
+    {'phase':'Rough-In','category':'Insulation','part_name':'Duct Wrap R-6.0','sku':'L0475','unit_price':118,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':10,'enabled':1,'sort_order':18},
+    {'phase':'Rough-In','category':'Penetrations','part_name':'Roof Jacks / Penetrations','sku':'','unit_price':35,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':0,'enabled':1,'sort_order':19},
+    {'phase':'Rough-In','category':'Screws','part_name':'#8 x 3/4" Hex Washer Screws','sku':'Q4659','unit_price':32.65,'calc_basis':'per_system','qty_multiplier':0.25,'waste_pct':0,'enabled':1,'sort_order':20},
+
+    # ═══ Trim Out (~15 items) ═══
+    {'phase':'Trim Out','category':'Diffusers','part_name':'Supply Diffuser 24x24 4-Way','sku':'','unit_price':32,'calc_basis':'per_supply_run','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Trim Out','category':'Grilles','part_name':'Return Grille 24x24','sku':'','unit_price':28,'calc_basis':'per_return_run','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Trim Out','category':'Filters','part_name':'Filters (per system)','sku':'','unit_price':8,'calc_basis':'per_system','qty_multiplier':2,'waste_pct':0,'enabled':1,'sort_order':3},
+    {'phase':'Trim Out','category':'Condensate','part_name':'3/4" PVC Condensate Pipe 20\'','sku':'R0071','unit_price':0.34,'calc_basis':'per_system','qty_multiplier':20,'waste_pct':0,'enabled':1,'sort_order':4},
+    {'phase':'Trim Out','category':'Condensate','part_name':'3/4 PVC 90 Ell','sku':'R0311','unit_price':0.40,'calc_basis':'per_system','qty_multiplier':6,'waste_pct':0,'enabled':1,'sort_order':5},
+    {'phase':'Trim Out','category':'Condensate','part_name':'PVC Fittings Assorted','sku':'','unit_price':12,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':6},
+    {'phase':'Trim Out','category':'Condensate','part_name':'Condensate Pump','sku':'','unit_price':65,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':7},
+    {'phase':'Trim Out','category':'Condensate','part_name':'PVC Cement 1 QT','sku':'R0042','unit_price':14.95,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':0,'enabled':1,'sort_order':8},
+    {'phase':'Trim Out','category':'Line Sets','part_name':'Refrigerant Line Set 3/8 x 3/4 x 25\'','sku':'','unit_price':85,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':9},
+    {'phase':'Trim Out','category':'Line Sets','part_name':'Refrigerant Line Set 3/8 x 3/4 x 50\'','sku':'','unit_price':155,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':10},
+    {'phase':'Trim Out','category':'Insulation','part_name':'Line Set Insulation 3/4"','sku':'L0484','unit_price':0.284,'calc_basis':'per_system','qty_multiplier':50,'waste_pct':0,'enabled':0,'sort_order':11},
+    {'phase':'Trim Out','category':'Sealant','part_name':'10.1oz White Silicone','sku':'M1842','unit_price':5.90,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':0,'enabled':1,'sort_order':12},
+    {'phase':'Trim Out','category':'Electrical','part_name':'Wire Nuts Jar 100ct','sku':'P1491','unit_price':5.48,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':0,'enabled':1,'sort_order':13},
+    {'phase':'Trim Out','category':'Brazing','part_name':'15% Silver Solder 1#','sku':'M0434','unit_price':97,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':0,'enabled':1,'sort_order':14},
+    {'phase':'Trim Out','category':'Refrigerant','part_name':'R-410A Refrigerant 25# Drum','sku':'','unit_price':185,'calc_basis':'per_system','qty_multiplier':0.2,'waste_pct':0,'enabled':1,'sort_order':15},
+
+    # ═══ Equipment (~15 items) ═══
+    {'phase':'Equipment','category':'RTU','part_name':'3 Ton RTU','sku':'','unit_price':3200,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Equipment','category':'RTU','part_name':'5 Ton RTU','sku':'','unit_price':4800,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Equipment','category':'RTU','part_name':'7.5 Ton RTU','sku':'','unit_price':7200,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':7.5,'waste_pct':0,'enabled':1,'sort_order':3},
+    {'phase':'Equipment','category':'RTU','part_name':'10 Ton RTU','sku':'','unit_price':9500,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':10,'waste_pct':0,'enabled':1,'sort_order':4},
+    {'phase':'Equipment','category':'RTU','part_name':'12.5 Ton RTU','sku':'','unit_price':12000,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':12.5,'waste_pct':0,'enabled':1,'sort_order':5},
+    {'phase':'Equipment','category':'RTU','part_name':'15 Ton RTU','sku':'','unit_price':14500,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':15,'waste_pct':0,'enabled':1,'sort_order':6},
+    {'phase':'Equipment','category':'RTU','part_name':'20 Ton RTU','sku':'','unit_price':19000,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':20,'waste_pct':0,'enabled':1,'sort_order':7},
+    {'phase':'Equipment','category':'RTU','part_name':'25 Ton RTU','sku':'','unit_price':24000,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':25,'waste_pct':0,'enabled':1,'sort_order':8},
+    {'phase':'Equipment','category':'Split','part_name':'3 Ton Split Condenser','sku':'','unit_price':1800,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':3,'waste_pct':0,'enabled':0,'sort_order':9},
+    {'phase':'Equipment','category':'Split','part_name':'5 Ton Split Condenser','sku':'','unit_price':2800,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':5,'waste_pct':0,'enabled':0,'sort_order':10},
+    {'phase':'Equipment','category':'Split','part_name':'7.5 Ton Split Condenser','sku':'','unit_price':4200,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':7.5,'waste_pct':0,'enabled':0,'sort_order':11},
+    {'phase':'Equipment','category':'Split','part_name':'10 Ton Split Condenser','sku':'','unit_price':5500,'calc_basis':'by_tonnage','qty_multiplier':1,'tons_match':10,'waste_pct':0,'enabled':0,'sort_order':12},
+    {'phase':'Equipment','category':'Thermostat','part_name':'Programmable Thermostat','sku':'','unit_price':52.50,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':13},
+    {'phase':'Equipment','category':'Thermostat','part_name':'Smart Thermostat / BMS Interface','sku':'','unit_price':185,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':14},
+
+    # ═══ Startup/Other (~8 items) ═══
+    {'phase':'Startup/Other','category':'Permits','part_name':'Mechanical Permit','sku':'','unit_price':500,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':1},
+    {'phase':'Startup/Other','category':'Crane','part_name':'Crane Rental (RTU Set)','sku':'','unit_price':2500,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':2},
+    {'phase':'Startup/Other','category':'Shipping','part_name':'Freight / Delivery','sku':'','unit_price':3000,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':3},
+    {'phase':'Startup/Other','category':'Gas','part_name':'Gas Piping Allowance','sku':'','unit_price':1500,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':4},
+    {'phase':'Startup/Other','category':'Startup','part_name':'Startup / Commissioning','sku':'','unit_price':350,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':1,'sort_order':5},
+    {'phase':'Startup/Other','category':'Consumables','part_name':'Nitrogen','sku':'','unit_price':35,'calc_basis':'per_system','qty_multiplier':0.5,'waste_pct':0,'enabled':1,'sort_order':6},
+    {'phase':'Startup/Other','category':'Consumables','part_name':'Refrigerant (startup)','sku':'','unit_price':185,'calc_basis':'per_system','qty_multiplier':0.1,'waste_pct':0,'enabled':1,'sort_order':7},
+    {'phase':'Startup/Other','category':'Testing','part_name':'Test & Balance Allowance','sku':'','unit_price':500,'calc_basis':'fixed','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':8},
+
+    # ═══ Suggested Parts (~8 items) ═══
+    {'phase':'Suggested Parts','category':'Electrical','part_name':'30A Non-Fuse Disconnect','sku':'','unit_price':18,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':1},
+    {'phase':'Suggested Parts','category':'Electrical','part_name':'60A Non-Fuse Disconnect','sku':'','unit_price':24,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':2},
+    {'phase':'Suggested Parts','category':'Electrical','part_name':'Whip Kit 3/4" x 6\'','sku':'','unit_price':12,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':3},
+    {'phase':'Suggested Parts','category':'Pads','part_name':'Condenser Pad 36x36x3','sku':'','unit_price':38,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':4},
+    {'phase':'Suggested Parts','category':'Controls','part_name':'Economizer','sku':'','unit_price':450,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':5},
+    {'phase':'Suggested Parts','category':'Safety','part_name':'Smoke Detector','sku':'','unit_price':45,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':6},
+    {'phase':'Suggested Parts','category':'Safety','part_name':'CO Detector','sku':'','unit_price':35,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':7},
+    {'phase':'Suggested Parts','category':'Seismic','part_name':'Seismic Straps','sku':'','unit_price':24,'calc_basis':'per_system','qty_multiplier':1,'waste_pct':0,'enabled':0,'sort_order':8},
+]
+
+@app.route('/bids/<int:bid_id>/commercial-takeoff')
+@role_required('owner')
+def bids_commercial_takeoff(bid_id):
+    return render_template('bids/commercial_takeoff.html', bid_id=bid_id)
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/config')
+@api_role_required('owner')
+def api_commercial_takeoff_config(bid_id):
+    conn = get_db()
+    row = conn.execute('SELECT commercial_takeoff_config FROM bids WHERE id = ?', (bid_id,)).fetchone()
+    conn.close()
+    import json as _json
+    cfg = _json.loads(row['commercial_takeoff_config'] or '{}') if row else {}
+    return jsonify(cfg)
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/config', methods=['PUT'])
+@api_role_required('owner')
+def api_update_commercial_takeoff_config(bid_id):
+    import json as _json
+    data = request.get_json()
+    conn = get_db()
+    conn.execute("UPDATE bids SET commercial_takeoff_config = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                 (_json.dumps(data), bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/systems')
+@api_role_required('owner')
+def api_commercial_takeoff_systems(bid_id):
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM bid_commercial_takeoff_systems WHERE bid_id = ? ORDER BY sort_order', (bid_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/systems', methods=['POST'])
+@api_role_required('owner')
+def api_create_commercial_takeoff_system(bid_id):
+    d = request.get_json()
+    conn = get_db()
+    max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM bid_commercial_takeoff_systems WHERE bid_id = ?', (bid_id,)).fetchone()[0]
+    cursor = conn.execute(
+        '''INSERT INTO bid_commercial_takeoff_systems (bid_id, name, system_count, tons, cfm, supply_runs, return_runs, sort_order)
+           VALUES (?,?,?,?,?,?,?,?)''',
+        (bid_id, d.get('name',''), d.get('system_count',1), d.get('tons',0),
+         d.get('cfm',0), d.get('supply_runs',0), d.get('return_runs',0), max_sort + 1)
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/systems/<int:sys_id>', methods=['DELETE'])
+@api_role_required('owner')
+def api_delete_commercial_takeoff_system(bid_id, sys_id):
+    conn = get_db()
+    conn.execute('DELETE FROM bid_commercial_takeoff_systems WHERE id = ? AND bid_id = ?', (sys_id, bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/items')
+@api_role_required('owner')
+def api_commercial_takeoff_items(bid_id):
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM bid_commercial_takeoff_items WHERE bid_id = ? ORDER BY phase, sort_order', (bid_id,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/items', methods=['POST'])
+@api_role_required('owner')
+def api_create_commercial_takeoff_item(bid_id):
+    d = request.get_json()
+    conn = get_db()
+    max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM bid_commercial_takeoff_items WHERE bid_id = ? AND phase = ?',
+                            (bid_id, d.get('phase','Rough-In'))).fetchone()[0]
+    cursor = conn.execute(
+        '''INSERT INTO bid_commercial_takeoff_items (bid_id, phase, category, part_name, sku, unit_price,
+           calc_basis, qty_multiplier, tons_match, waste_pct, enabled, qty_override, sort_order, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (bid_id, d.get('phase','Rough-In'), d.get('category',''), d.get('part_name','New Item'),
+         d.get('sku',''), d.get('unit_price',0), d.get('calc_basis','per_system'),
+         d.get('qty_multiplier',1), d.get('tons_match'), d.get('waste_pct',0),
+         d.get('enabled',1), d.get('qty_override'), max_sort + 1, d.get('notes',''))
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/items/<int:item_id>', methods=['DELETE'])
+@api_role_required('owner')
+def api_delete_commercial_takeoff_item(bid_id, item_id):
+    conn = get_db()
+    conn.execute('DELETE FROM bid_commercial_takeoff_items WHERE id = ? AND bid_id = ?', (item_id, bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/items/bulk', methods=['PUT'])
+@api_role_required('owner')
+def api_bulk_save_commercial_takeoff(bid_id):
+    data = request.get_json()
+    conn = get_db()
+    for sys in data.get('systems', []):
+        if sys.get('id'):
+            conn.execute(
+                '''UPDATE bid_commercial_takeoff_systems SET name=?, system_count=?, tons=?, cfm=?,
+                   supply_runs=?, return_runs=?, sort_order=?
+                   WHERE id=? AND bid_id=?''',
+                (sys.get('name',''), sys.get('system_count',1), sys.get('tons',0),
+                 sys.get('cfm',0), sys.get('supply_runs',0), sys.get('return_runs',0),
+                 sys.get('sort_order',0), sys['id'], bid_id)
+            )
+    for item in data.get('items', []):
+        if item.get('id'):
+            conn.execute(
+                '''UPDATE bid_commercial_takeoff_items SET phase=?, category=?, part_name=?, sku=?, unit_price=?,
+                   calc_basis=?, qty_multiplier=?, tons_match=?, waste_pct=?, enabled=?,
+                   qty_override=?, sort_order=?, notes=?
+                   WHERE id=? AND bid_id=?''',
+                (item.get('phase','Rough-In'), item.get('category',''), item.get('part_name',''),
+                 item.get('sku',''), item.get('unit_price',0), item.get('calc_basis','per_system'),
+                 item.get('qty_multiplier',1), item.get('tons_match'), item.get('waste_pct',0),
+                 item.get('enabled',1), item.get('qty_override'), item.get('sort_order',0),
+                 item.get('notes',''), item['id'], bid_id)
+            )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/seed-defaults', methods=['POST'])
+@api_role_required('owner')
+def api_seed_commercial_takeoff_defaults(bid_id):
+    conn = get_db()
+    existing = conn.execute('SELECT COUNT(*) FROM bid_commercial_takeoff_items WHERE bid_id = ?', (bid_id,)).fetchone()[0]
+    if existing > 0:
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Items already exist'})
+    for item in DEFAULT_COMMERCIAL_TAKEOFF_ITEMS:
+        conn.execute(
+            '''INSERT INTO bid_commercial_takeoff_items (bid_id, phase, category, part_name, sku, unit_price,
+               calc_basis, qty_multiplier, tons_match, waste_pct, enabled, sort_order)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (bid_id, item['phase'], item['category'], item['part_name'], item.get('sku',''),
+             item['unit_price'], item['calc_basis'], item['qty_multiplier'],
+             item.get('tons_match'), item['waste_pct'], item['enabled'], item['sort_order'])
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/reset-defaults', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_reset_commercial_takeoff_defaults(bid_id):
+    conn = get_db()
+    conn.execute('DELETE FROM bid_commercial_takeoff_items WHERE bid_id = ?', (bid_id,))
+    for item in DEFAULT_COMMERCIAL_TAKEOFF_ITEMS:
+        conn.execute(
+            '''INSERT INTO bid_commercial_takeoff_items (bid_id, phase, category, part_name, sku, unit_price,
+               calc_basis, qty_multiplier, tons_match, waste_pct, enabled, sort_order)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (bid_id, item['phase'], item['category'], item['part_name'], item.get('sku',''),
+             item['unit_price'], item['calc_basis'], item['qty_multiplier'],
+             item.get('tons_match'), item['waste_pct'], item['enabled'], item['sort_order'])
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/bids/<int:bid_id>/commercial-takeoff/push-to-bid', methods=['POST'])
+@api_role_required('owner')
+def api_push_commercial_takeoff_to_bid(bid_id):
+    data = request.get_json()
+    total = data.get('total', 0)
+    conn = get_db()
+    conn.execute("UPDATE bids SET material_subtotal = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                 (total, bid_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 
 # ─── Precon Meetings (Phase 4) ──────────────────────────────────
@@ -13655,7 +13920,7 @@ def api_create_material_request():
                 f"{requester['display_name'] if requester else 'Someone'} requested materials ({len(items)} items)",
                 f"/material-requests")
     conn.close()
-    return jsonify({'id': rid}), 201
+    return jsonify({'ok': True, 'id': rid}), 201
 
 @app.route('/api/material-requests/<int:rid>')
 @api_login_required
@@ -13777,6 +14042,335 @@ def api_fulfill_material_request(rid):
             f"Material Request #{rid} {new_status}",
             f"Your material request for {job['name'] if job else 'Unknown'} has been {new_status.lower()}",
             f"/material-requests")
+    conn.close()
+    return jsonify({'ok': True, 'status': new_status})
+
+
+# ─── Material Orders ─────────────────────────────────────────────
+
+@app.route('/orders')
+@role_required('owner', 'admin', 'project_manager', 'warehouse')
+def orders_list():
+    return render_template('orders/list.html')
+
+@app.route('/orders/<int:oid>')
+@role_required('owner', 'admin', 'project_manager', 'warehouse')
+def orders_detail(oid):
+    return render_template('orders/detail.html', order_id=oid)
+
+@app.route('/api/orders')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_orders_list():
+    job_id = request.args.get('job_id', '')
+    status = request.args.get('status', '')
+    conn = get_db()
+    query = '''SELECT mo.*, j.name as job_name,
+               (SELECT COUNT(*) FROM material_order_items WHERE order_id = mo.id) as item_count
+               FROM material_orders mo
+               LEFT JOIN jobs j ON mo.job_id = j.id WHERE 1=1'''
+    params = []
+    if job_id:
+        query += ' AND mo.job_id = ?'
+        params.append(job_id)
+    if status:
+        query += ' AND mo.status = ?'
+        params.append(status)
+    query += ' ORDER BY mo.updated_at DESC'
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/orders/prepare')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_orders_prepare():
+    job_id = request.args.get('job_id')
+    takeoff_type = request.args.get('takeoff_type', 'residential')
+    if not job_id:
+        return jsonify({'error': 'job_id required'}), 400
+    conn = get_db()
+    job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if not job:
+        conn.close()
+        return jsonify({'error': 'Job not found'}), 404
+
+    # Find baseline quote for this job
+    quote = conn.execute('''SELECT * FROM supplier_quotes
+                            WHERE job_id = ? AND is_baseline = 1
+                            ORDER BY updated_at DESC LIMIT 1''', (job_id,)).fetchone()
+    quote_items = []
+    quote_id = None
+    supplier_name = ''
+    quote_number = ''
+    if quote:
+        quote_id = quote['id']
+        supplier_name = quote['supplier_name'] or ''
+        quote_number = quote['quote_number'] or ''
+        quote_items = [dict(r) for r in conn.execute(
+            'SELECT * FROM supplier_quote_items WHERE quote_id = ? ORDER BY line_number',
+            (quote['id'],)).fetchall()]
+
+    # Find bid for this job
+    bid = conn.execute('SELECT * FROM bids WHERE job_id = ? ORDER BY updated_at DESC LIMIT 1',
+                       (job_id,)).fetchone()
+    bid_id = None
+    takeoff_items = []
+    unit_types = []
+    systems = []
+    config = {}
+
+    if bid:
+        bid_id = bid['id']
+        if takeoff_type == 'residential':
+            takeoff_items = [dict(r) for r in conn.execute(
+                'SELECT * FROM bid_takeoff_items WHERE bid_id = ? AND enabled = 1 ORDER BY phase, sort_order',
+                (bid['id'],)).fetchall()]
+            unit_types = [dict(r) for r in conn.execute(
+                'SELECT * FROM bid_takeoff_unit_types WHERE bid_id = ? ORDER BY sort_order',
+                (bid['id'],)).fetchall()]
+            try:
+                config = json.loads(bid['takeoff_config'] or '{}')
+            except Exception:
+                config = {}
+        else:
+            takeoff_items = [dict(r) for r in conn.execute(
+                'SELECT * FROM bid_commercial_takeoff_items WHERE bid_id = ? AND enabled = 1 ORDER BY phase, sort_order',
+                (bid['id'],)).fetchall()]
+            systems = [dict(r) for r in conn.execute(
+                'SELECT * FROM bid_commercial_takeoff_systems WHERE bid_id = ? ORDER BY sort_order',
+                (bid['id'],)).fetchall()]
+            try:
+                config = json.loads(bid['commercial_takeoff_config'] or '{}')
+            except Exception:
+                config = {}
+
+    conn.close()
+    return jsonify({
+        'job_name': job['name'],
+        'quote_id': quote_id,
+        'bid_id': bid_id,
+        'supplier_name': supplier_name,
+        'quote_number': quote_number,
+        'quote_items': quote_items,
+        'takeoff_items': takeoff_items,
+        'unit_types': unit_types,
+        'systems': systems,
+        'config': config
+    })
+
+@app.route('/api/orders', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_create_order():
+    d = request.get_json()
+    if not d or not d.get('job_id'):
+        return jsonify({'error': 'job_id required'}), 400
+    conn = get_db()
+
+    # Generate order number
+    count = conn.execute('SELECT COUNT(*) FROM material_orders').fetchone()[0]
+    order_number = f'ORD-{count + 1:04d}'
+
+    cur = conn.execute('''INSERT INTO material_orders
+        (job_id, quote_id, bid_id, takeoff_type, order_number, supplier_name,
+         status, subtotal, tax_amount, freight, total, notes, created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (d['job_id'], d.get('quote_id'), d.get('bid_id'),
+         d.get('takeoff_type', 'residential'), order_number,
+         d.get('supplier_name', ''), 'Draft',
+         d.get('subtotal', 0), d.get('tax_amount', 0), d.get('freight', 0),
+         d.get('total', 0), d.get('notes', ''),
+         session.get('user_id')))
+    order_id = cur.lastrowid
+
+    for item in d.get('items', []):
+        conn.execute('''INSERT INTO material_order_items
+            (order_id, line_number, sku, description, quote_qty, takeoff_qty,
+             order_qty, unit_price, extended_price, takeoff_sku, source, discrepancy, notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (order_id, item.get('line_number', 0), item.get('sku', ''),
+             item.get('description', ''), item.get('quote_qty', 0),
+             item.get('takeoff_qty', 0), item.get('order_qty', 0),
+             item.get('unit_price', 0), item.get('extended_price', 0),
+             item.get('takeoff_sku', ''), item.get('source', 'manual'),
+             item.get('discrepancy', ''), item.get('notes', '')))
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': order_id}), 201
+
+@app.route('/api/orders/<int:oid>')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_order_detail(oid):
+    conn = get_db()
+    order = conn.execute('''SELECT mo.*, j.name as job_name
+                            FROM material_orders mo
+                            LEFT JOIN jobs j ON mo.job_id = j.id
+                            WHERE mo.id = ?''', (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'error': 'Order not found'}), 404
+    items = conn.execute('SELECT * FROM material_order_items WHERE order_id = ? ORDER BY line_number',
+                         (oid,)).fetchall()
+    conn.close()
+    result = dict(order)
+    result['items'] = [dict(i) for i in items]
+    return jsonify(result)
+
+@app.route('/api/orders/<int:oid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_update_order(oid):
+    d = request.get_json()
+    conn = get_db()
+    order = conn.execute('SELECT * FROM material_orders WHERE id = ?', (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'error': 'Order not found'}), 404
+
+    # Update order fields
+    subtotal = 0
+    items_data = d.get('items')
+    if items_data is not None and order['status'] == 'Draft':
+        conn.execute('DELETE FROM material_order_items WHERE order_id = ?', (oid,))
+        for item in items_data:
+            ext = (item.get('order_qty', 0) or 0) * (item.get('unit_price', 0) or 0)
+            subtotal += ext
+            conn.execute('''INSERT INTO material_order_items
+                (order_id, line_number, sku, description, quote_qty, takeoff_qty,
+                 order_qty, unit_price, extended_price, takeoff_sku, source, discrepancy, notes)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (oid, item.get('line_number', 0), item.get('sku', ''),
+                 item.get('description', ''), item.get('quote_qty', 0),
+                 item.get('takeoff_qty', 0), item.get('order_qty', 0),
+                 item.get('unit_price', 0), ext,
+                 item.get('takeoff_sku', ''), item.get('source', 'manual'),
+                 item.get('discrepancy', ''), item.get('notes', '')))
+    else:
+        subtotal = order['subtotal'] or 0
+
+    tax = d.get('tax_amount', order['tax_amount'] or 0)
+    freight = d.get('freight', order['freight'] or 0)
+    total = subtotal + tax + freight
+
+    conn.execute('''UPDATE material_orders SET
+        order_number = ?, expected_delivery = ?, notes = ?,
+        subtotal = ?, tax_amount = ?, freight = ?, total = ?,
+        updated_at = datetime('now','localtime')
+        WHERE id = ?''',
+        (d.get('order_number', order['order_number']),
+         d.get('expected_delivery', order['expected_delivery']),
+         d.get('notes', order['notes']),
+         subtotal, tax, freight, total, oid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/orders/<int:oid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_delete_order(oid):
+    conn = get_db()
+    order = conn.execute('SELECT status FROM material_orders WHERE id = ?', (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'error': 'Order not found'}), 404
+    if order['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Only draft orders can be deleted'}), 400
+    conn.execute('DELETE FROM material_order_items WHERE order_id = ?', (oid,))
+    conn.execute('DELETE FROM material_orders WHERE id = ?', (oid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/orders/<int:oid>/submit', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_submit_order(oid):
+    conn = get_db()
+    order = conn.execute('SELECT * FROM material_orders WHERE id = ?', (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'error': 'Order not found'}), 404
+    if order['status'] != 'Draft':
+        conn.close()
+        return jsonify({'error': 'Only draft orders can be submitted'}), 400
+    conn.execute('''UPDATE material_orders SET status = 'Submitted',
+        submitted_date = datetime('now','localtime'),
+        updated_at = datetime('now','localtime') WHERE id = ?''', (oid,))
+    conn.commit()
+
+    # Notify owners/admins
+    users = conn.execute("SELECT id FROM users WHERE role IN ('owner','admin') AND is_active = 1").fetchall()
+    for u in users:
+        create_notification(u['id'], 'order', 'Order Submitted',
+            f"Order {order['order_number'] or 'ORD-'+str(oid)} has been submitted.",
+            f"/orders/{oid}")
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/orders/<int:oid>/confirm', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_confirm_order(oid):
+    conn = get_db()
+    order = conn.execute('SELECT * FROM material_orders WHERE id = ?', (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'error': 'Order not found'}), 404
+    if order['status'] != 'Submitted':
+        conn.close()
+        return jsonify({'error': 'Only submitted orders can be confirmed'}), 400
+    conn.execute('''UPDATE material_orders SET status = 'Confirmed',
+        confirmed_date = datetime('now','localtime'),
+        updated_at = datetime('now','localtime') WHERE id = ?''', (oid,))
+    conn.commit()
+
+    if order['created_by']:
+        create_notification(order['created_by'], 'order', 'Order Confirmed',
+            f"Order {order['order_number'] or 'ORD-'+str(oid)} has been confirmed.",
+            f"/orders/{oid}")
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/orders/<int:oid>/receive', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_receive_order(oid):
+    d = request.get_json()
+    conn = get_db()
+    order = conn.execute('SELECT * FROM material_orders WHERE id = ?', (oid,)).fetchone()
+    if not order:
+        conn.close()
+        return jsonify({'error': 'Order not found'}), 404
+    if order['status'] not in ('Confirmed', 'Partial'):
+        conn.close()
+        return jsonify({'error': 'Order must be confirmed or partial to receive'}), 400
+
+    for ri in d.get('items', []):
+        item_id = ri.get('item_id')
+        rcv_qty = ri.get('received_qty', 0)
+        if item_id and rcv_qty > 0:
+            conn.execute('''UPDATE material_order_items
+                SET received_qty = received_qty + ?
+                WHERE id = ? AND order_id = ?''',
+                (rcv_qty, item_id, oid))
+
+    # Check if all items fully received
+    items = conn.execute('''SELECT order_qty, received_qty FROM material_order_items
+                            WHERE order_id = ?''', (oid,)).fetchall()
+    all_received = all(
+        (row['received_qty'] or 0) >= (row['order_qty'] or 0)
+        for row in items
+    )
+    new_status = 'Received' if all_received else 'Partial'
+    update_fields = "status = ?, updated_at = datetime('now','localtime')"
+    params = [new_status]
+    if all_received:
+        update_fields += ", received_date = datetime('now','localtime')"
+    params.append(oid)
+    conn.execute(f'UPDATE material_orders SET {update_fields} WHERE id = ?', params)
+    conn.commit()
+
+    if order['created_by']:
+        msg = 'fully received' if all_received else 'partially received'
+        create_notification(order['created_by'], 'order', f'Order {msg.title()}',
+            f"Order {order['order_number'] or 'ORD-'+str(oid)} has been {msg}.",
+            f"/orders/{oid}")
     conn.close()
     return jsonify({'ok': True, 'status': new_status})
 

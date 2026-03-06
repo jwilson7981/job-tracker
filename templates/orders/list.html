@@ -1,0 +1,546 @@
+{% extends "base.html" %}
+{% block title %}Material Orders{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Material Orders</h1>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Material Orders','ordersBody','Material_Orders')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Material Orders','ordersBody','Material_Orders')">PDF</button>
+        </div>
+        <button class="btn btn-primary" onclick="openNewOrderModal()">+ New Order</button>
+    </div>
+</div>
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <select id="jobFilter" class="form-select" onchange="filterOrders()" style="max-width:220px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="statusFilter" class="form-select" onchange="filterOrders()" style="max-width:160px;">
+        <option value="">All Statuses</option>
+        <option value="Draft">Draft</option>
+        <option value="Submitted">Submitted</option>
+        <option value="Confirmed">Confirmed</option>
+        <option value="Partial">Partial</option>
+        <option value="Received">Received</option>
+    </select>
+    <span id="orderCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div class="module-table-wrapper">
+    <table class="data-table">
+        <thead><tr>
+            <th class="sortable" data-col="order_number">Order #</th>
+            <th class="sortable" data-col="job_name">Job</th>
+            <th class="sortable" data-col="supplier_name">Supplier</th>
+            <th class="sortable" data-col="status">Status</th>
+            <th class="sortable" data-col="item_count">Items</th>
+            <th class="sortable" data-col="total">Total</th>
+            <th class="sortable active-sort" data-col="updated_at">Updated</th>
+        </tr></thead>
+        <tbody id="ordersBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
+<!-- Step 1: Pick Job + Takeoff Type -->
+<div id="newOrderModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeNewOrderModal()">
+    <div class="modal-box" style="max-width:500px;">
+        <div class="modal-header">
+            <h3>New Material Order</h3>
+            <button onclick="closeNewOrderModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="display:grid;gap:12px;">
+                <div>
+                    <label class="form-label">Job *</label>
+                    <select id="newOrderJob" class="form-select"><option value="">-- Select Job --</option></select>
+                </div>
+                <div>
+                    <label class="form-label">Takeoff Type *</label>
+                    <select id="newOrderType" class="form-select">
+                        <option value="residential">Residential</option>
+                        <option value="commercial">Commercial</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeNewOrderModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="prepareOrder()">Next: Review Items</button>
+        </div>
+    </div>
+</div>
+
+<!-- Step 2: Review Items -->
+<div id="reviewModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeReviewModal()">
+    <div class="modal-box" style="max-width:1200px;max-height:90vh;">
+        <div class="modal-header">
+            <h3>Review Order Items</h3>
+            <button onclick="closeReviewModal()" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body" style="overflow-y:auto;max-height:calc(90vh - 140px);">
+            <div id="reviewInfo" style="margin-bottom:12px;"></div>
+            <!-- Summary bar -->
+            <div id="reviewSummary" class="summary-bar" style="display:flex;gap:16px;flex-wrap:wrap;padding:10px 14px;background:var(--gray-50);border-radius:8px;margin-bottom:12px;font-size:13px;font-weight:600;"></div>
+            <!-- Items table -->
+            <div class="module-table-wrapper" style="max-height:50vh;overflow-y:auto;">
+                <table class="data-table" style="font-size:13px;">
+                    <thead style="position:sticky;top:0;z-index:1;"><tr>
+                        <th style="width:30px;"><input type="checkbox" id="checkAll" checked onchange="toggleAll(this.checked)"></th>
+                        <th>#</th>
+                        <th>SKU</th>
+                        <th>Description</th>
+                        <th style="text-align:right;">Quote Qty</th>
+                        <th style="text-align:right;">Takeoff Qty</th>
+                        <th style="text-align:right;width:90px;">Order Qty</th>
+                        <th style="text-align:right;">Unit Price</th>
+                        <th style="text-align:right;">Extended</th>
+                        <th>Source</th>
+                    </tr></thead>
+                    <tbody id="reviewBody"></tbody>
+                </table>
+            </div>
+            <!-- Add manual item -->
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+                <input type="text" id="manualSku" class="form-input" placeholder="SKU" style="width:100px;">
+                <input type="text" id="manualDesc" class="form-input" placeholder="Description" style="flex:1;">
+                <input type="number" id="manualQty" class="form-input" placeholder="Qty" style="width:80px;" min="0">
+                <input type="number" id="manualPrice" class="form-input" placeholder="Unit Price" style="width:100px;" step="0.01" min="0">
+                <button class="btn btn-secondary btn-small" onclick="addManualItem()">+ Add</button>
+            </div>
+            <!-- Notes -->
+            <div style="margin-top:12px;">
+                <label class="form-label">Notes</label>
+                <textarea id="orderNotes" class="form-textarea" rows="2" placeholder="Order notes..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:space-between;">
+            <button class="btn btn-secondary" onclick="closeReviewModal()">Cancel</button>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <span id="reviewTotal" style="font-weight:700;font-size:15px;"></span>
+                <button class="btn btn-primary" onclick="createOrder()">Create Order</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+th.sortable { cursor: pointer; user-select: none; position: relative; }
+th.sortable:hover { color: var(--blue-primary); }
+th.sortable::after { content: '\21C5'; font-size: 10px; margin-left: 4px; opacity: 0.3; }
+th.sortable.sort-asc::after { content: '\2191'; opacity: 0.8; }
+th.sortable.sort-desc::after { content: '\2193'; opacity: 0.8; }
+.disc-badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.disc-matched { background: #dcfce7; color: #15803d; }
+.disc-mismatch { background: #FEF3C7; color: #92400e; }
+.disc-quote-only { background: #FEF2F2; color: #991b1b; }
+.disc-takeoff-only { background: #FFF7ED; color: #9a3412; }
+.disc-manual { background: #f0f0f0; color: #555; }
+.row-mismatch { background: #FEF3C7 !important; }
+.row-quote-only { background: #FEF2F2 !important; }
+.row-takeoff-only { background: #FFF7ED !important; }
+.summary-bar span { padding: 4px 10px; border-radius: 6px; }
+</style>
+
+<script>
+let allOrders = [], allJobs = [];
+let currentSort = { col: 'updated_at', dir: 'desc' };
+let reviewItems = [];
+let prepareData = null;
+
+const fmt = v => '$' + parseFloat(v||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+// ─── List page ───────────────────────────────────────────────
+async function loadJobs() {
+    const res = await fetch('/api/projects');
+    allJobs = await res.json();
+    const f = document.getElementById('jobFilter');
+    const s = document.getElementById('newOrderJob');
+    allJobs.forEach(j => {
+        f.appendChild(new Option(j.name, j.id));
+        s.appendChild(new Option(j.name, j.id));
+    });
+}
+
+async function loadOrders() {
+    const res = await fetch('/api/orders');
+    allOrders = await res.json();
+    filterOrders();
+}
+
+function filterOrders() {
+    const jobId = document.getElementById('jobFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    let filtered = allOrders.filter(o => {
+        if (jobId && o.job_id != jobId) return false;
+        if (status && o.status !== status) return false;
+        return true;
+    });
+    filtered = sortList(filtered);
+    document.getElementById('orderCount').textContent = `${filtered.length} of ${allOrders.length} orders`;
+    renderOrders(filtered);
+}
+
+function sortList(list) {
+    const col = currentSort.col, dir = currentSort.dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+        let va = a[col], vb = b[col];
+        if (col === 'total' || col === 'item_count') return ((va||0)-(vb||0))*dir;
+        va = (va||'').toString().toLowerCase();
+        vb = (vb||'').toString().toLowerCase();
+        return va < vb ? -dir : va > vb ? dir : 0;
+    });
+}
+
+function renderOrders(orders) {
+    const tbody = document.getElementById('ordersBody');
+    if (!orders.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No orders found.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = orders.map(o => {
+        const sc = 'status-' + (o.status||'draft').toLowerCase();
+        const total = o.total ? fmt(o.total) : '-';
+        return `<tr onclick="window.location='/orders/${o.id}'" style="cursor:pointer;">
+            <td><a href="/orders/${o.id}" class="link">${o.order_number||'ORD-'+o.id}</a></td>
+            <td>${o.job_name||'-'}</td>
+            <td>${o.supplier_name||'-'}</td>
+            <td><span class="status-badge ${sc}">${o.status}</span></td>
+            <td style="text-align:center;">${o.item_count||0}</td>
+            <td style="text-align:right;font-weight:600;">${total}</td>
+            <td style="font-size:13px;color:var(--gray-500);">${o.updated_at?o.updated_at.split(' ')[0]:'-'}</td>
+        </tr>`;
+    }).join('');
+}
+
+document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (currentSort.col === col) currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+        else currentSort = { col, dir: 'asc' };
+        document.querySelectorAll('th.sortable').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+        th.classList.add(currentSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+        filterOrders();
+    });
+});
+
+// ─── New order modal ─────────────────────────────────────────
+function openNewOrderModal() { document.getElementById('newOrderModal').style.display = 'flex'; }
+function closeNewOrderModal() { document.getElementById('newOrderModal').style.display = 'none'; }
+function closeReviewModal() { document.getElementById('reviewModal').style.display = 'none'; reviewItems = []; }
+
+// ─── Takeoff calc engines (pure functions, no DOM) ──────────
+function resGetUnitTotals(unitTypes, cfg) {
+    let totalSystems=0, totalBedrooms=0, totalBathrooms=0, total8in=0, total6in=0, totalDrops=0;
+    const tonsCounts = {};
+    let flex6r6=0, flex6r8=0, flex8r6=0, flex8r8=0;
+    const bagsPerDrop = parseFloat(cfg.cfgBagsPerDrop) || 0.75;
+    unitTypes.forEach(ut => {
+        const count = ut.unit_count||0, stories = ut.stories||1;
+        const d8 = (ut.drops_8in||0)*count, d6 = (ut.drops_6in||0)*count;
+        totalSystems += count;
+        totalBedrooms += count*(ut.bedrooms||0);
+        totalBathrooms += count*(ut.bathrooms||0);
+        total8in += d8; total6in += d6; totalDrops += d8+d6;
+        if (ut.tons>0) tonsCounts[ut.tons] = (tonsCounts[ut.tons]||0)+count;
+        const r6pct = stories<=1?0:stories===2?0.5:stories===3?0.67:stories===4?0.75:stories===5?0.8:0.84;
+        const r8pct = 1-r6pct;
+        flex6r6 += d6*bagsPerDrop*r6pct; flex6r8 += d6*bagsPerDrop*r8pct;
+        flex8r6 += d8*bagsPerDrop*r6pct; flex8r8 += d8*bagsPerDrop*r8pct;
+    });
+    return {totalSystems,totalBedrooms,totalBathrooms,total8in,total6in,totalDrops,tonsCounts,flex6r6,flex6r8,flex8r6,flex8r8};
+}
+
+function resGetIntermediates(totals, cfg) {
+    const isCRD = cfg.cfgCRD === 'CRD';
+    const isCeiling = cfg.cfgExhaustType === 'Ceiling';
+    const isSidewall = cfg.cfgExhaustType === 'Side Wall';
+    const hasOutsideAir = cfg.cfgOutsideAir === 'Yes';
+    const broan688 = (!isCRD||isSidewall)?totals.totalBathrooms:0;
+    const crdFan = (isCRD&&isCeiling)?totals.totalBathrooms:0;
+    const roundCRD = (hasOutsideAir&&isCRD)?totals.totalSystems:0;
+    const dryerBox = totals.totalSystems;
+    const crdBoots = isCRD?totals.totalDrops:0;
+    const foamBoots8 = !isCRD?totals.total8in:0;
+    const foamBoots6 = !isCRD?totals.total6in:0;
+    const totalBoots = crdBoots+foamBoots8+foamBoots6;
+    const venthoodCovers = broan688+crdFan+dryerBox;
+    return {broan688,crdFan,roundCRD,dryerBox,crdBoots,foamBoots8,foamBoots6,totalBoots,venthoodCovers};
+}
+
+function resCalcItemQty(item, totals, inter, cfg) {
+    const m = item.qty_multiplier||0;
+    const ductboardPerUnit = parseFloat(cfg.cfgDuctboardPerUnit)||2;
+    switch(item.calc_basis) {
+        case 'per_system': return totals.totalSystems*m;
+        case 'per_bedroom': return totals.totalBedrooms*m;
+        case 'per_bathroom': return totals.totalBathrooms*m;
+        case 'per_8in_drop': return totals.total8in*m;
+        case 'per_6in_drop': return totals.total6in*m;
+        case 'per_total_drop': return totals.totalDrops*m;
+        case 'by_tonnage': return (totals.tonsCounts[item.tons_match]||0)*m;
+        case 'fixed': return m;
+        case 'flex_6r6': return totals.flex6r6||0;
+        case 'flex_6r8': return totals.flex6r8||0;
+        case 'flex_8r6': return totals.flex8r6||0;
+        case 'flex_8r8': return totals.flex8r8||0;
+        case 'conductor_pipe': return inter?(inter.crdFan*35)+(inter.dryerBox*25)+(inter.roundCRD*25):0;
+        case 'adj_90': return inter?(inter.dryerBox+inter.roundCRD+inter.crdFan)*m:0;
+        case 'venthood_covers': return inter?inter.venthoodCovers:0;
+        case 'per_venthood': return inter?inter.venthoodCovers*m:0;
+        case 'rails': return inter?(inter.crdBoots+inter.foamBoots8+inter.foamBoots6*2)*2:0;
+        case 'zip_ties': return inter?inter.totalBoots*4:0;
+        case 'per_ductboard_config': return totals.totalSystems*ductboardPerUnit;
+        default: return 0;
+    }
+}
+
+function comGetSystemTotals(systems) {
+    let totalSystems=0, totalSupplyRuns=0, totalReturnRuns=0, totalTonCount=0;
+    const tonsCounts = {};
+    systems.forEach(sys => {
+        const count = sys.system_count||0;
+        totalSystems += count;
+        totalSupplyRuns += (sys.supply_runs||0)*count;
+        totalReturnRuns += (sys.return_runs||0)*count;
+        totalTonCount += (sys.tons||0)*count;
+        if (sys.tons>0) tonsCounts[sys.tons] = (tonsCounts[sys.tons]||0)+count;
+    });
+    return {totalSystems,totalSupplyRuns,totalReturnRuns,totalRuns:totalSupplyRuns+totalReturnRuns,totalTonCount,tonsCounts};
+}
+
+function comCalcItemQty(item, totals) {
+    const m = item.qty_multiplier||0;
+    switch(item.calc_basis) {
+        case 'per_system': return totals.totalSystems*m;
+        case 'per_supply_run': return totals.totalSupplyRuns*m;
+        case 'per_return_run': return totals.totalReturnRuns*m;
+        case 'per_total_run': return totals.totalRuns*m;
+        case 'by_tonnage': return (totals.tonsCounts[item.tons_match]||0)*m;
+        case 'fixed': return m;
+        case 'per_ton_total': return totals.totalTonCount*m;
+        default: return 0;
+    }
+}
+
+// ─── Prepare order (Step 2) ──────────────────────────────────
+async function prepareOrder() {
+    const jobId = document.getElementById('newOrderJob').value;
+    const takeoffType = document.getElementById('newOrderType').value;
+    if (!jobId) return alert('Please select a job.');
+
+    const res = await fetch(`/api/orders/prepare?job_id=${jobId}&takeoff_type=${takeoffType}`);
+    const data = await res.json();
+    if (data.error) return alert(data.error);
+    prepareData = data;
+
+    // Compute takeoff quantities
+    const takeoffQtyMap = {};
+    if (data.takeoff_items && data.takeoff_items.length) {
+        if (takeoffType === 'residential' && data.unit_types) {
+            const totals = resGetUnitTotals(data.unit_types, data.config||{});
+            const inter = resGetIntermediates(totals, data.config||{});
+            data.takeoff_items.forEach(ti => {
+                const baseQty = resCalcItemQty(ti, totals, inter, data.config||{});
+                const wasteMult = 1 + (ti.waste_pct||0)/100;
+                const orderQty = ti.qty_override != null ? ti.qty_override : Math.ceil(baseQty * wasteMult);
+                if (ti.sku) takeoffQtyMap[ti.sku] = { qty: orderQty, item: ti };
+            });
+        } else if (takeoffType === 'commercial' && data.systems) {
+            const totals = comGetSystemTotals(data.systems);
+            data.takeoff_items.forEach(ti => {
+                const baseQty = comCalcItemQty(ti, totals);
+                const wasteMult = 1 + (ti.waste_pct||0)/100;
+                const orderQty = ti.qty_override != null ? ti.qty_override : Math.ceil(baseQty * wasteMult);
+                if (ti.sku) takeoffQtyMap[ti.sku] = { qty: orderQty, item: ti };
+            });
+        }
+    }
+
+    // Build merged item list
+    reviewItems = [];
+    const matchedTakeoffSkus = new Set();
+    let lineNum = 1;
+
+    // Process quote items
+    if (data.quote_items) {
+        data.quote_items.forEach(qi => {
+            const tSku = qi.takeoff_sku || '';
+            const tMatch = tSku ? takeoffQtyMap[tSku] : null;
+            let source, discrepancy, takeoffQty = 0;
+            if (tMatch) {
+                matchedTakeoffSkus.add(tSku);
+                takeoffQty = tMatch.qty;
+                if (Math.abs(qi.quantity - tMatch.qty) < 0.01) {
+                    source = 'both'; discrepancy = 'Matched';
+                } else {
+                    source = 'both'; discrepancy = 'Qty Mismatch';
+                }
+            } else {
+                source = 'quote'; discrepancy = 'Quote Only';
+            }
+            reviewItems.push({
+                line: lineNum++, sku: qi.sku||'', description: qi.description||'',
+                quote_qty: qi.quantity||0, takeoff_qty: takeoffQty,
+                order_qty: tMatch ? Math.max(qi.quantity||0, tMatch.qty) : (qi.quantity||0),
+                unit_price: qi.unit_price||0, takeoff_sku: tSku,
+                source, discrepancy, included: true
+            });
+        });
+    }
+
+    // Add takeoff-only items
+    Object.keys(takeoffQtyMap).forEach(sku => {
+        if (!matchedTakeoffSkus.has(sku)) {
+            const ti = takeoffQtyMap[sku];
+            reviewItems.push({
+                line: lineNum++, sku: sku, description: ti.item.part_name||'',
+                quote_qty: 0, takeoff_qty: ti.qty,
+                order_qty: ti.qty,
+                unit_price: ti.item.unit_price||0, takeoff_sku: sku,
+                source: 'takeoff', discrepancy: 'Takeoff Only', included: true
+            });
+        }
+    });
+
+    closeNewOrderModal();
+    renderReview();
+    document.getElementById('reviewModal').style.display = 'flex';
+}
+
+function renderReview() {
+    // Summary
+    const total = reviewItems.filter(i=>i.included).length;
+    const matched = reviewItems.filter(i=>i.included&&i.discrepancy==='Matched').length;
+    const mismatch = reviewItems.filter(i=>i.included&&i.discrepancy==='Qty Mismatch').length;
+    const quoteOnly = reviewItems.filter(i=>i.included&&i.discrepancy==='Quote Only').length;
+    const takeoffOnly = reviewItems.filter(i=>i.included&&i.discrepancy==='Takeoff Only').length;
+    const manual = reviewItems.filter(i=>i.included&&i.discrepancy==='Manual').length;
+
+    document.getElementById('reviewSummary').innerHTML = `
+        <span>${total} items</span>
+        <span style="background:#dcfce7;color:#15803d;">${matched} Matched</span>
+        <span style="background:#FEF3C7;color:#92400e;">${mismatch} Qty Mismatches</span>
+        <span style="background:#FEF2F2;color:#991b1b;">${quoteOnly} Quote Only</span>
+        <span style="background:#FFF7ED;color:#9a3412;">${takeoffOnly} Takeoff Only</span>
+        ${manual ? `<span style="background:#f0f0f0;color:#555;">${manual} Manual</span>` : ''}
+    `;
+
+    document.getElementById('reviewInfo').innerHTML = `
+        <strong>${prepareData.job_name||'Job'}</strong> &mdash;
+        Supplier: <strong>${prepareData.supplier_name||'N/A'}</strong> &mdash;
+        Quote: ${prepareData.quote_number||'N/A'}
+    `;
+
+    // Table
+    const tbody = document.getElementById('reviewBody');
+    tbody.innerHTML = reviewItems.map((item, idx) => {
+        const rowClass = item.discrepancy==='Qty Mismatch'?'row-mismatch':
+                         item.discrepancy==='Quote Only'?'row-quote-only':
+                         item.discrepancy==='Takeoff Only'?'row-takeoff-only':'';
+        const badgeClass = item.discrepancy==='Matched'?'disc-matched':
+                           item.discrepancy==='Qty Mismatch'?'disc-mismatch':
+                           item.discrepancy==='Quote Only'?'disc-quote-only':
+                           item.discrepancy==='Takeoff Only'?'disc-takeoff-only':'disc-manual';
+        const ext = (item.order_qty||0)*(item.unit_price||0);
+        return `<tr class="${rowClass}" style="${item.included?'':'opacity:0.4;'}">
+            <td><input type="checkbox" ${item.included?'checked':''} onchange="toggleItem(${idx},this.checked)"></td>
+            <td>${item.line}</td>
+            <td style="font-family:monospace;font-size:12px;">${item.sku}</td>
+            <td>${item.description}</td>
+            <td style="text-align:right;">${item.quote_qty||'-'}</td>
+            <td style="text-align:right;">${item.takeoff_qty||'-'}</td>
+            <td><input type="number" value="${item.order_qty}" min="0" style="width:80px;text-align:right;" class="form-input"
+                onchange="updateQty(${idx},this.value)"></td>
+            <td style="text-align:right;">${fmt(item.unit_price)}</td>
+            <td style="text-align:right;font-weight:600;">${fmt(ext)}</td>
+            <td><span class="disc-badge ${badgeClass}">${item.discrepancy}</span></td>
+        </tr>`;
+    }).join('');
+
+    updateReviewTotal();
+}
+
+function toggleItem(idx, checked) {
+    reviewItems[idx].included = checked;
+    renderReview();
+}
+
+function toggleAll(checked) {
+    reviewItems.forEach(i => i.included = checked);
+    renderReview();
+}
+
+function updateQty(idx, val) {
+    reviewItems[idx].order_qty = parseFloat(val)||0;
+    updateReviewTotal();
+}
+
+function updateReviewTotal() {
+    const total = reviewItems.filter(i=>i.included).reduce((s,i) => s + (i.order_qty||0)*(i.unit_price||0), 0);
+    document.getElementById('reviewTotal').textContent = 'Total: ' + fmt(total);
+}
+
+function addManualItem() {
+    const sku = document.getElementById('manualSku').value.trim();
+    const desc = document.getElementById('manualDesc').value.trim();
+    const qty = parseFloat(document.getElementById('manualQty').value)||0;
+    const price = parseFloat(document.getElementById('manualPrice').value)||0;
+    if (!desc) return alert('Please enter a description.');
+    reviewItems.push({
+        line: reviewItems.length+1, sku, description: desc,
+        quote_qty: 0, takeoff_qty: 0, order_qty: qty,
+        unit_price: price, takeoff_sku: '', source: 'manual',
+        discrepancy: 'Manual', included: true
+    });
+    document.getElementById('manualSku').value = '';
+    document.getElementById('manualDesc').value = '';
+    document.getElementById('manualQty').value = '';
+    document.getElementById('manualPrice').value = '';
+    renderReview();
+}
+
+async function createOrder() {
+    const included = reviewItems.filter(i => i.included);
+    if (!included.length) return alert('No items selected.');
+    const subtotal = included.reduce((s,i) => s + (i.order_qty||0)*(i.unit_price||0), 0);
+    const body = {
+        job_id: parseInt(document.getElementById('newOrderJob').value),
+        quote_id: prepareData.quote_id || null,
+        bid_id: prepareData.bid_id || null,
+        takeoff_type: document.getElementById('newOrderType').value,
+        supplier_name: prepareData.supplier_name || '',
+        subtotal,
+        total: subtotal,
+        notes: document.getElementById('orderNotes').value.trim(),
+        items: included.map((item, i) => ({
+            line_number: i+1,
+            sku: item.sku,
+            description: item.description,
+            quote_qty: item.quote_qty,
+            takeoff_qty: item.takeoff_qty,
+            order_qty: item.order_qty,
+            unit_price: item.unit_price,
+            extended_price: (item.order_qty||0)*(item.unit_price||0),
+            takeoff_sku: item.takeoff_sku,
+            source: item.source,
+            discrepancy: item.discrepancy
+        }))
+    };
+    const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.ok) {
+        window.location = '/orders/' + data.id;
+    } else {
+        alert(data.error || 'Failed to create order.');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadJobs();
+    await loadOrders();
+});
+</script>
+{% endblock %}

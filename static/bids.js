@@ -980,6 +980,17 @@ async function goToTakeoff() {
     location.href = `/bids/${window.BID_ID}/takeoff`;
 }
 
+async function goToCommercialTakeoff() {
+    if (!window.BID_ID || window.BID_ID <= 0) {
+        await saveBid();
+        if (!window.BID_ID || window.BID_ID <= 0) {
+            alert('Please save the bid first.');
+            return;
+        }
+    }
+    location.href = `/bids/${window.BID_ID}/commercial-takeoff`;
+}
+
 // Load followups after bid loads
 if (window.BID_ID > 0) {
     document.addEventListener('DOMContentLoaded', () => setTimeout(loadFollowups, 500));

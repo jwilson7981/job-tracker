@@ -7,6 +7,7 @@
         <button class="btn btn-primary" onclick="saveBid()">Save Bid</button>
         {% if current_user.role == 'owner' %}
         <button class="btn btn-secondary" id="btnTakeoff" onclick="goToTakeoff()">Takeoff</button>
+        <button class="btn btn-secondary" onclick="goToCommercialTakeoff()">Commercial Takeoff</button>
         {% endif %}
         {% if bid_id %}
         <button class="btn btn-secondary" onclick="previewProposal()" id="btnPreviewProposal">View Proposal</button>
@@ -440,5 +441,5 @@
 {% endif %}
 
 <script>window.BID_ID = {{ bid_id }}; window.USER_ROLE = '{{ current_user.role }}';</script>
-<script src="/static/bids.js?v=20260304g"></script>
+<script src="/static/bids.js?v=20260305a"></script>
 {% endblock %}
