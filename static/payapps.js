@@ -235,6 +235,25 @@ async function loadSov() {
     document.getElementById('sovFoot').innerHTML = `<tr style="font-weight:700;"><td></td><td>TOTAL</td><td>${fmt(total)}</td><td></td><td></td></tr>`;
 }
 
+function resetSovPreset(desc) {
+    var preset = document.getElementById('sovPreset');
+    var descInput = document.getElementById('sovDesc');
+    // Check if the description matches a preset option
+    var matched = false;
+    for (var i = 0; i < preset.options.length; i++) {
+        if (preset.options[i].value === desc && desc !== '__custom' && desc !== '') {
+            preset.value = desc;
+            descInput.style.display = 'none';
+            matched = true;
+            break;
+        }
+    }
+    if (!matched) {
+        preset.value = desc ? '__custom' : '';
+        descInput.style.display = '';
+    }
+}
+
 function showAddSovItem() {
     document.getElementById('sovModalTitle').textContent = 'Add Line Item';
     document.getElementById('sovId').value = '';
@@ -242,6 +261,7 @@ function showAddSovItem() {
     document.getElementById('sovValue').value = '0';
     document.getElementById('sovIsHeader').checked = false;
     document.getElementById('sovRetExempt').checked = false;
+    resetSovPreset('');
     document.getElementById('sovModal').style.display = 'flex';
 }
 
@@ -254,6 +274,7 @@ function editSovItem(id) {
     document.getElementById('sovValue').value = s.scheduled_value || 0;
     document.getElementById('sovIsHeader').checked = !!s.is_header;
     document.getElementById('sovRetExempt').checked = !!s.retainage_exempt;
+    resetSovPreset(s.description);
     document.getElementById('sovModal').style.display = 'flex';
 }
 

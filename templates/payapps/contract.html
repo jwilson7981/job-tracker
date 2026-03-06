@@ -73,7 +73,23 @@
             <input type="hidden" id="sovId" value="">
             <div class="form-group">
                 <label class="form-label">Description</label>
-                <input type="text" id="sovDesc" class="form-input" required>
+                <select id="sovPreset" class="form-select" style="margin-bottom:6px;" onchange="if(this.value){document.getElementById('sovDesc').value=this.value;}document.getElementById('sovDesc').style.display=this.value==='__custom'||!this.value?'':'none';if(this.value==='__custom'){document.getElementById('sovDesc').value='';document.getElementById('sovDesc').style.display='';document.getElementById('sovDesc').focus();}">
+                    <option value="">-- Select or type below --</option>
+                    <option value="Material">Material</option>
+                    <option value="Material Management">Material Management</option>
+                    <option value="Mobilization">Mobilization</option>
+                    <option value="Rough In">Rough In</option>
+                    <option value="Air Handler Install">Air Handler Install</option>
+                    <option value="Condenser Install">Condenser Install</option>
+                    <option value="Trim Out">Trim Out</option>
+                    <option value="Start Up/Low Voltage">Start Up/Low Voltage</option>
+                    <option value="Insurance">Insurance</option>
+                    <option value="Permits/Insurance">Permits/Insurance</option>
+                    <option value="Retainage Pay Out">Retainage Pay Out</option>
+                    <option value="Change Orders">Change Orders</option>
+                    <option value="__custom">Other (type custom)</option>
+                </select>
+                <input type="text" id="sovDesc" class="form-input" placeholder="Type custom description..." required>
             </div>
             <div class="form-row">
                 <div class="form-group">
