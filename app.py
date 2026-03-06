@@ -6463,6 +6463,12 @@ def api_payapps_upload_existing(cid):
     filepath = os.path.join(signed_dir, filename)
     f.save(filepath)
     conn.execute('UPDATE pay_applications SET signed_file = ? WHERE id = ?', (filename, aid))
+    # Create empty line entries for all SOV items so user can enter draw amounts
+    sov_items = conn.execute('SELECT id FROM pay_app_sov_items WHERE contract_id = ? AND is_header = 0', (cid,)).fetchall()
+    for item in sov_items:
+        conn.execute(
+            'INSERT OR IGNORE INTO pay_app_line_entries (pay_app_id, sov_item_id, work_this_period, materials_stored) VALUES (?,?,0,0)',
+            (aid, item['id']))
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'id': aid, 'application_number': app_number})

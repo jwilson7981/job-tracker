@@ -358,9 +358,9 @@ async function uploadExistingPA(e) {
     var res = await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID + '/upload-existing', { method: 'POST', body: fd });
     var data = await res.json();
     if (data.ok) {
-        pageToast('Pay App #' + data.application_number + ' uploaded');
+        pageToast('Pay App #' + data.application_number + ' uploaded — enter draw amounts');
         document.getElementById('uploadPaModal').style.display = 'none';
-        loadApplications();
+        window.location.href = '/payapps/application/' + data.id;
     } else {
         alert(data.error || 'Upload failed');
     }
