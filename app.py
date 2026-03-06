@@ -4772,6 +4772,21 @@ def api_takeoff_generate_pdf(bid_id):
     }
     config_display = [(config_labels.get(k, k), v) for k, v in config.items() if k in config_labels]
 
+    # Tax calculation
+    tax_rate = float(bid.get('material_tax_rate', 0) or 0)
+    tax_amount = round(grand_total * tax_rate / 100, 2)
+    total_with_tax = round(grand_total + tax_amount, 2)
+
+    # Job location for tax label
+    tax_location = ''
+    if bid.get('job_id'):
+        conn2 = get_db()
+        job_row = conn2.execute('SELECT city, state FROM jobs WHERE id = ?', (bid['job_id'],)).fetchone()
+        conn2.close()
+        if job_row:
+            parts = [job_row['city'] or '', job_row['state'] or '']
+            tax_location = ', '.join(p for p in parts if p)
+
     today = datetime.now().strftime('%B %d, %Y')
     logo_path = os.path.abspath(os.path.join(app.static_folder, 'logo.jpg'))
 
@@ -4779,7 +4794,9 @@ def api_takeoff_generate_pdf(bid_id):
         bid=bid, today=today, logo_path='file://' + logo_path,
         unit_types=unit_types, ut_totals=ut_totals,
         config_display=config_display, phases=phases,
-        phase_totals=phase_totals, grand_total=grand_total
+        phase_totals=phase_totals, grand_total=grand_total,
+        tax_rate=tax_rate, tax_amount=tax_amount,
+        total_with_tax=total_with_tax, tax_location=tax_location
     )
 
     takeoffs_dir = os.path.join(os.path.dirname(__file__), 'data', 'takeoffs')

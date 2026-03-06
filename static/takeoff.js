@@ -77,6 +77,7 @@ function applyConfigToItems() {
     const isCeiling = getCfg('cfgExhaustType') === 'Ceiling';
     const isVertical = getCfg('cfgOrientation') === 'Vertical';
     const isHorizontal = getCfg('cfgOrientation') === 'Horizontal';
+    const activeTons = new Set(unitTypes.filter(ut => ut.unit_count > 0 && ut.tons > 0).map(ut => ut.tons));
 
     items.forEach(item => {
         const name = (item.part_name || '').toLowerCase();
@@ -180,6 +181,10 @@ function applyConfigToItems() {
         }
         if (name === '6" supply register') {
             item.enabled = !isCRD ? 1 : 0;
+        }
+        // ── Equipment: auto-disable if tons_match not in active unit types ──
+        if (item.phase === 'Equipment' && item.tons_match != null && !activeTons.has(item.tons_match)) {
+            item.enabled = 0;
         }
     });
 
@@ -302,6 +307,14 @@ function getIntermediates(totals) {
     const venthoodCovers = broan688 + crdFan + dryerBox;
 
     return { broan688, crdFan, roundCRD, dryerBox, crdBoots, foamBoots8, foamBoots6, totalBoots, venthoodCovers };
+}
+
+function getTonsHeatKitMap() {
+    const map = {};
+    unitTypes.forEach(ut => {
+        if (ut.tons > 0 && ut.heat_kit) map[ut.tons] = ut.heat_kit;
+    });
+    return map;
 }
 
 function calcItemQty(item, totals, inter) {
@@ -495,6 +508,7 @@ async function deleteUnitType(idx) {
 function renderItems() {
     const totals = getUnitTotals();
     const inter = getIntermediates(totals);
+    const heatKitMap = getTonsHeatKitMap();
     const container = $('phaseSections');
     container.innerHTML = PHASES.map(phase => {
         const phaseItems = items.filter(i => i.phase === phase);
@@ -518,7 +532,7 @@ function renderItems() {
                             <th style="width:80px;">Extended</th><th style="width:30px;"></th>
                         </tr></thead>
                         <tbody>
-                            ${phaseItems.map(item => renderItemRow(item, phase, totals, inter)).join('')}
+                            ${phaseItems.map(item => renderItemRow(item, phase, totals, inter, heatKitMap)).join('')}
                             ${phaseItems.length === 0 ? `<tr><td colspan="13" class="empty-state">No items</td></tr>` : ''}
                         </tbody>
                     </table>
@@ -530,7 +544,7 @@ function renderItems() {
     recalcAll();
 }
 
-function renderItemRow(item, phase, totals, inter) {
+function renderItemRow(item, phase, totals, inter, heatKitMap) {
     const calcQty = (totals && inter) ? calcItemQty(item, totals, inter) : 0;
     const wasteMult = 1 + (item.waste_pct || 0) / 100;
     const orderQty = item.qty_override != null ? item.qty_override : Math.ceil(calcQty * wasteMult);
@@ -539,9 +553,12 @@ function renderItemRow(item, phase, totals, inter) {
         `<option value="${o.value}" ${item.calc_basis === o.value ? 'selected' : ''}>${o.label}</option>`
     ).join('');
     const showTons = phase === 'Equipment';
+    const hkCat = (item.category || '').toLowerCase();
+    const isAHU = showTons && hkCat !== 'condensers' && hkCat !== 'heat pumps';
+    const hkLabel = (isAHU && item.tons_match != null && heatKitMap && heatKitMap[item.tons_match]) ? heatKitMap[item.tons_match].toUpperCase() : '';
     return `<tr data-item-id="${item.id}" style="opacity:${item.enabled ? 1 : 0.4};">
         <td><input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="toggleItem(${item.id}, this.checked)" title="Enable/disable"></td>
-        <td><input type="text" class="form-input" value="${(item.part_name || '').replace(/"/g, '&quot;')}" style="min-width:120px;" onchange="updateItem(${item.id},'part_name',this.value)"></td>
+        <td><input type="text" class="form-input" value="${(item.part_name || '').replace(/"/g, '&quot;')}" style="min-width:120px;" onchange="updateItem(${item.id},'part_name',this.value)">${hkLabel ? ` <span style="font-size:10px;color:#7C3AED;font-weight:600;">${hkLabel}</span>` : ''}</td>
         <td><input type="text" class="form-input" value="${(item.sku || '').replace(/"/g, '&quot;')}" style="width:80px;" onchange="updateItem(${item.id},'sku',this.value)"></td>
         <td><input type="text" class="form-input" value="${(item.category || '').replace(/"/g, '&quot;')}" style="width:90px;" onchange="updateItem(${item.id},'category',this.value)"></td>
         <td><input type="number" class="form-input" value="${item.unit_price}" min="0" step="0.01" style="width:80px;" onchange="updateItem(${item.id},'unit_price',+this.value)"></td>
@@ -706,6 +723,7 @@ async function pushToBid() {
 function buildPDFPayload() {
     const totals = getUnitTotals();
     const inter = getIntermediates(totals);
+    const heatKitMap = getTonsHeatKitMap();
     const phases = {};
     const phaseTotals = {};
     let grandTotal = 0;
@@ -720,8 +738,10 @@ function buildPDFPayload() {
             const orderQty = item.qty_override != null ? item.qty_override : Math.ceil(calcQty * wasteMult);
             const extended = orderQty * (item.unit_price || 0);
             phaseTotal += extended;
+            const pdfCat = (item.category || '').toLowerCase();
+            const hk = (phase === 'Equipment' && pdfCat !== 'condensers' && pdfCat !== 'heat pumps' && item.tons_match != null && heatKitMap[item.tons_match]) ? ' - ' + heatKitMap[item.tons_match].toUpperCase() : '';
             return {
-                part_name: item.part_name, sku: item.sku || '', category: item.category || '',
+                part_name: item.part_name + hk, sku: item.sku || '', category: item.category || '',
                 unit_price: item.unit_price || 0, _calc_qty: Math.round(calcQty * 100) / 100,
                 waste_pct: item.waste_pct || 0, _order_qty: orderQty, _extended: Math.round(extended * 100) / 100
             };
