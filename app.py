@@ -5634,7 +5634,7 @@ def api_payapps_contracts():
             (SELECT status FROM pay_applications WHERE contract_id = c.id ORDER BY application_number DESC LIMIT 1) as latest_status
         FROM pay_app_contracts c
         LEFT JOIN jobs j ON c.job_id = j.id
-        ORDER BY c.created_at DESC
+        ORDER BY j.name ASC
     ''').fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
