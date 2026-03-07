@@ -12,6 +12,7 @@
 <div class="tab-bar">
     <button class="tab active" onclick="switchDocTab('checklist', this)">Checklist</button>
     <button class="tab" onclick="switchDocTab('transmittals', this)">Transmittals</button>
+    <button class="tab" onclick="switchDocTab('taxforms', this)">Tax Forms</button>
 </div>
 
 <!-- ─── Checklist Tab ─── -->
@@ -72,6 +73,19 @@
             <tbody id="transmittalsBody">
                 <tr><td colspan="6" class="empty-state">Loading...</td></tr>
             </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── Tax Forms Tab ─── -->
+<div class="tab-content" id="tabTaxforms">
+    <div style="margin-bottom:16px;">
+        <p style="font-size:13px;color:var(--gray-500);margin:0;">Manage all tax forms (W4, W9, 1099) from the <a href="/tax-forms" class="link">Tax Forms</a> page. Employee forms are linked to their profiles.</p>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead><tr><th>Form</th><th>Name</th><th>Type</th><th>Status</th><th>Signed</th><th>File</th></tr></thead>
+            <tbody id="taxFormsDocBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
         </table>
     </div>
 </div>

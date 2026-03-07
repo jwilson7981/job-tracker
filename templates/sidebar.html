@@ -160,6 +160,12 @@
                 <a href="/lien-waivers" class="sidebar-link {% if '/lien-waivers' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128220;</span> Lien Waivers
                 </a>
+                <a href="/service-invoices" class="sidebar-link {% if '/service-invoices' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128451;</span> Service Invoices
+                </a>
+                <a href="/billing-summary" class="sidebar-link {% if '/billing-summary' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128200;</span> Billing Summary
+                </a>
                 {% if current_user.role in ('owner', 'admin') %}
                 <a href="/invoices" class="sidebar-link {% if request.path == '/invoices' %}active{% endif %}">
                     <span class="sidebar-icon">&#128179;</span> Invoices
@@ -214,6 +220,9 @@
                 </a>
                 <a href="/employees" class="sidebar-link {% if '/employees' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128101;</span> Employees
+                </a>
+                <a href="/tax-forms" class="sidebar-link {% if '/tax-forms' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128203;</span> Tax Forms
                 </a>
                 <a href="/payroll" class="sidebar-link {% if request.path == '/payroll' or '/payroll/' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#9636;</span> Payroll

@@ -71,8 +71,40 @@ function switchDocTab(tabName, btn) {
     if (btn) btn.classList.add('active');
     if (tabName === 'checklist') {
         document.getElementById('tabChecklist').classList.add('active');
+    } else if (tabName === 'taxforms') {
+        document.getElementById('tabTaxforms').classList.add('active');
+        if (!window._taxFormsLoaded) { loadDocTaxForms(); window._taxFormsLoaded = true; }
     } else {
         document.getElementById('tabTransmittals').classList.add('active');
+    }
+}
+
+async function loadDocTaxForms() {
+    var tbody = document.getElementById('taxFormsDocBody');
+    if (!tbody) return;
+    try {
+        var res = await fetch('/api/tax-forms');
+        var forms = await res.json();
+        if (!forms.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No tax forms. <a href="/tax-forms" class="link">Create forms here</a>.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = forms.map(function(f) {
+            var sc = f.status === 'Signed' ? 'status-complete' : f.status === 'Complete' ? 'status-in-progress' : 'status-needs-bid';
+            var name = f.form_type === 'W9' ? (f.w9_name || '-') : (f.form_type === 'W4' ? ((f.w4_first_name || '') + ' ' + (f.w4_last_name || '')).trim() || '-' : (f.employee_name || '-'));
+            var typeLbl = f.entity_type === 'company' ? 'Company' : (f.employee_name || 'Employee');
+            var signed = f.form_type === 'W9' ? (f.w9_signature_date || '-') : (f.form_type === 'W4' ? (f.w4_signature_date || '-') : '-');
+            return '<tr>' +
+                '<td><strong>' + f.form_type + '</strong></td>' +
+                '<td>' + name + '</td>' +
+                '<td>' + typeLbl + '</td>' +
+                '<td><span class="status-badge ' + sc + '">' + f.status + '</span></td>' +
+                '<td>' + signed + '</td>' +
+                '<td>' + (f.has_file ? '<a href="/api/tax-forms/' + f.id + '/file" target="_blank" class="btn btn-secondary btn-small" style="font-size:11px;">View</a>' : '-') + '</td>' +
+            '</tr>';
+        }).join('');
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Unable to load tax forms.</td></tr>';
     }
 }
 

@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Billing Summary{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Billing Summary</h1>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Billing Summary','projectBillingBody','BillingSummary')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Billing Summary','projectBillingBody','BillingSummary')">PDF</button>
+        </div>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-grid" id="bsKpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+    <div class="kpi-card" style="border-left:4px solid #6366F1;">
+        <div class="kpi-value" id="kpiContract">$0</div>
+        <div class="kpi-label">Total Contract Value</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #3B82F6;">
+        <div class="kpi-value" id="kpiBilled">$0</div>
+        <div class="kpi-label">Total Billed</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #22C55E;">
+        <div class="kpi-value" id="kpiPaid">$0</div>
+        <div class="kpi-label">Total Collected</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #F97316;">
+        <div class="kpi-value" id="kpiRetained">$0</div>
+        <div class="kpi-label">Retainage Held</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #EF4444;">
+        <div class="kpi-value" id="kpiOutstanding">$0</div>
+        <div class="kpi-label">Outstanding</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #8B5CF6;">
+        <div class="kpi-value" id="kpiCOs">$0</div>
+        <div class="kpi-label">Net Change Orders</div>
+    </div>
+</div>
+
+<!-- Aging Buckets -->
+<div style="margin-top:20px;">
+    <h3 style="margin:0 0 12px;">Aging Analysis</h3>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;" id="agingCards">
+        <div style="background:var(--green-50,#f0fdf4);border-radius:8px;padding:14px;text-align:center;border:1px solid var(--green-200,#bbf7d0);">
+            <div style="font-size:12px;color:var(--gray-500);">0-30 Days</div>
+            <div style="font-size:20px;font-weight:700;color:var(--green-700,#15803d);" id="aging030">$0</div>
+        </div>
+        <div style="background:var(--blue-50,#eff6ff);border-radius:8px;padding:14px;text-align:center;border:1px solid var(--blue-200,#bfdbfe);">
+            <div style="font-size:12px;color:var(--gray-500);">31-60 Days</div>
+            <div style="font-size:20px;font-weight:700;color:var(--blue-700,#1d4ed8);" id="aging3160">$0</div>
+        </div>
+        <div style="background:#FEF9C3;border-radius:8px;padding:14px;text-align:center;border:1px solid #FDE68A;">
+            <div style="font-size:12px;color:var(--gray-500);">61-90 Days</div>
+            <div style="font-size:20px;font-weight:700;color:#92400E;" id="aging6190">$0</div>
+        </div>
+        <div style="background:var(--red-50,#fef2f2);border-radius:8px;padding:14px;text-align:center;border:1px solid #FECACA;">
+            <div style="font-size:12px;color:var(--gray-500);">90+ Days</div>
+            <div style="font-size:20px;font-weight:700;color:var(--red-600,#dc2626);" id="aging90">$0</div>
+        </div>
+    </div>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar" style="margin-top:24px;">
+    <button class="tab active" onclick="switchBsTab('projects',this)">Project Billing</button>
+    <button class="tab" onclick="switchBsTab('invoices',this)">Service Invoices</button>
+</div>
+
+<!-- Project Billing Tab -->
+<div class="tab-content active" id="tabProjects">
+    <div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:16px 0;">
+        <select id="bsFilterStatus" class="form-select" style="max-width:180px;" onchange="renderProjects()">
+            <option value="">All Statuses</option>
+            <option value="active">Active (Outstanding)</option>
+            <option value="complete">Fully Collected</option>
+        </select>
+        <input type="text" id="bsSearch" class="form-input" placeholder="Search projects..." style="max-width:220px;" oninput="renderProjects()">
+        <label style="font-size:13px;color:var(--gray-500);margin-left:auto;display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="bsShowApps" onchange="renderProjects()"> Show pay app details
+        </label>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Project</th>
+                    <th>GC / Client</th>
+                    <th style="text-align:right;">Contract</th>
+                    <th style="text-align:right;">COs</th>
+                    <th style="text-align:right;">Billed</th>
+                    <th style="text-align:right;">Collected</th>
+                    <th style="text-align:right;">Retained</th>
+                    <th style="text-align:right;">Outstanding</th>
+                    <th style="text-align:center;">% Billed</th>
+                    <th style="text-align:center;">% Collected</th>
+                </tr>
+            </thead>
+            <tbody id="projectBillingBody">
+                <tr><td colspan="10" class="empty-state">Loading...</td></tr>
+            </tbody>
+            <tfoot id="projectBillingFoot" style="display:none;">
+                <tr style="font-weight:700;background:var(--gray-50,#f9fafb);border-top:2px solid var(--gray-300,#d1d5db);">
+                    <td colspan="2">Totals</td>
+                    <td style="text-align:right;" id="ftContract"></td>
+                    <td style="text-align:right;" id="ftCOs"></td>
+                    <td style="text-align:right;" id="ftBilled"></td>
+                    <td style="text-align:right;" id="ftPaid"></td>
+                    <td style="text-align:right;" id="ftRetained"></td>
+                    <td style="text-align:right;" id="ftOutstanding"></td>
+                    <td></td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    <!-- Collection Progress Chart -->
+    <div style="margin-top:24px;">
+        <h3 style="margin:0 0 12px;">Collection Progress by Project</h3>
+        <div id="collectionChart"></div>
+    </div>
+</div>
+
+<!-- Service Invoices Tab -->
+<div class="tab-content" id="tabInvoices">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:16px 0;">
+        <div class="kpi-card" style="border-left:4px solid #6366F1;">
+            <div class="kpi-value" id="svcTotal">$0</div>
+            <div class="kpi-label">Total Invoiced</div>
+        </div>
+        <div class="kpi-card" style="border-left:4px solid #22C55E;">
+            <div class="kpi-value" id="svcPaid">$0</div>
+            <div class="kpi-label">Paid</div>
+        </div>
+        <div class="kpi-card" style="border-left:4px solid #EF4444;">
+            <div class="kpi-value" id="svcOutstanding">$0</div>
+            <div class="kpi-label">Outstanding</div>
+        </div>
+    </div>
+    <div class="filter-bar" style="display:flex;gap:12px;margin-bottom:12px;">
+        <select id="svcFilterStatus" class="form-select" style="max-width:160px;" onchange="renderInvoices()">
+            <option value="">All</option>
+            <option value="Sent">Sent</option>
+            <option value="Paid">Paid</option>
+            <option value="Overdue">Overdue</option>
+            <option value="Draft">Draft</option>
+        </select>
+        <input type="text" id="svcSearch" class="form-input" placeholder="Search invoices..." style="max-width:220px;" oninput="renderInvoices()">
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Invoice #</th>
+                    <th>Date</th>
+                    <th>Bill To</th>
+                    <th>Project</th>
+                    <th style="text-align:right;">Amount</th>
+                    <th>Status</th>
+                    <th>Paid Date</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody id="svcInvoiceBody">
+                <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="/static/billing_summary.js?v=20260307a"></script>
+{% endblock %}

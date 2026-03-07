@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Warranty Claim{% endblock %}
+{% block content %}
+<style>
+.detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
+.detail-section { background:#fff; border:1px solid var(--gray-200,#e2e8f0); border-radius:8px; padding:16px; }
+.detail-section h3 { margin:0 0 12px; font-size:15px; color:var(--gray-700); border-bottom:1px solid var(--gray-100); padding-bottom:8px; }
+.detail-field { margin-bottom:10px; }
+.detail-field .label { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--gray-500); margin-bottom:2px; }
+.detail-field .value { font-size:14px; }
+@media(max-width:768px) { .detail-grid { grid-template-columns:1fr; } }
+</style>
+<div class="page-header">
+    <h1 id="claimTitle">Warranty Claim</h1>
+    <div style="display:flex;gap:6px;">
+        <a id="backLink" href="/warranty" class="btn btn-secondary">Back to Project</a>
+    </div>
+</div>
+<div id="claimLoading" class="loading">Loading claim details...</div>
+<div id="claimContent" style="display:none;">
+    <div class="detail-grid">
+        <div class="detail-section">
+            <h3>Equipment Info</h3>
+            <div class="detail-field"><div class="label">Equipment</div><div class="value" id="cdEquipment">-</div></div>
+            <div class="detail-field"><div class="label">Type</div><div class="value" id="cdEquipType">-</div></div>
+            <div class="detail-field"><div class="label">Model / Serial</div><div class="value" id="cdModelSerial">-</div></div>
+            <div class="detail-field"><div class="label">Building / Unit</div><div class="value" id="cdEquipLocation">-</div></div>
+            <div class="detail-field"><div class="label">Manufacturer</div><div class="value" id="cdMfg">-</div></div>
+            <div id="cdWarrantyFileWrap" style="display:none;" class="detail-field">
+                <div class="label">Warranty Letter</div>
+                <div class="value"><a id="cdWarrantyFile" href="#" target="_blank" class="link">View File</a></div>
+            </div>
+        </div>
+        <div class="detail-section">
+            <h3>Claim Details</h3>
+            <div class="detail-field">
+                <div class="label">Status</div>
+                <select id="cdStatus" class="form-select" style="max-width:200px;" onchange="updateClaimField('status', this.value)">
+                    <option value="Open">Open</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Denied">Denied</option>
+                </select>
+            </div>
+            <div class="detail-field">
+                <div class="label">Priority</div>
+                <select id="cdPriority" class="form-select" style="max-width:200px;" onchange="updateClaimField('priority', this.value)">
+                    <option value="Low">Low</option>
+                    <option value="Normal">Normal</option>
+                    <option value="High">High</option>
+                    <option value="Urgent">Urgent</option>
+                </select>
+            </div>
+            <div class="detail-field"><div class="label">Claim Date</div><div class="value" id="cdDate">-</div></div>
+            <div class="detail-field"><div class="label">Scheduled</div><div class="value" id="cdScheduled">-</div></div>
+            <div class="detail-field"><div class="label">Resolved</div><div class="value" id="cdResolved">-</div></div>
+            <div class="detail-field">
+                <div class="label">Assigned To</div>
+                <select id="cdAssigned" class="form-select" style="max-width:200px;" onchange="updateClaimField('assigned_to', this.value)">
+                    <option value="">-- Unassigned --</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="detail-grid">
+        <div class="detail-section">
+            <h3>Caller Info</h3>
+            <div class="detail-field"><div class="label">Name</div><div class="value" id="cdCaller">-</div></div>
+            <div class="detail-field"><div class="label">Phone</div><div class="value" id="cdPhone">-</div></div>
+            <div class="detail-field"><div class="label">Email</div><div class="value" id="cdEmail">-</div></div>
+            <div class="detail-field"><div class="label">Claim Building / Unit</div><div class="value" id="cdClaimLocation">-</div></div>
+        </div>
+        <div class="detail-section">
+            <h3>Issue Description</h3>
+            <textarea id="cdDescription" class="form-input" rows="4" style="resize:vertical;font-family:inherit;" onblur="updateClaimField('description', this.value)"></textarea>
+            <h3 style="margin-top:16px;">Resolution</h3>
+            <textarea id="cdResolution" class="form-input" rows="4" style="resize:vertical;font-family:inherit;" onblur="updateClaimField('resolution', this.value)" placeholder="Describe the resolution..."></textarea>
+        </div>
+    </div>
+</div>
+
+<script>
+var CLAIM_ID = {{ claim_id }};
+
+async function loadClaimDetail() {
+    const res = await fetch('/api/warranty/claims/' + CLAIM_ID);
+    if (!res.ok) { document.getElementById('claimLoading').textContent = 'Claim not found.'; return; }
+    const c = await res.json();
+
+    document.getElementById('claimLoading').style.display = 'none';
+    document.getElementById('claimContent').style.display = 'block';
+    document.getElementById('claimTitle').textContent = 'Claim: ' + (c.item_description || 'Unknown Equipment');
+    document.getElementById('backLink').href = '/warranty/job/' + c.job_id;
+
+    document.getElementById('cdEquipment').textContent = c.item_description || '-';
+    document.getElementById('cdEquipType').textContent = c.equipment_type || '-';
+    document.getElementById('cdModelSerial').textContent = [c.model_number, c.serial_number].filter(Boolean).join(' / ') || '-';
+    document.getElementById('cdEquipLocation').textContent = [c.equip_building, c.equip_unit].filter(Boolean).join(' / ') || '-';
+    document.getElementById('cdMfg').textContent = c.manufacturer || '-';
+
+    if (c.warranty_file) {
+        document.getElementById('cdWarrantyFileWrap').style.display = 'block';
+        document.getElementById('cdWarrantyFile').href = '/api/warranty/items/' + c.warranty_id + '/file';
+        document.getElementById('cdWarrantyFile').textContent = c.warranty_filename || 'View File';
+    }
+
+    document.getElementById('cdStatus').value = c.status || 'Open';
+    document.getElementById('cdPriority').value = c.priority || 'Normal';
+    document.getElementById('cdDate').textContent = c.claim_date || '-';
+    document.getElementById('cdScheduled').textContent = c.scheduled_date || '-';
+    document.getElementById('cdResolved').textContent = c.resolved_date || '-';
+    document.getElementById('cdCaller').textContent = c.caller_name || '-';
+    document.getElementById('cdPhone').textContent = c.caller_phone || '-';
+    document.getElementById('cdEmail').textContent = c.caller_email || '-';
+    document.getElementById('cdClaimLocation').textContent = [c.building, c.unit_number].filter(Boolean).join(' / ') || '-';
+    document.getElementById('cdDescription').value = c.description || '';
+    document.getElementById('cdResolution').value = c.resolution || '';
+
+    // Load users for assigned dropdown
+    const uRes = await fetch('/api/users/list');
+    const users = await uRes.json();
+    const sel = document.getElementById('cdAssigned');
+    users.filter(u => ['owner','admin','project_manager','employee'].includes(u.role)).forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = u.display_name || u.username;
+        if (c.assigned_to == u.id) opt.selected = true;
+        sel.appendChild(opt);
+    });
+}
+
+async function updateClaimField(field, value) {
+    const body = {};
+    body[field] = value;
+    await fetch('/api/warranty/claims/' + CLAIM_ID, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    if (field === 'status' && value === 'Resolved') {
+        document.getElementById('cdResolved').textContent = new Date().toISOString().split('T')[0];
+    }
+}
+
+loadClaimDetail();
+</script>
+{% endblock %}

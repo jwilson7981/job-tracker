@@ -1,27 +1,62 @@
 {% extends "base.html" %}
-{% block title %}Warranty - Construction Management{% endblock %}
+{% block title %}Warranty Management{% endblock %}
 {% block content %}
 <div class="page-header">
     <h1>Warranty Management</h1>
-    <div class="export-btns" style="display:inline-flex;gap:6px;">
-        <button class="btn btn-secondary btn-small" onclick="exportToExcel('Warranties','warrantyBody','Warranties')">Excel</button>
-        <button class="btn btn-secondary btn-small" onclick="exportToPDF('Warranties','warrantyBody','Warranties')">PDF</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <div class="export-btns" style="display:inline-flex;gap:6px;">
+            <button class="btn btn-secondary btn-small" onclick="exportToExcel('Warranties','warrantyBody','Warranties')">Excel</button>
+            <button class="btn btn-secondary btn-small" onclick="exportToPDF('Warranties','warrantyBody','Warranties')">PDF</button>
+        </div>
     </div>
 </div>
-<div class="tab-bar">
-    <button class="tab active" onclick="filterWarranty('all', this)">All</button>
-    <button class="tab" onclick="filterWarranty('Active', this)">Active</button>
-    <button class="tab" onclick="filterWarranty('Expiring Soon', this)">Expiring Soon</button>
-    <button class="tab" onclick="filterWarranty('Expired', this)">Expired</button>
-    <button class="tab" onclick="filterWarranty('Claimed', this)">Claimed</button>
+
+<!-- KPI Summary -->
+<div class="kpi-grid" id="wSummary">
+    <div class="kpi-card" style="border-left:4px solid #6366F1;"><div class="kpi-value" id="sumTotal">0</div><div class="kpi-label">Total Equipment</div></div>
+    <div class="kpi-card" style="border-left:4px solid #22C55E;"><div class="kpi-value" id="sumActive">0</div><div class="kpi-label">Active</div></div>
+    <div class="kpi-card" style="border-left:4px solid #F59E0B;"><div class="kpi-value" id="sumExpiring">0</div><div class="kpi-label">Expiring Soon</div></div>
+    <div class="kpi-card" style="border-left:4px solid #EF4444;"><div class="kpi-value" id="sumExpired">0</div><div class="kpi-label">Expired</div></div>
+    <div class="kpi-card" style="border-left:4px solid #3B82F6;"><div class="kpi-value" id="sumOpenClaims">0</div><div class="kpi-label">Open Claims</div></div>
 </div>
-<div class="module-table-wrapper" style="margin-top:16px;">
+
+<!-- Filters -->
+<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="applyFilters()" style="max-width:240px;">
+        <option value="">All Projects</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="applyFilters()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Active">Active</option>
+        <option value="Expiring Soon">Expiring Soon</option>
+        <option value="Expired">Expired</option>
+        <option value="Claimed">Claimed</option>
+    </select>
+    <select id="filterType" class="form-select" onchange="applyFilters()" style="max-width:180px;">
+        <option value="">All Equipment</option>
+    </select>
+    <span id="wCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Table -->
+<div class="table-wrapper">
     <table class="data-table">
         <thead><tr>
-            <th>Project</th><th>Item</th><th>Manufacturer</th><th>Start</th><th>End</th><th>Status</th><th></th>
+            <th>Project</th>
+            <th>Building</th>
+            <th>Unit</th>
+            <th>Equipment</th>
+            <th>Model / Serial</th>
+            <th>Manufacturer</th>
+            <th>Warranty Period</th>
+            <th>Status</th>
+            <th>Claims</th>
+            <th>File</th>
+            <th>Actions</th>
         </tr></thead>
-        <tbody id="warrantyBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+        <tbody id="warrantyBody"><tr><td colspan="11" class="loading">Loading...</td></tr></tbody>
     </table>
 </div>
-<script src="/static/warranty.js"></script>
+
+<script src="/static/warranty.js?v=20260307a"></script>
 {% endblock %}

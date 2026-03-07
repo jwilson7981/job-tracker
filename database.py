@@ -1487,7 +1487,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id INTEGER,
             policy_type TEXT NOT NULL DEFAULT 'General Liability'
-                CHECK(policy_type IN ('General Liability','Auto','Workers Comp','Umbrella','Professional','Builders Risk')),
+                CHECK(policy_type IN ('General Liability','Auto','Workers Comp','Umbrella','Professional','Builders Risk','GL/WC')),
             carrier TEXT DEFAULT '',
             policy_number TEXT DEFAULT '',
             effective_date TEXT DEFAULT '',
@@ -2389,6 +2389,305 @@ def init_db():
         notes TEXT DEFAULT '',
         FOREIGN KEY (order_id) REFERENCES material_orders(id) ON DELETE CASCADE
     )''')
+
+    # ─── Service Invoices tables & migrations ──────────────────────
+    ci_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(client_invoices)").fetchall()]
+    for col, typedef in [
+        ('customer_name', "TEXT DEFAULT ''"),
+        ('customer_email', "TEXT DEFAULT ''"),
+        ('customer_address', "TEXT DEFAULT ''"),
+        ('notes', "TEXT DEFAULT ''"),
+        ('pdf_file', "TEXT DEFAULT ''"),
+        ('terms', "TEXT DEFAULT 'Net 30'"),
+        ('tax_rate', "REAL DEFAULT 0"),
+        ('subtotal', "REAL DEFAULT 0"),
+        ('tax_amount', "REAL DEFAULT 0"),
+        ('balance_due', "REAL DEFAULT 0"),
+        ('amount_paid', "REAL DEFAULT 0"),
+    ]:
+        if col not in ci_cols2:
+            conn.execute(f"ALTER TABLE client_invoices ADD COLUMN {col} {typedef}")
+
+    # Make job_id nullable for service invoices not tied to a job
+    ci_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='client_invoices'").fetchone()
+    if ci_sql and 'NOT NULL' in (ci_sql[0] or '') and 'job_id INTEGER NOT NULL' in (ci_sql[0] or ''):
+        try:
+            conn.executescript('''
+                CREATE TABLE IF NOT EXISTS client_invoices_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id INTEGER,
+                    invoice_number TEXT DEFAULT '',
+                    amount REAL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft','Sent','Paid','Overdue','Partial')),
+                    description TEXT DEFAULT '',
+                    issue_date TEXT DEFAULT (date('now','localtime')),
+                    due_date TEXT DEFAULT '',
+                    paid_date TEXT DEFAULT '',
+                    created_by INTEGER,
+                    days_to_pay INTEGER,
+                    customer_name TEXT DEFAULT '',
+                    customer_email TEXT DEFAULT '',
+                    customer_address TEXT DEFAULT '',
+                    notes TEXT DEFAULT '',
+                    pdf_file TEXT DEFAULT '',
+                    terms TEXT DEFAULT 'Net 30',
+                    tax_rate REAL DEFAULT 0,
+                    subtotal REAL DEFAULT 0,
+                    tax_amount REAL DEFAULT 0,
+                    balance_due REAL DEFAULT 0,
+                    amount_paid REAL DEFAULT 0,
+                    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+                    FOREIGN KEY (created_by) REFERENCES users(id)
+                );
+                INSERT INTO client_invoices_new
+                    SELECT id, job_id, invoice_number, amount, status, description, issue_date, due_date,
+                           paid_date, created_by, days_to_pay,
+                           COALESCE(customer_name,''), COALESCE(customer_email,''),
+                           COALESCE(customer_address,''), COALESCE(notes,''),
+                           COALESCE(pdf_file,''), COALESCE(terms,'Net 30'),
+                           COALESCE(tax_rate,0), COALESCE(subtotal,0),
+                           COALESCE(tax_amount,0), COALESCE(balance_due,0),
+                           COALESCE(amount_paid,0)
+                    FROM client_invoices;
+                DROP TABLE client_invoices;
+                ALTER TABLE client_invoices_new RENAME TO client_invoices;
+                CREATE INDEX IF NOT EXISTS idx_invoices_job ON client_invoices(job_id);
+            ''')
+        except Exception:
+            pass
+
+    # Also update CHECK constraint to include 'Partial' if missing
+    ci_sql2 = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='client_invoices'").fetchone()
+    if ci_sql2 and 'Partial' not in (ci_sql2[0] or ''):
+        try:
+            conn.executescript('''
+                CREATE TABLE IF NOT EXISTS client_invoices_new2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id INTEGER,
+                    invoice_number TEXT DEFAULT '',
+                    amount REAL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft','Sent','Paid','Overdue','Partial')),
+                    description TEXT DEFAULT '',
+                    issue_date TEXT DEFAULT (date('now','localtime')),
+                    due_date TEXT DEFAULT '',
+                    paid_date TEXT DEFAULT '',
+                    created_by INTEGER,
+                    days_to_pay INTEGER,
+                    customer_name TEXT DEFAULT '',
+                    customer_email TEXT DEFAULT '',
+                    customer_address TEXT DEFAULT '',
+                    notes TEXT DEFAULT '',
+                    pdf_file TEXT DEFAULT '',
+                    terms TEXT DEFAULT 'Net 30',
+                    tax_rate REAL DEFAULT 0,
+                    subtotal REAL DEFAULT 0,
+                    tax_amount REAL DEFAULT 0,
+                    balance_due REAL DEFAULT 0,
+                    amount_paid REAL DEFAULT 0,
+                    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+                    FOREIGN KEY (created_by) REFERENCES users(id)
+                );
+                INSERT INTO client_invoices_new2
+                    SELECT id, job_id, invoice_number, amount,
+                           CASE WHEN status='Overdue' THEN 'Overdue'
+                                WHEN status='Paid' THEN 'Paid'
+                                WHEN status='Sent' THEN 'Sent'
+                                ELSE 'Draft' END,
+                           description, issue_date, due_date, paid_date, created_by, days_to_pay,
+                           COALESCE(customer_name,''), COALESCE(customer_email,''),
+                           COALESCE(customer_address,''), COALESCE(notes,''),
+                           COALESCE(pdf_file,''), COALESCE(terms,'Net 30'),
+                           COALESCE(tax_rate,0), COALESCE(subtotal,0),
+                           COALESCE(tax_amount,0), COALESCE(balance_due,0),
+                           COALESCE(amount_paid,0)
+                    FROM client_invoices;
+                DROP TABLE client_invoices;
+                ALTER TABLE client_invoices_new2 RENAME TO client_invoices;
+                CREATE INDEX IF NOT EXISTS idx_invoices_job ON client_invoices(job_id);
+            ''')
+        except Exception:
+            pass
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS service_invoice_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        quantity REAL NOT NULL DEFAULT 1,
+        unit_price REAL NOT NULL DEFAULT 0,
+        amount REAL NOT NULL DEFAULT 0,
+        FOREIGN KEY (invoice_id) REFERENCES client_invoices(id) ON DELETE CASCADE
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS service_invoice_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        payment_date TEXT NOT NULL DEFAULT (date('now','localtime')),
+        payment_method TEXT DEFAULT '',
+        reference_number TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (invoice_id) REFERENCES client_invoices(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+    )''')
+
+    conn.execute('''CREATE TABLE IF NOT EXISTS tax_forms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        form_type TEXT NOT NULL DEFAULT 'W9'
+            CHECK(form_type IN ('W4','W9','1099','I9','Other')),
+        entity_type TEXT NOT NULL DEFAULT 'employee'
+            CHECK(entity_type IN ('employee','company')),
+        status TEXT NOT NULL DEFAULT 'Draft'
+            CHECK(status IN ('Draft','Complete','Signed','Expired')),
+        -- W9 fields
+        w9_name TEXT DEFAULT '',
+        w9_business_name TEXT DEFAULT '',
+        w9_tax_class TEXT DEFAULT '',
+        w9_exemptions TEXT DEFAULT '',
+        w9_address TEXT DEFAULT '',
+        w9_city_state_zip TEXT DEFAULT '',
+        w9_account_numbers TEXT DEFAULT '',
+        w9_tin TEXT DEFAULT '',
+        w9_tin_type TEXT DEFAULT 'EIN',
+        w9_signature_name TEXT DEFAULT '',
+        w9_signature_date TEXT DEFAULT '',
+        -- W4 fields
+        w4_first_name TEXT DEFAULT '',
+        w4_last_name TEXT DEFAULT '',
+        w4_address TEXT DEFAULT '',
+        w4_city_state_zip TEXT DEFAULT '',
+        w4_ssn TEXT DEFAULT '',
+        w4_filing_status TEXT DEFAULT 'Single',
+        w4_multiple_jobs INTEGER DEFAULT 0,
+        w4_dependents_amount REAL DEFAULT 0,
+        w4_other_income REAL DEFAULT 0,
+        w4_deductions REAL DEFAULT 0,
+        w4_extra_withholding REAL DEFAULT 0,
+        w4_exempt INTEGER DEFAULT 0,
+        w4_signature_name TEXT DEFAULT '',
+        w4_signature_date TEXT DEFAULT '',
+        w4_employer_name TEXT DEFAULT '',
+        w4_employer_ein TEXT DEFAULT '',
+        w4_first_date_employment TEXT DEFAULT '',
+        -- 1099 fields
+        f1099_payer_name TEXT DEFAULT '',
+        f1099_payer_tin TEXT DEFAULT '',
+        f1099_recipient_name TEXT DEFAULT '',
+        f1099_recipient_tin TEXT DEFAULT '',
+        f1099_recipient_address TEXT DEFAULT '',
+        f1099_recipient_city_state_zip TEXT DEFAULT '',
+        f1099_amount REAL DEFAULT 0,
+        f1099_tax_year TEXT DEFAULT '',
+        f1099_type TEXT DEFAULT 'NEC',
+        -- file
+        file_path TEXT DEFAULT '',
+        original_filename TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+    )''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_tax_forms_user ON tax_forms(user_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_tax_forms_type ON tax_forms(form_type, entity_type)')
+
+    # Migration: add GL/WC policy type to certificates_of_insurance
+    # SQLite can't ALTER CHECK constraints, so recreate the table
+    coi_check = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='certificates_of_insurance'").fetchone()
+    if coi_check and 'GL/WC' not in (coi_check[0] or ''):
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS certificates_of_insurance_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER,
+                policy_type TEXT NOT NULL DEFAULT 'General Liability'
+                    CHECK(policy_type IN ('General Liability','Auto','Workers Comp','Umbrella','Professional','Builders Risk','GL/WC')),
+                carrier TEXT DEFAULT '',
+                policy_number TEXT DEFAULT '',
+                effective_date TEXT DEFAULT '',
+                expiration_date TEXT DEFAULT '',
+                coverage_amount REAL DEFAULT 0,
+                certificate_holder TEXT DEFAULT '',
+                file_path TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'Active'
+                    CHECK(status IN ('Active','Expiring Soon','Expired','Renewed')),
+                notes TEXT DEFAULT '',
+                created_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            );
+            INSERT INTO certificates_of_insurance_new SELECT * FROM certificates_of_insurance;
+            DROP TABLE certificates_of_insurance;
+            ALTER TABLE certificates_of_insurance_new RENAME TO certificates_of_insurance;
+            CREATE INDEX IF NOT EXISTS idx_coi_job ON certificates_of_insurance(job_id);
+            CREATE INDEX IF NOT EXISTS idx_coi_expiration ON certificates_of_insurance(expiration_date);
+        ''')
+
+    # Migration: expand warranty_items with equipment details and file upload
+    wi_cols = [row[1] for row in conn.execute("PRAGMA table_info(warranty_items)").fetchall()]
+    wi_new = {
+        'building': "TEXT DEFAULT ''",
+        'unit_number': "TEXT DEFAULT ''",
+        'model_number': "TEXT DEFAULT ''",
+        'serial_number': "TEXT DEFAULT ''",
+        'equipment_type': "TEXT DEFAULT ''",
+        'file_path': "TEXT DEFAULT ''",
+        'original_filename': "TEXT DEFAULT ''",
+    }
+    for col, typedef in wi_new.items():
+        if col not in wi_cols:
+            conn.execute(f"ALTER TABLE warranty_items ADD COLUMN {col} {typedef}")
+
+    # Migration: expand warranty_claims to work like service calls
+    wc_cols = [row[1] for row in conn.execute("PRAGMA table_info(warranty_claims)").fetchall()]
+    wc_new = {
+        'priority': "TEXT NOT NULL DEFAULT 'Normal'",
+        'assigned_to': "INTEGER",
+        'caller_name': "TEXT DEFAULT ''",
+        'caller_phone': "TEXT DEFAULT ''",
+        'caller_email': "TEXT DEFAULT ''",
+        'building': "TEXT DEFAULT ''",
+        'unit_number': "TEXT DEFAULT ''",
+        'scheduled_date': "TEXT DEFAULT ''",
+        'resolved_date': "TEXT DEFAULT ''",
+        'created_by': "INTEGER",
+        'created_at': "TEXT NOT NULL DEFAULT (datetime('now','localtime'))",
+    }
+    for col, typedef in wc_new.items():
+        if col not in wc_cols:
+            conn.execute(f"ALTER TABLE warranty_claims ADD COLUMN {col} {typedef}")
+
+    # Migration: add requires_submittal and submittal_file_id to supplier_quote_items
+    sqi_cols = [row[1] for row in conn.execute("PRAGMA table_info(supplier_quote_items)").fetchall()]
+    if 'requires_submittal' not in sqi_cols:
+        conn.execute("ALTER TABLE supplier_quote_items ADD COLUMN requires_submittal INTEGER NOT NULL DEFAULT 0")
+    if 'submittal_file_id' not in sqi_cols:
+        conn.execute("ALTER TABLE supplier_quote_items ADD COLUMN submittal_file_id INTEGER")
+
+    # Migration: add keywords column to submittal_files for better search matching
+    sf_cols = [row[1] for row in conn.execute("PRAGMA table_info(submittal_files)").fetchall()]
+    if 'keywords' not in sf_cols:
+        conn.execute("ALTER TABLE submittal_files ADD COLUMN keywords TEXT DEFAULT ''")
+
+    # Migration: add original_filename to lien_waivers
+    lw_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(lien_waivers)").fetchall()]
+    if 'original_filename' not in lw_cols2:
+        conn.execute("ALTER TABLE lien_waivers ADD COLUMN original_filename TEXT DEFAULT ''")
+        # Backfill from existing file_path (strip timestamp prefix)
+        rows = conn.execute("SELECT id, file_path FROM lien_waivers WHERE file_path != '' AND file_path IS NOT NULL").fetchall()
+        for row in rows:
+            fp = row[1]
+            # file_path format: "1709123456_Original_Name.pdf"
+            parts = fp.split('_', 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                original = parts[1]
+            else:
+                original = fp
+            conn.execute("UPDATE lien_waivers SET original_filename = ? WHERE id = ?", (original, row[0]))
 
     conn.commit()
     conn.close()

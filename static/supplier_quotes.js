@@ -106,7 +106,7 @@ function recalcSubtotal() {
 function renderItems() {
     const tbody = document.getElementById('itemsBody');
     if (!lineItems.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No line items. Click "+ Add Line" to add items.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No line items. Click "+ Add Line" to add items.</td></tr>';
         return;
     }
     tbody.innerHTML = lineItems.map((item, idx) => {
@@ -119,6 +119,7 @@ function renderItems() {
             <td><input type="number" class="form-input" value="${item.unit_price || 0}" min="0" step="0.01" onchange="updateItem(${idx},'unit_price',this.value)" style="font-size:13px;text-align:right;"></td>
             <td style="text-align:right;font-weight:600;font-size:13px;">${fmt(ext)}</td>
             <td><input type="text" class="form-input" value="${esc(item.takeoff_sku)}" onchange="updateItem(${idx},'takeoff_sku',this.value)" style="font-size:13px;"></td>
+            <td style="text-align:center;"><input type="checkbox" ${item.requires_submittal ? 'checked' : ''} onchange="updateItem(${idx},'requires_submittal',this.checked)" title="Requires submittal"${item.submittal_file_id ? ' style="accent-color:#22c55e;"' : ''}>${item.submittal_file_id ? '<span style="color:#22c55e;font-size:10px;" title="Library match found">&#10003;</span>' : ''}</td>
             <td style="text-align:center;"><button class="btn btn-secondary btn-small" onclick="removeLine(${idx})" style="color:var(--red-500,#ef4444);padding:2px 8px;">X</button></td>
         </tr>`;
     }).join('');
@@ -131,6 +132,8 @@ function esc(s) {
 function updateItem(idx, field, value) {
     if (field === 'quantity' || field === 'unit_price') {
         lineItems[idx][field] = parseFloat(value) || 0;
+    } else if (field === 'requires_submittal') {
+        lineItems[idx][field] = value ? 1 : 0;
     } else {
         lineItems[idx][field] = value;
     }
@@ -148,7 +151,9 @@ function addLineItem() {
         unit_price: 0,
         extended_price: 0,
         takeoff_sku: '',
-        notes: ''
+        notes: '',
+        requires_submittal: 0,
+        submittal_file_id: null
     });
     renderItems();
     // Focus the SKU input on the new row
@@ -492,6 +497,94 @@ async function loadCachedPriceCheck() {
     } catch (e) {
         // Silently ignore
     }
+}
+
+// ─── Generate Submittals from Quote ─────────────────────────────
+
+async function generateSubmittals() {
+    const needed = lineItems.filter(i => i.requires_submittal);
+    if (!needed.length) {
+        alert('No line items are checked for submittals. Use the checkboxes in the Submittal column first.');
+        return;
+    }
+    if (!quoteData || !quoteData.job_id) {
+        alert('This quote has no job assigned. Please assign a job first.');
+        return;
+    }
+
+    // Prompt to save items first if there are unsaved changes
+    if (!confirm(`Generate submittals for ${needed.length} checked item(s)? Items will be saved first.`)) return;
+
+    // Save items first to persist requires_submittal flags
+    const saveRes = await fetch('/api/supplier-quotes/' + window.QUOTE_ID + '/items', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({items: lineItems})
+    });
+    const saveData = await saveRes.json();
+    if (!saveData.ok) {
+        alert('Failed to save items. Please try again.');
+        return;
+    }
+
+    // Now generate submittals
+    const res = await fetch('/api/supplier-quotes/' + window.QUOTE_ID + '/generate-submittals', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+        alert(data.error || 'Failed to generate submittals.');
+        return;
+    }
+
+    // Show results modal
+    const summary = document.getElementById('submittalResultsSummary');
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">';
+    html += `<div style="background:var(--green-50,#f0fdf4);border-radius:8px;padding:12px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;color:var(--green-700,#15803d);">${data.created}</div>
+        <div style="font-size:12px;color:var(--gray-500);">Created</div>
+    </div>`;
+    html += `<div style="background:var(--blue-50,#eff6ff);border-radius:8px;padding:12px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;color:var(--blue-700,#1d4ed8);">${data.matched}</div>
+        <div style="font-size:12px;color:var(--gray-500);">Library Matched</div>
+    </div>`;
+    if (data.already_existed > 0) {
+        html += `<div style="background:var(--gray-50,#f9fafb);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:700;color:var(--gray-500);">${data.already_existed}</div>
+            <div style="font-size:12px;color:var(--gray-500);">Already Existed</div>
+        </div>`;
+    }
+    if (data.missing && data.missing.length) {
+        html += `<div style="background:var(--red-50,#fef2f2);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:22px;font-weight:700;color:var(--red-600,#dc2626);">${data.missing.length}</div>
+            <div style="font-size:12px;color:var(--gray-500);">Missing from Library</div>
+        </div>`;
+    }
+    html += '</div>';
+    summary.innerHTML = html;
+
+    // Show missing items
+    const missingSection = document.getElementById('submittalResultsMissing');
+    if (data.missing && data.missing.length) {
+        missingSection.style.display = '';
+        document.getElementById('submittalMissingBody').innerHTML = data.missing.map(m =>
+            `<tr><td>${esc(m.description)}</td><td>${esc(m.sku || '-')}</td><td>${esc(m.vendor || '-')}</td></tr>`
+        ).join('');
+    } else {
+        missingSection.style.display = 'none';
+    }
+
+    // Show link to submittals page filtered by job
+    const link = document.getElementById('submittalResultsLink');
+    link.href = '/submittals?job_id=' + quoteData.job_id;
+    link.style.display = '';
+
+    document.getElementById('submittalResultsModal').style.display = 'flex';
+
+    // Reload quote to update submittal_file_id indicators
+    loadQuote();
 }
 
 // ─── Init ───────────────────────────────────────────────────────

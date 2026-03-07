@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+{% block title %}Tax Forms{% endblock %}
+{% block content %}
+<style>
+.tf-tabs { display:flex;gap:0;border-bottom:2px solid var(--gray-200);margin-bottom:20px; }
+.tf-tab { padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;border:none;background:none;color:var(--gray-500);border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s; }
+.tf-tab.active { color:var(--primary,#2563EB);border-bottom-color:var(--primary,#2563EB); }
+.tf-tab:hover { color:var(--primary,#2563EB); }
+.tf-section { display:none; }
+.tf-section.active { display:block; }
+.form-card { border:1px solid var(--gray-200);border-radius:8px;padding:16px;margin-bottom:12px;background:#fff; }
+.form-card-header { display:flex;justify-content:space-between;align-items:center;margin-bottom:12px; }
+.form-card-header h3 { margin:0;font-size:15px; }
+.w9-form, .w4-form { max-width:700px; }
+.w9-form .form-section, .w4-form .form-section { border:1px solid var(--gray-200);border-radius:6px;padding:14px;margin-bottom:14px; }
+.w9-form .form-section h4, .w4-form .form-section h4 { margin:0 0 10px;font-size:13px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px; }
+</style>
+
+<div class="page-header">
+    <h1>Tax Forms</h1>
+    <div style="display:flex;gap:6px;">
+        <button class="btn btn-primary" onclick="showNewForm('W9','company')">+ Company W9</button>
+        <button class="btn btn-primary" onclick="showNewForm('W4','employee')">+ Employee W4</button>
+        <button class="btn btn-primary" onclick="showNewForm('W9','employee')">+ Employee W9</button>
+        <button class="btn btn-primary" onclick="showNewForm('1099','employee')">+ 1099</button>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="tf-tabs">
+    <button class="tf-tab active" onclick="switchTfTab('company', this)">Company W9</button>
+    <button class="tf-tab" onclick="switchTfTab('empW4', this)">Employee W4s</button>
+    <button class="tf-tab" onclick="switchTfTab('empW9', this)">Employee W9s</button>
+    <button class="tf-tab" onclick="switchTfTab('emp1099', this)">1099s</button>
+</div>
+
+<!-- Company W9 Section -->
+<div class="tf-section active" id="tfCompany">
+    <div id="companyW9List"><div class="empty-state">Loading...</div></div>
+</div>
+
+<!-- Employee W4 Section -->
+<div class="tf-section" id="tfEmpW4">
+    <div style="margin-bottom:12px;">
+        <select id="filterW4Employee" class="form-select" style="max-width:240px;" onchange="renderEmpW4()">
+            <option value="">All Employees</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead><tr><th>Employee</th><th>Filing Status</th><th>Dependents</th><th>Extra W/H</th><th>Status</th><th>Signed</th><th>Actions</th></tr></thead>
+            <tbody id="empW4Body"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Employee W9 Section -->
+<div class="tf-section" id="tfEmpW9">
+    <div style="margin-bottom:12px;">
+        <select id="filterW9Employee" class="form-select" style="max-width:240px;" onchange="renderEmpW9()">
+            <option value="">All Employees</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead><tr><th>Employee</th><th>Name on W9</th><th>Tax Classification</th><th>TIN</th><th>Status</th><th>Signed</th><th>Actions</th></tr></thead>
+            <tbody id="empW9Body"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 1099 Section -->
+<div class="tf-section" id="tfEmp1099">
+    <div style="margin-bottom:12px;">
+        <select id="filter1099Employee" class="form-select" style="max-width:240px;" onchange="render1099()">
+            <option value="">All Recipients</option>
+        </select>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead><tr><th>Recipient</th><th>Type</th><th>Tax Year</th><th>Amount</th><th>Status</th><th>File</th><th>Actions</th></tr></thead>
+            <tbody id="emp1099Body"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 1099 Form Modal -->
+<div id="f1099Modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:640px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h2 id="f1099ModalTitle">1099 Form</h2>
+            <button class="modal-close" onclick="document.getElementById('f1099Modal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="save1099(event)" class="w9-form">
+            <input type="hidden" id="f1099Id">
+            <div class="form-group">
+                <label class="form-label">Recipient (Employee/Contractor)</label>
+                <select id="f1099Employee" class="form-select"></select>
+            </div>
+            <div class="form-section">
+                <h4>Payer Info</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">Payer Name</label>
+                        <input type="text" id="f1099PayerName" class="form-input" value="LGHVAC Mechanical, LLC">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Payer TIN/EIN</label>
+                        <input type="text" id="f1099PayerTin" class="form-input">
+                    </div>
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Recipient Info</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">Recipient Name</label>
+                        <input type="text" id="f1099RecipName" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Recipient TIN/SSN</label>
+                        <input type="text" id="f1099RecipTin" class="form-input">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Recipient Address</label>
+                    <input type="text" id="f1099RecipAddr" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">City, State, ZIP</label>
+                    <input type="text" id="f1099RecipCSZ" class="form-input">
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Compensation</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">1099 Type</label>
+                        <select id="f1099Type" class="form-select">
+                            <option value="NEC">1099-NEC</option>
+                            <option value="MISC">1099-MISC</option>
+                            <option value="INT">1099-INT</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Tax Year</label>
+                        <input type="text" id="f1099Year" class="form-input" placeholder="2025">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Amount ($)</label>
+                        <input type="number" id="f1099Amount" class="form-input" step="0.01" min="0">
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Upload signed copy (optional)</label>
+                <input type="file" id="f1099File" class="form-input" accept=".pdf,.jpg,.jpeg,.png">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="f1099Status" class="form-select" style="max-width:200px;">
+                    <option value="Draft">Draft</option>
+                    <option value="Complete">Complete</option>
+                    <option value="Signed">Signed</option>
+                </select>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('f1099Modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save 1099</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- W9 Form Modal -->
+<div id="w9Modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h2 id="w9ModalTitle">W-9 Form</h2>
+            <button class="modal-close" onclick="document.getElementById('w9Modal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveW9(event)" class="w9-form">
+            <input type="hidden" id="w9Id">
+            <input type="hidden" id="w9Entity" value="company">
+            <div id="w9EmpGroup" class="form-group" style="display:none;">
+                <label class="form-label">Employee</label>
+                <select id="w9Employee" class="form-select"></select>
+            </div>
+            <div class="form-section">
+                <h4>Taxpayer Identification</h4>
+                <div class="form-group">
+                    <label class="form-label">1. Name (as shown on your income tax return)</label>
+                    <input type="text" id="w9Name" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">2. Business name / disregarded entity name (if different)</label>
+                    <input type="text" id="w9Business" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">3. Federal tax classification</label>
+                    <select id="w9TaxClass" class="form-select">
+                        <option value="Individual/sole proprietor">Individual / sole proprietor</option>
+                        <option value="C Corporation">C Corporation</option>
+                        <option value="S Corporation">S Corporation</option>
+                        <option value="Partnership">Partnership</option>
+                        <option value="Trust/estate">Trust / estate</option>
+                        <option value="LLC - C">LLC taxed as C corp</option>
+                        <option value="LLC - S">LLC taxed as S corp</option>
+                        <option value="LLC - P">LLC taxed as partnership</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">4. Exemptions (if any)</label>
+                    <input type="text" id="w9Exemptions" class="form-input" placeholder="Exempt payee code / FATCA code">
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Address</h4>
+                <div class="form-group">
+                    <label class="form-label">5. Address (number, street, apt/suite)</label>
+                    <input type="text" id="w9Address" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">6. City, State, ZIP</label>
+                    <input type="text" id="w9CityStateZip" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">7. Account number(s) (optional)</label>
+                    <input type="text" id="w9Accounts" class="form-input">
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Taxpayer Identification Number (TIN)</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">TIN Type</label>
+                        <select id="w9TinType" class="form-select">
+                            <option value="EIN">EIN (Employer ID)</option>
+                            <option value="SSN">SSN (Social Security)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">TIN</label>
+                        <input type="text" id="w9Tin" class="form-input" placeholder="XX-XXXXXXX or XXX-XX-XXXX">
+                    </div>
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Certification / Signature</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">Signature (typed name)</label>
+                        <input type="text" id="w9SigName" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date</label>
+                        <input type="date" id="w9SigDate" class="form-input">
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Upload signed copy (optional)</label>
+                <input type="file" id="w9File" class="form-input" accept=".pdf,.jpg,.jpeg,.png">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="w9Status" class="form-select" style="max-width:200px;">
+                    <option value="Draft">Draft</option>
+                    <option value="Complete">Complete</option>
+                    <option value="Signed">Signed</option>
+                </select>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('w9Modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save W-9</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- W4 Form Modal -->
+<div id="w4Modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:700px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h2 id="w4ModalTitle">W-4 Form</h2>
+            <button class="modal-close" onclick="document.getElementById('w4Modal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveW4(event)" class="w4-form">
+            <input type="hidden" id="w4Id">
+            <div class="form-group">
+                <label class="form-label">Employee</label>
+                <select id="w4Employee" class="form-select" required></select>
+            </div>
+            <div class="form-section">
+                <h4>Step 1: Personal Information</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">First name and middle initial</label>
+                        <input type="text" id="w4First" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Last name</label>
+                        <input type="text" id="w4Last" class="form-input" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Address</label>
+                    <input type="text" id="w4Address" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">City, State, ZIP</label>
+                    <input type="text" id="w4CityStateZip" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Social Security Number</label>
+                    <input type="text" id="w4SSN" class="form-input" placeholder="XXX-XX-XXXX">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Filing Status</label>
+                    <select id="w4Filing" class="form-select">
+                        <option value="Single">Single or Married filing separately</option>
+                        <option value="Married">Married filing jointly</option>
+                        <option value="Head of Household">Head of household</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Step 2: Multiple Jobs</h4>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="w4MultipleJobs" style="width:auto;">
+                        <span class="form-label" style="margin:0;">Check if you have multiple jobs or spouse works</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Step 3: Claim Dependents</h4>
+                <div class="form-group">
+                    <label class="form-label">Total amount for dependents ($)</label>
+                    <input type="number" id="w4Dependents" class="form-input" step="0.01" min="0" value="0">
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Step 4: Other Adjustments</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">4a. Other income ($)</label>
+                        <input type="number" id="w4OtherIncome" class="form-input" step="0.01" min="0" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">4b. Deductions ($)</label>
+                        <input type="number" id="w4Deductions" class="form-input" step="0.01" min="0" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">4c. Extra withholding ($)</label>
+                        <input type="number" id="w4ExtraWH" class="form-input" step="0.01" min="0" value="0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="w4Exempt" style="width:auto;">
+                        <span class="form-label" style="margin:0;">Claim exemption from withholding</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Step 5: Sign Here</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">Signature (typed name)</label>
+                        <input type="text" id="w4SigName" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date</label>
+                        <input type="date" id="w4SigDate" class="form-input">
+                    </div>
+                </div>
+            </div>
+            <div class="form-section">
+                <h4>Employer Use Only</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                    <div class="form-group">
+                        <label class="form-label">Employer name</label>
+                        <input type="text" id="w4Employer" class="form-input" value="LGHVAC Mechanical, LLC">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Employer EIN</label>
+                        <input type="text" id="w4EIN" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">First date of employment</label>
+                        <input type="date" id="w4FirstDate" class="form-input">
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Upload signed copy (optional)</label>
+                <input type="file" id="w4File" class="form-input" accept=".pdf,.jpg,.jpeg,.png">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="w4Status" class="form-select" style="max-width:200px;">
+                    <option value="Draft">Draft</option>
+                    <option value="Complete">Complete</option>
+                    <option value="Signed">Signed</option>
+                </select>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('w4Modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save W-4</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="/static/tax_forms.js?v=20260307a"></script>
+{% endblock %}

@@ -52,24 +52,24 @@ function renderProjects(projects) {
     <tr id="pjLinks${p.id}" style="display:none;">
         <td colspan="11" style="padding:0;border-top:none;">
             <div style="padding:12px 16px 12px 28px;background:var(--gray-50,#f8fafc);border-top:1px dashed var(--gray-200,#e2e8f0);">
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px 12px;">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px 12px;">
                     <a href="/projects/${p.id}" class="pj-qlink">&#9632; Dashboard</a>
-                    <a href="/plans?job_id=${p.id}" class="pj-qlink">&#128208; Plans</a>
+                    <a href="/plans?job_id=${p.id}" class="pj-qlink">&#128208; Plans ${p.plan_count ? '<span class="pj-count">'+p.plan_count+'</span>' : ''}</a>
                     <a href="/supplier-quotes" class="pj-qlink">&#128203; Supplier Quotes</a>
                     <a href="/bids" class="pj-qlink">&#9998; Bids</a>
                     <a href="/schedule?job_id=${p.id}" class="pj-qlink">&#128197; Schedule</a>
-                    <a href="/contracts?job_id=${p.id}" class="pj-qlink">&#128203; Contracts</a>
-                    <a href="/permits?job_id=${p.id}" class="pj-qlink">&#128220; Permits</a>
-                    <a href="/submittals?job_id=${p.id}" class="pj-qlink">&#128230; Submittals</a>
-                    <a href="/rfis?job_id=${p.id}" class="pj-qlink">&#10067; RFIs</a>
-                    <a href="/change-orders?job_id=${p.id}" class="pj-qlink">&#128221; Change Orders</a>
+                    <a href="/contracts?job_id=${p.id}" class="pj-qlink">&#128203; Contracts ${p.contract_count ? '<span class="pj-count">'+p.contract_count+'</span>' : ''}</a>
+                    <a href="/permits?job_id=${p.id}" class="pj-qlink">&#128220; Permits ${p.permit_count ? '<span class="pj-count">'+p.permit_count+'</span>' : ''}</a>
+                    <a href="/submittals?job_id=${p.id}" class="pj-qlink">&#128230; Submittals ${p.submittal_count ? '<span class="pj-count">'+p.submittal_count+'</span>' : ''}</a>
+                    <a href="/rfis?job_id=${p.id}" class="pj-qlink">&#10067; RFIs ${p.rfi_count ? '<span class="pj-count">'+p.rfi_count+'</span>' : ''}</a>
+                    <a href="/change-orders?job_id=${p.id}" class="pj-qlink">&#128221; Change Orders ${p.co_count ? '<span class="pj-count">'+p.co_count+'</span>' : ''}</a>
                     <a href="/materials/job/${p.id}" class="pj-qlink">&#9634; Materials</a>
                     <a href="/documents" class="pj-qlink">&#128196; Documents</a>
                     <a href="/photos" class="pj-qlink">&#128247; Photos</a>
-                    <a href="/payapps" class="pj-qlink">&#128179; Pay Apps</a>
-                    <a href="/lien-waivers?job_id=${p.id}" class="pj-qlink">&#128220; Lien Waivers</a>
-                    <a href="/warranty" class="pj-qlink">&#9745; Warranty</a>
-                    <a href="/service-calls" class="pj-qlink">&#9742; Service Calls</a>
+                    <a href="/payapps" class="pj-qlink">&#128179; Pay Apps ${p.payapp_count ? '<span class="pj-count">'+p.payapp_count+'</span>' : ''}</a>
+                    <a href="/lien-waivers?job_id=${p.id}" class="pj-qlink">&#128220; Lien Waivers ${p.lw_count ? '<span class="pj-count">'+p.lw_count+'</span>' : ''}</a>
+                    <a href="/warranty" class="pj-qlink">&#9745; Warranty ${p.warranty_items ? '<span class="pj-count">'+p.warranty_items+'</span>' : ''}</a>
+                    <a href="/service-calls" class="pj-qlink">&#9742; Service Calls ${p.open_service_calls ? '<span class="pj-count pj-count-warn">'+p.open_service_calls+'</span>' : ''}</a>
                 </div>
             </div>
         </td>

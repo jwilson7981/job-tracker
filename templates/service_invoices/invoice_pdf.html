@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter;
+    margin: 0.75in 0.85in;
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 9px;
+        color: #666;
+    }
+}
+body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11px; color: #222; line-height: 1.5; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 3px solid #1a5276; padding-bottom: 16px; }
+.header-logo img { max-height: 80px; }
+.header-info { text-align: right; font-size: 10px; color: #444; }
+.header-info .company { font-size: 14px; font-weight: 700; color: #1a5276; margin-bottom: 4px; }
+h1 { font-size: 22px; color: #1a5276; text-align: center; margin: 20px 0 24px; letter-spacing: 1px; }
+.meta-row { display: flex; justify-content: space-between; margin-bottom: 20px; }
+.meta-block { flex: 1; }
+.meta-block.right { text-align: right; }
+.meta-block strong { display: block; font-size: 10px; color: #1a5276; text-transform: uppercase; margin-bottom: 2px; }
+.meta-block p { margin: 0; font-size: 11px; }
+table.items { width: 100%; border-collapse: collapse; margin: 20px 0; }
+table.items th { background: #1a5276; color: #fff; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+table.items th.right, table.items td.right { text-align: right; }
+table.items td { padding: 7px 10px; border-bottom: 1px solid #ddd; font-size: 11px; }
+table.items tr:nth-child(even) td { background: #f8f9fa; }
+.totals { margin-left: auto; width: 280px; margin-top: 10px; }
+.totals-row { display: flex; justify-content: space-between; padding: 5px 10px; font-size: 11px; }
+.totals-row.total { font-size: 14px; font-weight: 700; color: #1a5276; border-top: 2px solid #1a5276; padding-top: 8px; margin-top: 4px; }
+.totals-row.balance { font-size: 13px; font-weight: 700; color: #c0392b; }
+.notes-section { margin-top: 24px; padding: 12px; background: #f0f5fa; border-radius: 4px; border: 1px solid #d4e3f0; }
+.notes-section strong { font-size: 10px; color: #1a5276; text-transform: uppercase; }
+.notes-section p { margin: 4px 0 0; font-size: 11px; }
+.payment-history { margin-top: 20px; }
+.payment-history h3 { font-size: 12px; color: #1a5276; border-bottom: 1px solid #1a5276; padding-bottom: 4px; text-transform: uppercase; }
+.payment-history table { width: 100%; border-collapse: collapse; }
+.payment-history th { background: #e8eef4; padding: 5px 8px; text-align: left; font-size: 10px; }
+.payment-history td { padding: 5px 8px; border-bottom: 1px solid #eee; font-size: 10px; }
+.footer-contact { margin-top: 30px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-logo">
+        {% if logo_path %}<img src="{{ logo_path }}" alt="LGHVAC">{% endif %}
+    </div>
+    <div class="header-info">
+        <div class="company">LGHVAC Mechanical, LLC</div>
+        3616 Utica Square Dr.<br>
+        Edmond, OK 73034<br>
+        Phone: 918-351-3092<br>
+        Email: lgsqoffice@gmail.com
+    </div>
+</div>
+
+<h1>INVOICE</h1>
+
+<div class="meta-row">
+    <div class="meta-block">
+        <strong>Bill To</strong>
+        <p>{{ invoice.customer_name or 'N/A' }}</p>
+        {% if invoice.customer_address %}<p>{{ invoice.customer_address }}</p>{% endif %}
+        {% if invoice.customer_email %}<p>{{ invoice.customer_email }}</p>{% endif %}
+    </div>
+    <div class="meta-block right">
+        <strong>Invoice #</strong>
+        <p>{{ invoice.invoice_number }}</p>
+        <strong style="margin-top:8px;">Date</strong>
+        <p>{{ invoice.issue_date }}</p>
+        <strong style="margin-top:8px;">Due Date</strong>
+        <p>{{ invoice.due_date or 'N/A' }}</p>
+        <strong style="margin-top:8px;">Terms</strong>
+        <p>{{ invoice.terms or 'Net 30' }}</p>
+    </div>
+</div>
+
+{% if invoice.job_name %}
+<div style="margin-bottom: 16px;">
+    <strong style="font-size:10px;color:#1a5276;text-transform:uppercase;">Project</strong>
+    <p style="margin:2px 0 0;font-size:11px;">{{ invoice.job_name }}</p>
+</div>
+{% endif %}
+
+{% if invoice.description %}
+<div style="margin-bottom: 16px;">
+    <strong style="font-size:10px;color:#1a5276;text-transform:uppercase;">Description</strong>
+    <p style="margin:2px 0 0;font-size:11px;">{{ invoice.description }}</p>
+</div>
+{% endif %}
+
+<table class="items">
+    <thead>
+        <tr>
+            <th style="width:50%;">Description</th>
+            <th class="right" style="width:12%;">Qty</th>
+            <th class="right" style="width:18%;">Unit Price</th>
+            <th class="right" style="width:20%;">Amount</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td>{{ item.description }}</td>
+            <td class="right">{{ item.quantity }}</td>
+            <td class="right">${{ fmt(item.unit_price) }}</td>
+            <td class="right">${{ fmt(item.amount) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="totals">
+    <div class="totals-row">
+        <span>Subtotal</span>
+        <span>${{ fmt(invoice.subtotal) }}</span>
+    </div>
+    {% if invoice.tax_rate and invoice.tax_rate > 0 %}
+    <div class="totals-row">
+        <span>Tax ({{ invoice.tax_rate }}%)</span>
+        <span>${{ fmt(invoice.tax_amount) }}</span>
+    </div>
+    {% endif %}
+    <div class="totals-row total">
+        <span>Total</span>
+        <span>${{ fmt(invoice.amount) }}</span>
+    </div>
+    {% if invoice.amount_paid and invoice.amount_paid > 0 %}
+    <div class="totals-row">
+        <span>Payments Received</span>
+        <span>(${{ fmt(invoice.amount_paid) }})</span>
+    </div>
+    <div class="totals-row balance">
+        <span>Balance Due</span>
+        <span>${{ fmt(invoice.balance_due) }}</span>
+    </div>
+    {% endif %}
+</div>
+
+{% if payments %}
+<div class="payment-history">
+    <h3>Payment History</h3>
+    <table>
+        <thead>
+            <tr><th>Date</th><th>Method</th><th>Reference</th><th style="text-align:right;">Amount</th></tr>
+        </thead>
+        <tbody>
+            {% for p in payments %}
+            <tr>
+                <td>{{ p.payment_date }}</td>
+                <td>{{ p.payment_method }}</td>
+                <td>{{ p.reference_number }}</td>
+                <td style="text-align:right;">${{ fmt(p.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if invoice.notes %}
+<div class="notes-section">
+    <strong>Notes</strong>
+    <p>{{ invoice.notes }}</p>
+</div>
+{% endif %}
+
+<div class="footer-contact">
+    LGHVAC Mechanical, LLC &bull; 3616 Utica Square Dr., Edmond, OK 73034 &bull; 918-351-3092 &bull; lgsqoffice@gmail.com
+</div>
+
+</body>
+</html>

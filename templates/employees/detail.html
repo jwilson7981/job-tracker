@@ -23,6 +23,21 @@
     <div class="loading">Loading employee details...</div>
 </div>
 
+<!-- Tax Forms -->
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;">Tax Forms</h3>
+    <div style="display:flex;gap:6px;">
+        <button class="btn btn-secondary btn-small" onclick="showEmpTaxForm('W4')">+ W-4</button>
+        <button class="btn btn-secondary btn-small" onclick="showEmpTaxForm('W9')">+ W-9</button>
+    </div>
+</div>
+<div class="module-table-wrapper" style="margin-bottom:24px;">
+    <table class="data-table">
+        <thead><tr><th>Form</th><th>Status</th><th>Signed</th><th>File</th><th>Actions</th></tr></thead>
+        <tbody id="taxFormsBody"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
+    </table>
+</div>
+
 <!-- Recent Time Entries -->
 <h3 style="margin:0 0 12px;">Recent Time Entries</h3>
 <div class="module-table-wrapper">
@@ -153,5 +168,5 @@
 window.EMPLOYEE_ID = {{ employee.id }};
 window.USER_ROLE = '{{ current_user.role }}';
 </script>
-<script src="/static/employees.js?v=20260304b"></script>
+<script src="/static/employees.js?v=20260307a"></script>
 {% endblock %}

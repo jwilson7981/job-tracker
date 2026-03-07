@@ -20,7 +20,8 @@
         contract:         { label: 'Contract',          dest: '/contracts',       icon: 'Contracts' },
         license:          { label: 'License',           dest: '/licenses',        icon: 'Licenses' },
         closeout:         { label: 'Closeout Document', dest: '/documents',       icon: 'Documents' },
-        lien_waiver:      { label: 'Lien Waiver',       dest: '/lien-waivers',   icon: 'Lien Waivers' }
+        lien_waiver:      { label: 'Lien Waiver',       dest: '/lien-waivers',   icon: 'Lien Waivers' },
+        warranty:         { label: 'Warranty Letter',    dest: '/warranty',       icon: 'Warranty' }
     };
 
     // ─── Create Overlay ─────────────────────────────────────────
@@ -65,6 +66,7 @@
                             '<option value="license">License</option>' +
                             '<option value="closeout">Closeout Document</option>' +
                             '<option value="lien_waiver">Lien Waiver</option>' +
+                            '<option value="warranty">Warranty Letter</option>' +
                         '</select>' +
                     '</div>' +
                     '<div id="ddDestInfo" class="dd-dest-info">Files will be uploaded to <strong>Plans</strong></div>' +
@@ -303,6 +305,7 @@
         if (path.indexOf('/licenses') === 0) return 'license';
         if (path.indexOf('/documents') === 0 || path.indexOf('/closeout') === 0) return 'closeout';
         if (path.indexOf('/lien-waivers') === 0) return 'lien_waiver';
+        if (path.indexOf('/warranty') === 0) return 'warranty';
         return 'materials';
     }
 
@@ -410,6 +413,12 @@
             url: '/api/lien-waivers/upload-new',
             fields: function (f, jobId) {
                 return { job_id: jobId };
+            }
+        },
+        warranty: {
+            url: '/api/warranty/items',
+            fields: function (f, jobId) {
+                return { job_id: jobId, item_description: f.name.replace(/\.[^.]+$/, ''), equipment_type: '', status: 'Active' };
             }
         }
     };

@@ -26,6 +26,13 @@
     border:1px solid var(--gray-200,#e2e8f0);background:#fff;transition:all .12s;
 }
 .pj-qlink:hover { background:var(--primary,#2563EB);color:#fff;border-color:var(--primary,#2563EB); }
+.pj-qlink:hover .pj-count { background:#fff; color:var(--primary,#2563EB); }
+.pj-count {
+    margin-left:auto;font-size:11px;font-weight:700;min-width:20px;text-align:center;
+    padding:1px 6px;border-radius:9999px;background:var(--primary,#2563EB);color:#fff;line-height:1.4;
+}
+.pj-count-warn { background:#D97706; }
+.pj-qlink:hover .pj-count-warn { color:#D97706; }
 .cust-search-wrap { position:relative; }
 .cust-search-results {
     position:absolute;left:0;right:0;top:100%;z-index:100;background:#fff;
@@ -280,5 +287,5 @@ async function createJob(e) {
     }
 }
 </script>
-<script src="/static/projects.js?v=20260305a"></script>
+<script src="/static/projects.js?v=20260307a"></script>
 {% endblock %}

@@ -38,7 +38,7 @@ async function loadJobsList() {
     loadChangeOrders();
 }
 
-// ─── Load Contracts Lookup (for GC name auto-fill) ──────────
+// ─── Load Contracts Lookup (for GC name auto-fill + building sections) ──
 async function loadContractsLookup() {
     try {
         const res = await fetch('/api/payapps/contracts');
@@ -53,9 +53,33 @@ async function loadContractsLookup() {
                 if (gcField && contract && contract.gc_name) {
                     gcField.value = contract.gc_name;
                 }
+                loadBuildingSections(contract ? contract.id : null);
             });
         }
     } catch(e) { /* contracts not available */ }
+}
+
+async function loadBuildingSections(contractId) {
+    var sel = document.getElementById('coBuilding');
+    var grp = document.getElementById('coBuildingGroup');
+    sel.innerHTML = '<option value="">-- End of SOV (bottom) --</option>';
+    if (!contractId) { grp.style.display = 'none'; return; }
+    try {
+        var res = await fetch('/api/payapps/contracts/' + contractId + '/sov');
+        var items = await res.json();
+        var headers = items.filter(function(i) { return i.is_header; });
+        if (headers.length > 0) {
+            headers.forEach(function(h) {
+                var opt = document.createElement('option');
+                opt.value = h.id;
+                opt.textContent = h.description;
+                sel.appendChild(opt);
+            });
+            grp.style.display = '';
+        } else {
+            grp.style.display = 'none';
+        }
+    } catch(e) { grp.style.display = 'none'; }
 }
 
 // ─── Load Change Orders ──────────────────────────────────────
@@ -216,6 +240,8 @@ function showAddCO() {
     document.getElementById('coGcName').value = (contract && contract.gc_name) ? contract.gc_name : '';
     document.getElementById('coStatus').value = 'Draft';
     document.getElementById('coStatusGroup').style.display = 'none';
+    document.getElementById('coBuilding').value = '';
+    loadBuildingSections(contract ? contract.id : null);
     document.getElementById('coModal').style.display = 'flex';
 }
 
@@ -234,12 +260,19 @@ async function editCO(id) {
     document.getElementById('coGcName').value = co.gc_name || '';
     document.getElementById('coStatus').value = co.status || 'Draft';
     document.getElementById('coStatusGroup').style.display = '';
+    var contract = contractsByJobId[co.job_id];
+    await loadBuildingSections(contract ? contract.id : null);
+    // Try to select the building this CO is under
+    if (co.sov_building_id) {
+        document.getElementById('coBuilding').value = co.sov_building_id;
+    }
     document.getElementById('coModal').style.display = 'flex';
 }
 
 // ─── Save (Create / Update) ─────────────────────────────────
 async function saveChangeOrder(event) {
     event.preventDefault();
+    const buildingVal = document.getElementById('coBuilding').value;
     const data = {
         job_id: document.getElementById('coJob').value,
         title: document.getElementById('coTitle').value,
@@ -247,6 +280,7 @@ async function saveChangeOrder(event) {
         reason: document.getElementById('coReason').value,
         amount: parseFloat(document.getElementById('coAmount').value) || 0,
         gc_name: document.getElementById('coGcName').value,
+        sov_section_id: buildingVal ? parseInt(buildingVal) : null,
     };
 
     if (editingCOId) {

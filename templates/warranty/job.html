@@ -1,42 +1,177 @@
 {% extends "base.html" %}
 {% block title %}Warranty - {{ job.name }}{% endblock %}
 {% block content %}
+<style>
+.equip-card { border:1px solid var(--gray-200,#e2e8f0); border-radius:8px; margin-bottom:16px; overflow:hidden; }
+.equip-header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:var(--gray-50,#f8fafc); border-bottom:1px solid var(--gray-200,#e2e8f0); cursor:pointer; }
+.equip-header:hover { background:var(--gray-100,#f1f5f9); }
+.equip-body { padding:16px; }
+.equip-meta { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; font-size:13px; margin-bottom:12px; }
+.equip-meta .label { color:var(--gray-500); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+.claim-row { display:flex; align-items:center; gap:12px; padding:8px 12px; border-radius:6px; margin-bottom:6px; font-size:13px; }
+.claim-row:hover { background:var(--gray-50,#f8fafc); }
+.claim-open { border-left:3px solid #3B82F6; }
+.claim-progress { border-left:3px solid #F59E0B; }
+.claim-resolved { border-left:3px solid #22C55E; }
+.claim-denied { border-left:3px solid #9CA3AF; }
+</style>
 <div class="page-header">
-    <h1>{{ job.name }} - Warranties</h1>
-    <div>
-        <button class="btn btn-primary btn-small" onclick="showAddWarranty()">+ Add Warranty</button>
-        <a href="/warranty" class="btn btn-secondary btn-small">Back</a>
+    <h1>{{ job.name }} - Warranty</h1>
+    <div style="display:flex;gap:6px;">
+        <button class="btn btn-primary" onclick="showAddEquipment()">+ Add Equipment</button>
+        <a href="/warranty" class="btn btn-secondary">Back</a>
     </div>
 </div>
-<div id="warrantyItems"></div>
 
-<!-- Add Warranty Modal -->
-<div id="warrantyModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
-    <div class="modal">
-        <h2 id="warrantyModalTitle">Add Warranty Item</h2>
-        <form onsubmit="saveWarrantyItem(event)">
-            <label>Item Description</label><input type="text" id="wiDesc" required>
-            <label>Manufacturer</label><input type="text" id="wiMfg">
-            <label>Warranty Start</label><input type="date" id="wiStart">
-            <label>Warranty End</label><input type="date" id="wiEnd">
-            <label>Coverage Details</label><textarea id="wiCoverage" style="width:100%;padding:10px;border:1px solid var(--gray-300);border-radius:6px;min-height:80px;margin-bottom:16px;font-family:inherit;"></textarea>
-            <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('warrantyModal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save</button>
+<div id="equipmentList"><div class="loading">Loading...</div></div>
+
+<!-- Add/Edit Equipment Modal -->
+<div id="equipModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:640px;">
+        <div class="modal-header">
+            <h2 id="equipModalTitle">Add Equipment</h2>
+            <button class="modal-close" onclick="document.getElementById('equipModal').style.display='none'">&times;</button>
+        </div>
+        <form id="equipForm" onsubmit="saveEquipment(event)" enctype="multipart/form-data">
+            <input type="hidden" id="eqId">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Equipment Type</label>
+                    <select id="eqType" class="form-select">
+                        <option value="">-- Select --</option>
+                        <option value="RTU">RTU (Rooftop Unit)</option>
+                        <option value="AHU">AHU (Air Handler)</option>
+                        <option value="Furnace">Furnace</option>
+                        <option value="Condenser">Condenser</option>
+                        <option value="Heat Pump">Heat Pump</option>
+                        <option value="Mini Split">Mini Split</option>
+                        <option value="Boiler">Boiler</option>
+                        <option value="Chiller">Chiller</option>
+                        <option value="VRF">VRF System</option>
+                        <option value="Thermostat">Thermostat</option>
+                        <option value="Exhaust Fan">Exhaust Fan</option>
+                        <option value="ERV/HRV">ERV / HRV</option>
+                        <option value="Water Heater">Water Heater</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Manufacturer</label>
+                    <input type="text" id="eqMfg" class="form-input" placeholder="e.g. Carrier, Trane, Lennox">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="eqDesc" class="form-input" required placeholder="e.g. 5-Ton RTU, 80% Furnace">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Building / Section</label>
+                    <input type="text" id="eqBuilding" class="form-input" placeholder="e.g. Building A, Unit 101">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Unit Number</label>
+                    <input type="text" id="eqUnit" class="form-input" placeholder="e.g. RTU-1, AHU-3">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Model Number</label>
+                    <input type="text" id="eqModel" class="form-input" placeholder="Model #">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Serial Number</label>
+                    <input type="text" id="eqSerial" class="form-input" placeholder="Serial #">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Warranty Start</label>
+                    <input type="date" id="eqStart" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Warranty End</label>
+                    <input type="date" id="eqEnd" class="form-input">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Coverage Details</label>
+                <textarea id="eqCoverage" class="form-input" rows="2" style="resize:vertical;" placeholder="Parts & labor, compressor 10yr, etc."></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Warranty Letter (PDF)</label>
+                <input type="file" id="eqFile" class="form-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+                <div id="eqCurrentFile" style="font-size:12px;color:var(--gray-500);margin-top:4px;"></div>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('equipModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Equipment</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- Add Claim Modal -->
+<!-- File Claim Modal -->
 <div id="claimModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
-    <div class="modal">
-        <h2>File Warranty Claim</h2>
+    <div class="modal" style="max-width:560px;">
+        <div class="modal-header">
+            <h2>File Warranty Claim</h2>
+            <button class="modal-close" onclick="document.getElementById('claimModal').style.display='none'">&times;</button>
+        </div>
         <form onsubmit="saveWarrantyClaim(event)">
             <input type="hidden" id="claimWarrantyId">
-            <label>Claim Date</label><input type="date" id="claimDate">
-            <label>Description</label><textarea id="claimDesc" style="width:100%;padding:10px;border:1px solid var(--gray-300);border-radius:6px;min-height:80px;margin-bottom:16px;font-family:inherit;"></textarea>
-            <div class="modal-actions">
+            <div class="form-group">
+                <label class="form-label">Issue Description</label>
+                <textarea id="claimDesc" class="form-input" rows="3" required style="resize:vertical;" placeholder="Describe the warranty issue..."></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select id="claimPriority" class="form-select">
+                        <option value="Low">Low</option>
+                        <option value="Normal" selected>Normal</option>
+                        <option value="High">High</option>
+                        <option value="Urgent">Urgent</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Claim Date</label>
+                    <input type="date" id="claimDate" class="form-input">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Building</label>
+                    <input type="text" id="claimBuilding" class="form-input" placeholder="Building / Section">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Unit</label>
+                    <input type="text" id="claimUnit" class="form-input" placeholder="Unit #">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Caller Name</label>
+                    <input type="text" id="claimCaller" class="form-input" placeholder="Who reported the issue">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Caller Phone</label>
+                    <input type="text" id="claimPhone" class="form-input" placeholder="Phone #">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">Assigned To</label>
+                    <select id="claimAssigned" class="form-select">
+                        <option value="">-- Unassigned --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Scheduled Date</label>
+                    <input type="date" id="claimScheduled" class="form-input">
+                </div>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('claimModal').style.display='none'">Cancel</button>
                 <button type="submit" class="btn btn-primary">File Claim</button>
             </div>
@@ -44,6 +179,27 @@
     </div>
 </div>
 
+<!-- Upload File Modal (for existing items) -->
+<div id="uploadModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:400px;">
+        <div class="modal-header">
+            <h2>Upload Warranty Letter</h2>
+            <button class="modal-close" onclick="document.getElementById('uploadModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="uploadWarrantyFile(event)">
+            <input type="hidden" id="uploadWid">
+            <div class="form-group">
+                <label class="form-label">File</label>
+                <input type="file" id="uploadFile" class="form-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" required>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('uploadModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>window.JOB_ID = {{ job.id }};</script>
-<script src="/static/warranty.js"></script>
+<script src="/static/warranty.js?v=20260307a"></script>
 {% endblock %}

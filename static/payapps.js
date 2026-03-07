@@ -223,16 +223,55 @@ async function loadSov() {
     let total = 0;
     tbody.innerHTML = sovItems.map((s, i) => {
         if (!s.is_header) total += (s.scheduled_value || 0);
+        var arrows = '<span style="display:inline-flex;flex-direction:column;gap:0;margin-right:4px;vertical-align:middle;">'
+            + (i > 0 ? '<button class="btn-arrow" onclick="moveSovItem(' + i + ',-1)" title="Move up">&#9650;</button>' : '<button class="btn-arrow" style="visibility:hidden;">&#9650;</button>')
+            + (i < sovItems.length - 1 ? '<button class="btn-arrow" onclick="moveSovItem(' + i + ',1)" title="Move down">&#9660;</button>' : '<button class="btn-arrow" style="visibility:hidden;">&#9660;</button>')
+            + '</span>';
+        var insertBtn = '<button class="btn btn-small btn-outline" onclick="showInsertSovItem(' + s.sort_order + ')" title="Insert line above">Ins</button>';
         return s.is_header
             ? `<tr class="sov-header-row"><td>${s.item_number}</td><td colspan="2"><strong>${s.description}</strong></td><td></td><td>
+                ${arrows} ${insertBtn}
                 <button class="btn btn-small btn-secondary" onclick="editSovItem(${s.id})">Edit</button>
                 <button class="btn btn-small btn-danger" onclick="deleteSovItem(${s.id})">Del</button></td></tr>`
             : `<tr><td>${s.item_number}</td><td>${s.description}</td><td>${fmt(s.scheduled_value)}</td>
                 <td>${s.retainage_exempt ? 'Exempt' : 'Yes'}</td><td>
+                ${arrows} ${insertBtn}
                 <button class="btn btn-small btn-secondary" onclick="editSovItem(${s.id})">Edit</button>
                 <button class="btn btn-small btn-danger" onclick="deleteSovItem(${s.id})">Del</button></td></tr>`;
     }).join('');
     document.getElementById('sovFoot').innerHTML = `<tr style="font-weight:700;"><td></td><td>TOTAL</td><td>${fmt(total)}</td><td></td><td></td></tr>`;
+}
+
+async function moveSovItem(index, direction) {
+    var newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= sovItems.length) return;
+    // Swap in array
+    var temp = sovItems[index];
+    sovItems[index] = sovItems[newIndex];
+    sovItems[newIndex] = temp;
+    // Reassign sort_order and item_number sequentially
+    var headerNum = 0;
+    var lineNum = 0;
+    var order = sovItems.map(function(s, i) {
+        if (s.is_header) {
+            headerNum++;
+            return { id: s.id, sort_order: i, item_number: headerNum };
+        } else {
+            lineNum++;
+            return { id: s.id, sort_order: i, item_number: lineNum };
+        }
+    });
+    // Renumber: headers and lines get sequential item_numbers in display order
+    var num = 0;
+    order = sovItems.map(function(s, i) {
+        num++;
+        return { id: s.id, sort_order: i, item_number: num };
+    });
+    await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID + '/sov/reorder', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ order: order })
+    });
+    loadSov();
 }
 
 function resetSovPreset(desc) {
@@ -254,8 +293,23 @@ function resetSovPreset(desc) {
     }
 }
 
+var sovInsertAt = null; // track insert position
+
 function showAddSovItem() {
+    sovInsertAt = null;
     document.getElementById('sovModalTitle').textContent = 'Add Line Item';
+    document.getElementById('sovId').value = '';
+    document.getElementById('sovDesc').value = '';
+    document.getElementById('sovValue').value = '0';
+    document.getElementById('sovIsHeader').checked = false;
+    document.getElementById('sovRetExempt').checked = false;
+    resetSovPreset('');
+    document.getElementById('sovModal').style.display = 'flex';
+}
+
+function showInsertSovItem(sortOrder) {
+    sovInsertAt = sortOrder;
+    document.getElementById('sovModalTitle').textContent = 'Insert Line (above #' + (sovItems.findIndex(s => s.sort_order === sortOrder) + 1) + ')';
     document.getElementById('sovId').value = '';
     document.getElementById('sovDesc').value = '';
     document.getElementById('sovValue').value = '0';
@@ -290,8 +344,13 @@ async function saveSovItem(e) {
     if (id) {
         await fetch('/api/payapps/sov/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
     } else {
-        data.sort_order = sovItems.length;
+        if (sovInsertAt !== null) {
+            data.insert_at = sovInsertAt;
+        } else {
+            data.sort_order = sovItems.length;
+        }
         await fetch('/api/payapps/contracts/' + PA_CONTRACT_ID + '/sov', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+        sovInsertAt = null;
     }
     document.getElementById('sovModal').style.display = 'none';
     loadSov();

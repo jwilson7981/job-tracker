@@ -1,35 +1,228 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard - Construction Management{% endblock %}
+{% block title %}Dashboard - LGHVAC{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>Dashboard</h1>
+<style>
+/* ─── Dashboard Layout ──────────────────────────────────────── */
+.dash-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+}
+@media (max-width: 1100px) { .dash-grid { grid-template-columns: 1fr; } }
+
+/* ─── Quick Action Tiles (QB-style) ─────────────────────────── */
+.qa-section { margin-bottom: 24px; }
+.qa-section-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--gray-400); margin-bottom: 8px; padding-left: 2px;
+}
+.qa-row {
+    display: flex; gap: 8px; flex-wrap: wrap;
+}
+.qa-tile {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: 8px; padding: 12px 16px; min-width: 170px; flex: 1;
+    cursor: pointer; transition: all .15s; text-decoration: none; color: var(--gray-700);
+    font-size: 13px; font-weight: 600;
+}
+.qa-tile:hover { border-color: var(--blue-primary); background: var(--blue-50, #eff6ff); color: var(--blue-primary); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.qa-icon {
+    width: 36px; height: 36px; border-radius: 8px; display: flex;
+    align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;
+}
+.qa-badge {
+    margin-left: auto; background: var(--red-50, #fef2f2); color: #dc2626;
+    font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+    min-width: 20px; text-align: center;
+}
+.qa-badge-warn { background: #FEF3C7; color: #92400E; }
+.qa-badge-info { background: #DBEAFE; color: #1E40AF; }
+
+/* ─── Snapshot Cards ────────────────────────────────────────── */
+.snap-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;
+}
+@media (max-width: 900px) { .snap-grid { grid-template-columns: repeat(2, 1fr); } }
+.snap-card {
+    background: var(--white); border: 1px solid var(--gray-200); border-radius: 10px;
+    padding: 16px; position: relative; overflow: hidden;
+}
+.snap-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+}
+.snap-label { font-size: 12px; font-weight: 600; color: var(--gray-500); margin-bottom: 4px; }
+.snap-value { font-size: 24px; font-weight: 800; color: var(--gray-900); }
+.snap-sub { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
+
+/* ─── Right Panel ───────────────────────────────────────────── */
+.dash-panel {
+    background: var(--white); border: 1px solid var(--gray-200); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+}
+.dash-panel-title {
+    font-size: 14px; font-weight: 700; color: var(--gray-700); margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between;
+}
+.dash-panel-title a { font-size: 12px; font-weight: 500; color: var(--blue-primary); text-decoration: none; }
+
+/* ─── Project Row ───────────────────────────────────────────── */
+.proj-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid var(--gray-100); text-decoration: none; color: inherit;
+}
+.proj-row:last-child { border-bottom: none; }
+.proj-row:hover { background: var(--gray-50, #f9fafb); margin: 0 -8px; padding: 8px; border-radius: 6px; }
+.proj-name { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-bar { width: 60px; height: 6px; background: var(--gray-200); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+.proj-bar-fill { height: 100%; background: #3B82F6; border-radius: 3px; }
+.proj-pct { font-size: 11px; color: var(--gray-400); min-width: 32px; text-align: right; }
+
+/* ─── Action Items ──────────────────────────────────────────── */
+.action-item {
+    display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid var(--gray-100); font-size: 13px;
+}
+.action-item:last-child { border-bottom: none; }
+.action-dot {
+    width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0;
+}
+.action-text { flex: 1; color: var(--gray-700); }
+.action-text a { color: var(--blue-primary); text-decoration: none; font-weight: 600; }
+.action-meta { font-size: 11px; color: var(--gray-400); }
+
+/* ─── Activity Feed ─────────────────────────────────────────── */
+.activity-item {
+    display: flex; align-items: flex-start; gap: 10px; padding: 7px 0;
+    border-bottom: 1px solid var(--gray-100); font-size: 12px;
+}
+.activity-item:last-child { border-bottom: none; }
+.activity-avatar {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--gray-200);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: var(--gray-600); flex-shrink: 0;
+}
+.activity-body { flex: 1; color: var(--gray-600); }
+.activity-body strong { color: var(--gray-800); }
+.activity-time { font-size: 11px; color: var(--gray-400); white-space: nowrap; }
+
+/* ─── Charts ────────────────────────────────────────────────── */
+.dash-charts {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;
+}
+@media (max-width: 900px) { .dash-charts { grid-template-columns: 1fr; } }
+.dash-chart-card {
+    background: var(--white); border: 1px solid var(--gray-200); border-radius: 10px; padding: 16px;
+}
+.dash-chart-card h4 { font-size: 13px; font-weight: 700; color: var(--gray-600); margin: 0 0 12px; }
+</style>
+
+<div class="page-header" style="margin-bottom: 16px;">
+    <div>
+        <h1 style="margin:0;">Dashboard</h1>
+        <p style="margin:4px 0 0;font-size:13px;color:var(--gray-400);" id="dashGreeting"></p>
+    </div>
     <button class="btn btn-primary" onclick="showNewJobModal()">+ New Project</button>
 </div>
-<div id="dashboardLoading" class="loading">Loading dashboard...</div>
-<div id="dashboardContent" style="display:none;">
-    <div class="kpi-grid" id="kpiGrid"></div>
-    <div class="charts-row">
-        <div class="chart-card">
-            <h3>Projects by Stage</h3>
-            <canvas id="stageChart"></canvas>
-        </div>
-        <div class="chart-card">
-            <h3>Financial Overview</h3>
-            <canvas id="financeChart"></canvas>
-        </div>
-    </div>
 
-    <!-- Upcoming Bid Follow-ups (Phase 4) -->
-    <div class="chart-card" id="followupsCard" style="margin-top:16px;">
-        <h3>Upcoming Bid Follow-ups <small style="color:var(--gray-400);font-weight:400;">(next 7 days)</small></h3>
-        <table class="data-table" style="margin-top:8px;">
-            <thead><tr><th>Date</th><th>Bid</th><th>Project</th><th>Type</th><th>Assigned To</th><th></th></tr></thead>
-            <tbody id="dashFollowupsBody"><tr><td colspan="6" class="empty-state">No upcoming follow-ups</td></tr></tbody>
-        </table>
+<div id="dashboardLoading" class="loading">Loading dashboard...</div>
+
+<div id="dashboardContent" style="display:none;">
+
+    <!-- Financial Snapshot -->
+    <div class="snap-grid" id="snapGrid"></div>
+
+    <div class="dash-grid">
+        <!-- ─── LEFT COLUMN ─────────────────────────────────────── -->
+        <div>
+            <!-- Quick Actions (QB-style workflow tiles) -->
+            <div class="qa-section">
+                <div class="qa-section-title">Projects</div>
+                <div class="qa-row">
+                    <a href="/projects" class="qa-tile"><span class="qa-icon" style="background:#EEF2FF;color:#4338CA;">&#128194;</span>Projects<span class="qa-badge-info qa-badge" id="qaBadgeActive"></span></a>
+                    <a href="/bids" class="qa-tile"><span class="qa-icon" style="background:#FEF3C7;color:#92400E;">&#128209;</span>Bids<span class="qa-badge-warn qa-badge" id="qaBadgeBids" style="display:none;"></span></a>
+                    <a href="/submittals" class="qa-tile"><span class="qa-icon" style="background:#FDE68A;color:#78350F;">&#128196;</span>Submittals<span class="qa-badge qa-badge" id="qaBadgeSub" style="display:none;"></span></a>
+                    <a href="/rfis" class="qa-tile"><span class="qa-icon" style="background:#E0E7FF;color:#3730A3;">&#128221;</span>RFIs</a>
+                </div>
+            </div>
+            <div class="qa-section">
+                <div class="qa-section-title">Billing & Payments</div>
+                <div class="qa-row">
+                    <a href="/payapps" class="qa-tile"><span class="qa-icon" style="background:#DCFCE7;color:#166534;">&#128179;</span>Pay Apps</a>
+                    <a href="/service-invoices" class="qa-tile"><span class="qa-icon" style="background:#F0FDF4;color:#15803d;">&#128451;</span>Invoices</a>
+                    <a href="/billing-summary" class="qa-tile"><span class="qa-icon" style="background:#DBEAFE;color:#1E40AF;">&#128200;</span>Billing Summary</a>
+                    <a href="/lien-waivers" class="qa-tile"><span class="qa-icon" style="background:#F3F4F6;color:#374151;">&#128220;</span>Lien Waivers</a>
+                </div>
+            </div>
+            <div class="qa-section">
+                <div class="qa-section-title">Operations</div>
+                <div class="qa-row">
+                    <a href="/service-calls" class="qa-tile"><span class="qa-icon" style="background:#FEF2F2;color:#991B1B;">&#128222;</span>Service Calls<span class="qa-badge" id="qaBadgeSC" style="display:none;"></span></a>
+                    <a href="/schedule" class="qa-tile"><span class="qa-icon" style="background:#EFF6FF;color:#1D4ED8;">&#128197;</span>Schedule</a>
+                    <a href="/supplier-quotes" class="qa-tile"><span class="qa-icon" style="background:#FDF4FF;color:#7E22CE;">&#128230;</span>Supplier Quotes</a>
+                    <a href="/accounting" class="qa-tile"><span class="qa-icon" style="background:#ECFDF5;color:#065F46;">&#128176;</span>Accounting</a>
+                </div>
+            </div>
+            <div class="qa-section">
+                <div class="qa-section-title">Admin</div>
+                <div class="qa-row">
+                    <a href="/employees" class="qa-tile"><span class="qa-icon" style="background:#F5F3FF;color:#6D28D9;">&#128100;</span>Employees</a>
+                    <a href="/payroll" class="qa-tile"><span class="qa-icon" style="background:#FFF7ED;color:#C2410C;">&#128181;</span>Payroll<span class="qa-badge-warn qa-badge" id="qaBadgeHours" style="display:none;"></span></a>
+                    <a href="/licenses" class="qa-tile"><span class="qa-icon" style="background:#FEF9C3;color:#854D0E;">&#128203;</span>Licenses<span class="qa-badge-warn qa-badge" id="qaBadgeLic" style="display:none;"></span></a>
+                    <a href="/recurring-expenses" class="qa-tile"><span class="qa-icon" style="background:#FEE2E2;color:#991B1B;">&#128337;</span>Recurring</a>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="dash-charts">
+                <div class="dash-chart-card">
+                    <h4>Projects by Stage</h4>
+                    <canvas id="stageChart" height="200"></canvas>
+                </div>
+                <div class="dash-chart-card">
+                    <h4>Financial Overview</h4>
+                    <canvas id="financeChart" height="200"></canvas>
+                </div>
+            </div>
+
+            <!-- Upcoming Schedule -->
+            <div class="dash-panel" id="schedulePanel" style="display:none;">
+                <div class="dash-panel-title">Upcoming Schedule <a href="/schedule">View All</a></div>
+                <div id="scheduleItems"></div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="dash-panel" id="activityPanel" style="display:none;">
+                <div class="dash-panel-title">Recent Activity</div>
+                <div id="activityFeed"></div>
+            </div>
+        </div>
+
+        <!-- ─── RIGHT COLUMN ────────────────────────────────────── -->
+        <div>
+            <!-- Action Items -->
+            <div class="dash-panel" id="actionPanel">
+                <div class="dash-panel-title">Action Items <span id="actionCount" style="background:#EF4444;color:#fff;font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px;"></span></div>
+                <div id="actionItems"><p class="empty-state" style="font-size:13px;">No action items</p></div>
+            </div>
+
+            <!-- Active Projects -->
+            <div class="dash-panel">
+                <div class="dash-panel-title">Active Projects <a href="/projects">View All</a></div>
+                <div id="activeProjects"><p class="empty-state" style="font-size:13px;">No active projects</p></div>
+            </div>
+
+            <!-- Bid Follow-ups -->
+            <div class="dash-panel" id="followupsPanel" style="display:none;">
+                <div class="dash-panel-title">Bid Follow-ups <a href="/bids">View All</a></div>
+                <div id="followupsItems"></div>
+            </div>
+        </div>
     </div>
 </div>
+
 <!-- New Job Modal -->
 <div id="newJobModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)hideNewJobModal()">
     <div class="modal">
@@ -40,7 +233,7 @@
         <form onsubmit="createJob(event)">
             <div class="form-group">
                 <label class="form-label">Project Name</label>
-                <input type="text" id="jobName" class="form-input" placeholder="e.g. Building A — Phase 2" autofocus required>
+                <input type="text" id="jobName" class="form-input" placeholder="e.g. Building A - Phase 2" autofocus required>
             </div>
             <div class="form-group">
                 <label class="form-label">Address</label>
@@ -135,5 +328,5 @@ async function createJob(e) {
 }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="/static/dashboard.js?v=20260304b"></script>
+<script src="/static/dashboard.js?v=20260307b"></script>
 {% endblock %}

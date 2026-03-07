@@ -67,6 +67,7 @@
                 <th>#</th>
                 <th>Type</th>
                 <th>Pay App</th>
+                <th>File</th>
                 <th>Against</th>
                 <th>Current Payment</th>
                 <th>Balance</th>
@@ -262,6 +263,15 @@
                 <select id="uploadJob" class="form-select" required onchange="loadPayAppsForUpload()"></select>
             </div>
             <div class="form-group">
+                <label class="form-label">Type *</label>
+                <select id="uploadType" class="form-select" required>
+                    <option value="Conditional Progress">Conditional Progress</option>
+                    <option value="Unconditional Progress">Unconditional Progress</option>
+                    <option value="Conditional Final">Conditional Final</option>
+                    <option value="Unconditional Final">Unconditional Final</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label class="form-label">Pay App</label>
                 <select id="uploadPayApp" class="form-select">
                     <option value="">-- None --</option>
@@ -322,7 +332,7 @@ async function loadWaivers() {
 function renderTable() {
     const tbody = document.getElementById('waiversBody');
     if (!allWaivers.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No lien waivers found. Click "+ New Waiver" to create one.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty-state">No lien waivers found. Click "+ New Waiver" to create one.</td></tr>';
         document.getElementById('waiverCount').textContent = '';
         return;
     }
@@ -331,11 +341,13 @@ function renderTable() {
         const statusClass = w.status === 'Draft' ? 'badge-gray' : w.status === 'Sent' ? 'badge-yellow' : 'badge-green';
         const typeShort = w.waiver_type.replace('Conditional ', 'Cond. ').replace('Unconditional ', 'Uncond. ');
         const payAppLabel = w.pay_app_number ? `#${w.pay_app_number}` : '-';
+        const fileLabel = w.original_filename ? `<span title="${w.original_filename}" style="max-width:180px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${w.original_filename}</span>` : (w.has_file ? '<span style="color:var(--gray-400)">uploaded</span>' : '-');
         return `<tr>
             <td>${w.job_name || ''}</td>
             <td>${w.waiver_number}</td>
             <td>${typeShort}</td>
             <td>${payAppLabel}</td>
+            <td>${fileLabel}</td>
             <td>${w.against_company || '-'}</td>
             <td>$${fmt(w.current_payment)}</td>
             <td>$${fmt(w.contract_balance)}</td>
@@ -600,9 +612,11 @@ async function uploadNewWaiver(e) {
     const payAppId = document.getElementById('uploadPayApp').value;
     const file = document.getElementById('uploadNewFile').files[0];
     if (!file || !jobId) return;
+    const waiverType = document.getElementById('uploadType').value;
     const fd = new FormData();
     fd.append('file', file);
     fd.append('job_id', jobId);
+    fd.append('waiver_type', waiverType);
     if (payAppId) fd.append('pay_app_id', payAppId);
     const res = await fetch('/api/lien-waivers/upload-new', { method: 'POST', body: fd });
     if (res.ok) {

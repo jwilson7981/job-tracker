@@ -1,0 +1,671 @@
+{% extends "base.html" %}
+{% block title %}Service Invoices - Construction Management{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Service Invoices</h1>
+    <div style="display:flex;gap:6px;align-items:center;">
+        <button class="btn btn-primary" onclick="showCreateModal()">+ New Invoice</button>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-grid" id="kpiCards">
+    <div class="kpi-card" style="border-left:4px solid #6366F1;">
+        <div class="kpi-value" id="kpiTotalInvoiced">$0.00</div>
+        <div class="kpi-label">Total Invoiced</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #F59E0B;">
+        <div class="kpi-value" id="kpiOutstanding">$0.00</div>
+        <div class="kpi-label">Outstanding</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #22C55E;">
+        <div class="kpi-value" id="kpiPaid">$0.00</div>
+        <div class="kpi-label">Paid</div>
+    </div>
+    <div class="kpi-card" style="border-left:4px solid #EF4444;">
+        <div class="kpi-value" id="kpiOverdue">0</div>
+        <div class="kpi-label">Overdue</div>
+    </div>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <select id="filterJob" class="form-select" onchange="renderTable()" style="max-width:240px;">
+        <option value="">All Jobs</option>
+    </select>
+    <select id="filterStatus" class="form-select" onchange="renderTable()" style="max-width:180px;">
+        <option value="">All Statuses</option>
+        <option value="Draft">Draft</option>
+        <option value="Sent">Sent</option>
+        <option value="Partial">Partial</option>
+        <option value="Paid">Paid</option>
+        <option value="Overdue">Overdue</option>
+    </select>
+    <input type="date" id="filterDateFrom" class="form-input" onchange="renderTable()" style="max-width:160px;" placeholder="From">
+    <input type="date" id="filterDateTo" class="form-input" onchange="renderTable()" style="max-width:160px;" placeholder="To">
+    <span id="invoiceCount" style="font-size:13px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+
+<!-- Table -->
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Invoice #</th>
+                <th>Customer</th>
+                <th>Job</th>
+                <th>Description</th>
+                <th style="text-align:right;">Amount</th>
+                <th>Issue Date</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th style="text-align:right;">Balance Due</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="invoiceBody">
+            <tr><td colspan="10" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Create/Edit Invoice Modal -->
+<div class="modal-overlay" id="invoiceModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:800px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h2 id="invoiceModalTitle">New Service Invoice</h2>
+            <button class="modal-close" onclick="closeModal('invoiceModal')">&times;</button>
+        </div>
+        <form onsubmit="saveInvoice(event)" id="invoiceForm">
+            <input type="hidden" id="editId" value="">
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Invoice Number</label>
+                    <input type="text" id="fInvoiceNumber" class="form-input" placeholder="Auto-generated if blank">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Job (optional)</label>
+                    <select id="fJob" class="form-select">
+                        <option value="">-- No Job --</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Customer Name *</label>
+                    <input type="text" id="fCustomerName" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Customer Email</label>
+                    <input type="email" id="fCustomerEmail" class="form-input">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Customer Address</label>
+                <input type="text" id="fCustomerAddress" class="form-input">
+            </div>
+
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Issue Date</label>
+                    <input type="date" id="fIssueDate" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Terms</label>
+                    <select id="fTerms" class="form-select" onchange="calcDueDate()">
+                        <option value="Due on Receipt">Due on Receipt</option>
+                        <option value="Net 15">Net 15</option>
+                        <option value="Net 30" selected>Net 30</option>
+                        <option value="Net 45">Net 45</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Due Date</label>
+                    <input type="date" id="fDueDate" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select id="fStatus" class="form-select">
+                        <option value="Draft">Draft</option>
+                        <option value="Sent">Sent</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" id="fDescription" class="form-input" placeholder="Brief description of work">
+            </div>
+
+            <!-- Line Items -->
+            <div style="margin-top:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <label class="form-label" style="margin:0;font-weight:600;">Line Items</label>
+                    <button type="button" class="btn btn-secondary btn-small" onclick="addLineItem()">+ Add Line</button>
+                </div>
+                <table class="data-table" style="font-size:13px;">
+                    <thead>
+                        <tr>
+                            <th style="width:45%;">Description</th>
+                            <th style="width:12%;text-align:right;">Qty</th>
+                            <th style="width:18%;text-align:right;">Unit Price</th>
+                            <th style="width:18%;text-align:right;">Amount</th>
+                            <th style="width:7%;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="lineItemsBody"></tbody>
+                </table>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+                <div style="width:280px;">
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;">
+                        <span>Subtotal</span>
+                        <span id="fSubtotal">$0.00</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;align-items:center;">
+                        <span>Tax %</span>
+                        <input type="number" id="fTaxRate" class="form-input" step="0.01" min="0" value="0" onchange="calcTotals()" style="width:80px;text-align:right;padding:4px 8px;">
+                    </div>
+                    <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;">
+                        <span>Tax</span>
+                        <span id="fTaxAmount">$0.00</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;padding:8px 0 0;font-size:15px;font-weight:700;border-top:2px solid var(--gray-300);">
+                        <span>Total</span>
+                        <span id="fTotal">$0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">Notes</label>
+                <textarea id="fNotes" class="form-input" rows="2" style="resize:vertical;min-height:50px;" placeholder="Payment instructions, thank you message, etc."></textarea>
+            </div>
+
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('invoiceModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Invoice</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View Detail Modal -->
+<div class="modal-overlay" id="detailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:750px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-header">
+            <h2 id="detailTitle">Invoice Details</h2>
+            <button class="modal-close" onclick="closeModal('detailModal')">&times;</button>
+        </div>
+        <div id="detailContent"></div>
+        <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('detailModal')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Payment Modal -->
+<div class="modal-overlay" id="paymentModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Record Payment</h2>
+            <button class="modal-close" onclick="closeModal('paymentModal')">&times;</button>
+        </div>
+        <form onsubmit="recordPayment(event)" id="paymentForm">
+            <input type="hidden" id="payInvoiceId" value="">
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Amount *</label>
+                    <input type="number" id="payAmount" class="form-input" step="0.01" min="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Payment Date</label>
+                    <input type="date" id="payDate" class="form-input">
+                </div>
+            </div>
+            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="form-group">
+                    <label class="form-label">Method</label>
+                    <select id="payMethod" class="form-select">
+                        <option value="Check">Check</option>
+                        <option value="ACH">ACH</option>
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Cash">Cash</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Reference #</label>
+                    <input type="text" id="payReference" class="form-input" placeholder="Check #, transaction ID, etc.">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <input type="text" id="payNotes" class="form-input" placeholder="Optional notes">
+            </div>
+            <div id="payBalanceInfo" style="padding:8px 12px;background:var(--gray-100);border-radius:6px;font-size:13px;margin-top:8px;"></div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('paymentModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Record Payment</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Email Modal -->
+<div class="modal-overlay" id="emailModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:550px;">
+        <div class="modal-header">
+            <h2>Email Invoice</h2>
+            <button class="modal-close" onclick="closeModal('emailModal')">&times;</button>
+        </div>
+        <form onsubmit="sendEmail(event)" id="emailForm">
+            <input type="hidden" id="emailInvoiceId" value="">
+            <div class="form-group">
+                <label class="form-label">To (email) *</label>
+                <input type="email" id="emailTo" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Subject</label>
+                <input type="text" id="emailSubject" class="form-input" value="Invoice from LGHVAC LLC">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Message</label>
+                <textarea id="emailBody" class="form-input" rows="4" style="resize:vertical;">Please find the attached invoice. Thank you for your business.
+
+LGHVAC Mechanical, LLC</textarea>
+            </div>
+            <div class="form-actions" style="display:flex;gap:12px;justify-content:flex-end;margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('emailModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Send Email</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let allInvoices = [];
+let allJobs = [];
+
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+function fmt(v) {
+    const n = parseFloat(v) || 0;
+    return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function statusBadge(s) {
+    const cls = {Draft:'badge-gray',Sent:'badge-blue',Partial:'badge-yellow',Paid:'badge-green',Overdue:'badge-red'}[s] || 'badge-gray';
+    return `<span class="status-badge ${cls}">${s}</span>`;
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadJobs();
+    await loadInvoices();
+});
+
+async function loadJobs() {
+    try {
+        const res = await fetch('/api/jobs');
+        allJobs = await res.json();
+    } catch(e) { allJobs = []; }
+    const filterSel = document.getElementById('filterJob');
+    const formSel = document.getElementById('fJob');
+    allJobs.forEach(j => {
+        const opt = `<option value="${j.id}">${j.name}</option>`;
+        filterSel.innerHTML += opt;
+        formSel.innerHTML += opt;
+    });
+}
+
+async function loadInvoices() {
+    try {
+        const res = await fetch('/api/service-invoices');
+        allInvoices = await res.json();
+    } catch(e) { allInvoices = []; }
+    renderTable();
+    updateKPIs();
+}
+
+function renderTable() {
+    const jid = document.getElementById('filterJob').value;
+    const st = document.getElementById('filterStatus').value;
+    const df = document.getElementById('filterDateFrom').value;
+    const dt = document.getElementById('filterDateTo').value;
+
+    let filtered = allInvoices.filter(inv => {
+        if (jid && String(inv.job_id) !== jid) return false;
+        if (st && inv.status !== st) return false;
+        if (df && inv.issue_date < df) return false;
+        if (dt && inv.issue_date > dt) return false;
+        return true;
+    });
+
+    const tbody = document.getElementById('invoiceBody');
+    const countEl = document.getElementById('invoiceCount');
+
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No invoices found. Click "+ New Invoice" to create one.</td></tr>';
+        countEl.textContent = '';
+        return;
+    }
+
+    countEl.textContent = filtered.length + ' invoice' + (filtered.length !== 1 ? 's' : '');
+    tbody.innerHTML = filtered.map(inv => {
+        const bal = parseFloat(inv.balance_due) || parseFloat(inv.amount) || 0;
+        return `<tr>
+            <td><a href="javascript:void(0)" onclick="viewDetail(${inv.id})" style="color:var(--primary);font-weight:500;">${inv.invoice_number || '-'}</a></td>
+            <td>${inv.customer_name || '-'}</td>
+            <td>${inv.job_name || '-'}</td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${inv.description || '-'}</td>
+            <td style="text-align:right;">$${fmt(inv.amount)}</td>
+            <td>${inv.issue_date || '-'}</td>
+            <td>${inv.due_date || '-'}</td>
+            <td>${statusBadge(inv.status)}</td>
+            <td style="text-align:right;font-weight:${inv.status==='Paid'?'400':'600'};">$${fmt(inv.status === 'Paid' ? 0 : bal)}</td>
+            <td>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-small" onclick="editInvoice(${inv.id})" title="Edit">Edit</button>
+                    <button class="btn btn-secondary btn-small" onclick="generatePdf(${inv.id})" title="PDF">PDF</button>
+                    ${inv.pdf_file ? `<button class="btn btn-secondary btn-small" onclick="showEmailModal(${inv.id}, '${(inv.customer_email||'').replace(/'/g,"\\'")}', '${(inv.invoice_number||'').replace(/'/g,"\\'")}')" title="Email">Email</button>` : ''}
+                    ${inv.status !== 'Paid' ? `<button class="btn btn-secondary btn-small" onclick="showPaymentModal(${inv.id}, ${inv.amount}, ${inv.amount_paid || 0})" title="Payment">Pay</button>` : ''}
+                    ${inv.status === 'Draft' ? `<button class="btn btn-secondary btn-small" onclick="deleteInvoice(${inv.id})" title="Delete" style="color:var(--danger);">Del</button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function updateKPIs() {
+    let total = 0, outstanding = 0, paid = 0, overdue = 0;
+    allInvoices.forEach(inv => {
+        total += parseFloat(inv.amount) || 0;
+        if (inv.status === 'Paid') {
+            paid += parseFloat(inv.amount) || 0;
+        } else {
+            outstanding += parseFloat(inv.balance_due || inv.amount) || 0;
+            if (inv.status === 'Overdue') overdue++;
+        }
+    });
+    document.getElementById('kpiTotalInvoiced').textContent = '$' + fmt(total);
+    document.getElementById('kpiOutstanding').textContent = '$' + fmt(outstanding);
+    document.getElementById('kpiPaid').textContent = '$' + fmt(paid);
+    document.getElementById('kpiOverdue').textContent = overdue;
+}
+
+// ─── Create / Edit ─────────────────────────────────
+function showCreateModal() {
+    document.getElementById('invoiceModalTitle').textContent = 'New Service Invoice';
+    document.getElementById('editId').value = '';
+    document.getElementById('invoiceForm').reset();
+    document.getElementById('fIssueDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('fTerms').value = 'Net 30';
+    calcDueDate();
+    document.getElementById('lineItemsBody').innerHTML = '';
+    addLineItem();
+    calcTotals();
+    document.getElementById('invoiceModal').style.display = 'flex';
+}
+
+async function editInvoice(id) {
+    const res = await fetch('/api/service-invoices/' + id);
+    const inv = await res.json();
+    if (inv.error) return window.showToast(inv.error, 'error');
+
+    document.getElementById('invoiceModalTitle').textContent = 'Edit Invoice ' + inv.invoice_number;
+    document.getElementById('editId').value = id;
+    document.getElementById('fInvoiceNumber').value = inv.invoice_number || '';
+    document.getElementById('fJob').value = inv.job_id || '';
+    document.getElementById('fCustomerName').value = inv.customer_name || '';
+    document.getElementById('fCustomerEmail').value = inv.customer_email || '';
+    document.getElementById('fCustomerAddress').value = inv.customer_address || '';
+    document.getElementById('fIssueDate').value = inv.issue_date || '';
+    document.getElementById('fDueDate').value = inv.due_date || '';
+    document.getElementById('fTerms').value = inv.terms || 'Net 30';
+    document.getElementById('fStatus').value = inv.status === 'Overdue' || inv.status === 'Partial' ? 'Sent' : inv.status;
+    document.getElementById('fDescription').value = inv.description || '';
+    document.getElementById('fTaxRate').value = inv.tax_rate || 0;
+    document.getElementById('fNotes').value = inv.notes || '';
+
+    const tbody = document.getElementById('lineItemsBody');
+    tbody.innerHTML = '';
+    if (inv.items && inv.items.length) {
+        inv.items.forEach(it => addLineItem(it));
+    } else {
+        addLineItem();
+    }
+    calcTotals();
+    document.getElementById('invoiceModal').style.display = 'flex';
+}
+
+function addLineItem(data) {
+    const tbody = document.getElementById('lineItemsBody');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+        <td><input type="text" class="form-input li-desc" value="${(data && data.description) || ''}" style="width:100%;padding:4px 8px;"></td>
+        <td><input type="number" class="form-input li-qty" value="${(data && data.quantity) || 1}" step="0.01" min="0" onchange="calcTotals()" style="width:100%;text-align:right;padding:4px 8px;"></td>
+        <td><input type="number" class="form-input li-price" value="${(data && data.unit_price) || 0}" step="0.01" min="0" onchange="calcTotals()" style="width:100%;text-align:right;padding:4px 8px;"></td>
+        <td class="li-amount" style="text-align:right;padding:8px;">$0.00</td>
+        <td style="text-align:center;"><button type="button" class="btn btn-secondary btn-small" onclick="this.closest('tr').remove();calcTotals()" style="color:var(--danger);padding:2px 6px;">X</button></td>
+    `;
+    tbody.appendChild(tr);
+    calcTotals();
+}
+
+function calcTotals() {
+    const rows = document.querySelectorAll('#lineItemsBody tr');
+    let subtotal = 0;
+    rows.forEach(tr => {
+        const qty = parseFloat(tr.querySelector('.li-qty').value) || 0;
+        const price = parseFloat(tr.querySelector('.li-price').value) || 0;
+        const amt = qty * price;
+        subtotal += amt;
+        tr.querySelector('.li-amount').textContent = '$' + fmt(amt);
+    });
+    const taxRate = parseFloat(document.getElementById('fTaxRate').value) || 0;
+    const taxAmt = subtotal * taxRate / 100;
+    const total = subtotal + taxAmt;
+    document.getElementById('fSubtotal').textContent = '$' + fmt(subtotal);
+    document.getElementById('fTaxAmount').textContent = '$' + fmt(taxAmt);
+    document.getElementById('fTotal').textContent = '$' + fmt(total);
+}
+
+function calcDueDate() {
+    const issueDate = document.getElementById('fIssueDate').value;
+    const terms = document.getElementById('fTerms').value;
+    if (!issueDate) return;
+    const d = new Date(issueDate + 'T12:00:00');
+    if (terms === 'Due on Receipt') {
+        document.getElementById('fDueDate').value = issueDate;
+    } else {
+        const days = parseInt(terms.replace('Net ', '')) || 30;
+        d.setDate(d.getDate() + days);
+        document.getElementById('fDueDate').value = d.toISOString().split('T')[0];
+    }
+}
+
+document.getElementById('fIssueDate').addEventListener('change', calcDueDate);
+
+async function saveInvoice(e) {
+    e.preventDefault();
+    const id = document.getElementById('editId').value;
+    const items = [];
+    document.querySelectorAll('#lineItemsBody tr').forEach(tr => {
+        const desc = tr.querySelector('.li-desc').value.trim();
+        const qty = parseFloat(tr.querySelector('.li-qty').value) || 0;
+        const price = parseFloat(tr.querySelector('.li-price').value) || 0;
+        if (desc || qty || price) items.push({description: desc, quantity: qty, unit_price: price});
+    });
+
+    if (!items.length) return window.showToast('Add at least one line item', 'error');
+
+    const payload = {
+        invoice_number: document.getElementById('fInvoiceNumber').value.trim(),
+        job_id: document.getElementById('fJob').value || null,
+        customer_name: document.getElementById('fCustomerName').value.trim(),
+        customer_email: document.getElementById('fCustomerEmail').value.trim(),
+        customer_address: document.getElementById('fCustomerAddress').value.trim(),
+        issue_date: document.getElementById('fIssueDate').value,
+        due_date: document.getElementById('fDueDate').value,
+        terms: document.getElementById('fTerms').value,
+        status: document.getElementById('fStatus').value,
+        description: document.getElementById('fDescription').value.trim(),
+        tax_rate: parseFloat(document.getElementById('fTaxRate').value) || 0,
+        notes: document.getElementById('fNotes').value.trim(),
+        items: items
+    };
+
+    const url = id ? '/api/service-invoices/' + id : '/api/service-invoices';
+    const method = id ? 'PUT' : 'POST';
+
+    const res = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const data = await res.json();
+    if (!res.ok) return window.showToast(data.error || 'Error saving', 'error');
+
+    closeModal('invoiceModal');
+    await loadInvoices();
+}
+
+async function deleteInvoice(id) {
+    if (!confirm('Delete this draft invoice?')) return;
+    const res = await fetch('/api/service-invoices/' + id, {method:'DELETE'});
+    const data = await res.json();
+    if (!res.ok) return window.showToast(data.error || 'Error', 'error');
+    await loadInvoices();
+}
+
+// ─── View Detail ───────────────────────────────────
+async function viewDetail(id) {
+    const res = await fetch('/api/service-invoices/' + id);
+    const inv = await res.json();
+    if (inv.error) return window.showToast(inv.error, 'error');
+
+    document.getElementById('detailTitle').textContent = 'Invoice ' + inv.invoice_number;
+    const bal = inv.status === 'Paid' ? 0 : (parseFloat(inv.balance_due) || parseFloat(inv.amount) || 0);
+
+    let html = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+            <div>
+                <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;">Bill To</div>
+                <div style="font-weight:600;">${inv.customer_name || 'N/A'}</div>
+                ${inv.customer_address ? `<div>${inv.customer_address}</div>` : ''}
+                ${inv.customer_email ? `<div>${inv.customer_email}</div>` : ''}
+            </div>
+            <div style="text-align:right;">
+                <div>${statusBadge(inv.status)}</div>
+                <div style="margin-top:8px;"><strong>Invoice:</strong> ${inv.invoice_number}</div>
+                <div><strong>Date:</strong> ${inv.issue_date || '-'}</div>
+                <div><strong>Due:</strong> ${inv.due_date || '-'}</div>
+                <div><strong>Terms:</strong> ${inv.terms || '-'}</div>
+                ${inv.job_name ? `<div><strong>Job:</strong> ${inv.job_name}</div>` : ''}
+            </div>
+        </div>
+        ${inv.description ? `<div style="margin-bottom:12px;"><strong>Description:</strong> ${inv.description}</div>` : ''}
+        <table class="data-table" style="font-size:13px;">
+            <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit Price</th><th style="text-align:right;">Amount</th></tr></thead>
+            <tbody>
+                ${(inv.items||[]).map(it => `<tr><td>${it.description}</td><td style="text-align:right;">${it.quantity}</td><td style="text-align:right;">$${fmt(it.unit_price)}</td><td style="text-align:right;">$${fmt(it.amount)}</td></tr>`).join('')}
+            </tbody>
+        </table>
+        <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+            <div style="width:260px;">
+                <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;"><span>Subtotal</span><span>$${fmt(inv.subtotal)}</span></div>
+                ${inv.tax_rate > 0 ? `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;"><span>Tax (${inv.tax_rate}%)</span><span>$${fmt(inv.tax_amount)}</span></div>` : ''}
+                <div style="display:flex;justify-content:space-between;padding:6px 0 0;font-size:15px;font-weight:700;border-top:2px solid var(--gray-300);"><span>Total</span><span>$${fmt(inv.amount)}</span></div>
+                ${parseFloat(inv.amount_paid) > 0 ? `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;"><span>Paid</span><span>($${fmt(inv.amount_paid)})</span></div>` : ''}
+                <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:14px;font-weight:700;color:${bal>0?'var(--danger)':'var(--success)'};"><span>Balance Due</span><span>$${fmt(bal)}</span></div>
+            </div>
+        </div>
+    `;
+
+    if (inv.payments && inv.payments.length) {
+        html += `<div style="margin-top:16px;">
+            <h3 style="font-size:14px;margin-bottom:8px;">Payment History</h3>
+            <table class="data-table" style="font-size:13px;">
+                <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>By</th><th style="text-align:right;">Amount</th></tr></thead>
+                <tbody>
+                    ${inv.payments.map(p => `<tr><td>${p.payment_date}</td><td>${p.payment_method}</td><td>${p.reference_number || '-'}</td><td>${p.recorded_by_name || '-'}</td><td style="text-align:right;">$${fmt(p.amount)}</td></tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    if (inv.notes) html += `<div style="margin-top:12px;padding:10px;background:var(--gray-100);border-radius:6px;font-size:13px;"><strong>Notes:</strong> ${inv.notes}</div>`;
+
+    document.getElementById('detailContent').innerHTML = html;
+    document.getElementById('detailModal').style.display = 'flex';
+}
+
+// ─── PDF Generation ────────────────────────────────
+async function generatePdf(id) {
+    const res = await fetch('/api/service-invoices/' + id + '/generate-pdf', {method:'POST'});
+    const data = await res.json();
+    if (!res.ok) return window.showToast(data.error || 'PDF generation failed', 'error');
+    window.open(data.path, '_blank');
+    await loadInvoices();
+}
+
+// ─── Email ─────────────────────────────────────────
+function showEmailModal(id, email, invNum) {
+    document.getElementById('emailInvoiceId').value = id;
+    document.getElementById('emailTo').value = email || '';
+    document.getElementById('emailSubject').value = 'Invoice ' + invNum + ' from LGHVAC LLC';
+    document.getElementById('emailModal').style.display = 'flex';
+}
+
+async function sendEmail(e) {
+    e.preventDefault();
+    const id = document.getElementById('emailInvoiceId').value;
+    const payload = {
+        recipients: [document.getElementById('emailTo').value.trim()],
+        subject: document.getElementById('emailSubject').value,
+        body: document.getElementById('emailBody').value
+    };
+    const res = await fetch('/api/service-invoices/' + id + '/email', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    if (!res.ok) return window.showToast(data.error || 'Email failed', 'error');
+    closeModal('emailModal');
+    await loadInvoices();
+}
+
+// ─── Payment ───────────────────────────────────────
+function showPaymentModal(id, total, paid) {
+    document.getElementById('payInvoiceId').value = id;
+    document.getElementById('paymentForm').reset();
+    document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+    const bal = (parseFloat(total) || 0) - (parseFloat(paid) || 0);
+    document.getElementById('payAmount').value = bal > 0 ? bal.toFixed(2) : '';
+    document.getElementById('payBalanceInfo').innerHTML = `<strong>Invoice Total:</strong> $${fmt(total)} &nbsp; <strong>Paid:</strong> $${fmt(paid)} &nbsp; <strong>Balance:</strong> $${fmt(bal)}`;
+    document.getElementById('paymentModal').style.display = 'flex';
+}
+
+async function recordPayment(e) {
+    e.preventDefault();
+    const id = document.getElementById('payInvoiceId').value;
+    const payload = {
+        amount: parseFloat(document.getElementById('payAmount').value) || 0,
+        payment_date: document.getElementById('payDate').value,
+        payment_method: document.getElementById('payMethod').value,
+        reference_number: document.getElementById('payReference').value.trim(),
+        notes: document.getElementById('payNotes').value.trim()
+    };
+    const res = await fetch('/api/service-invoices/' + id + '/record-payment', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    if (!res.ok) return window.showToast(data.error || 'Error', 'error');
+    closeModal('paymentModal');
+    await loadInvoices();
+}
+</script>
+
+<style>
+.status-badge { display:inline-block; padding:2px 10px; border-radius:12px; font-size:12px; font-weight:600; }
+.badge-gray { background:#E5E7EB; color:#374151; }
+.badge-blue { background:#DBEAFE; color:#1D4ED8; }
+.badge-yellow { background:#FEF3C7; color:#92400E; }
+.badge-green { background:#D1FAE5; color:#065F46; }
+.badge-red { background:#FEE2E2; color:#991B1B; }
+</style>
+{% endblock %}

@@ -198,29 +198,76 @@
 
 <!-- Submittal Library Modal -->
 <div class="modal-overlay" id="libraryModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
-    <div class="modal" style="max-width:800px;">
+    <div class="modal" style="max-width:900px;">
         <div class="modal-header">
-            <h2>Submittal Library</h2>
+            <h2>Submittal Library (Archive)</h2>
             <button class="modal-close" onclick="document.getElementById('libraryModal').style.display='none'">&times;</button>
         </div>
-        <p style="color:var(--gray-500);font-size:13px;margin-bottom:12px;">Shared submittal PDFs that can be linked across multiple jobs.</p>
+        <p style="color:var(--gray-500);font-size:13px;margin-bottom:12px;">Shared submittal PDFs that can be linked across multiple jobs. Add keywords (SKUs, model numbers) to improve auto-matching from quotes.</p>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <input type="text" id="libSearch" class="form-input" placeholder="Search library..." style="max-width:260px;" oninput="filterLibrary()">
+            <button class="btn btn-primary btn-small" onclick="showAddLibraryItem()">+ Add to Library</button>
+        </div>
         <div class="table-wrapper" style="max-height:400px;overflow-y:auto;">
             <table class="data-table">
                 <thead><tr>
                     <th>Title</th>
                     <th>Vendor</th>
                     <th>Category</th>
+                    <th>Keywords</th>
                     <th>Used In</th>
                     <th>File</th>
+                    <th>Actions</th>
                 </tr></thead>
                 <tbody id="libraryBody">
-                    <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                    <tr><td colspan="7" class="empty-state">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
         <div class="form-actions" style="margin-top:12px;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('libraryModal').style.display='none'">Close</button>
         </div>
+    </div>
+</div>
+
+<!-- Add/Edit Library Item Modal -->
+<div class="modal-overlay" id="libItemModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+            <h2 id="libItemModalTitle">Add to Library</h2>
+            <button class="modal-close" onclick="document.getElementById('libItemModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="saveLibraryItem(event)">
+            <input type="hidden" id="libItemId">
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input type="text" id="libTitle" class="form-input" required placeholder="e.g. Carrier 50XC Rooftop Unit">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Vendor / Manufacturer</label>
+                <input type="text" id="libVendor" class="form-input" placeholder="e.g. Carrier">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Category</label>
+                <input type="text" id="libCategory" class="form-input" placeholder="e.g. RTU, Ductwork, Controls">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <textarea id="libDescription" class="form-input" rows="2" style="min-height:60px;font-family:inherit;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Keywords (SKUs, model numbers — comma separated)</label>
+                <input type="text" id="libKeywords" class="form-input" placeholder="e.g. 50XC, 48TC, L1970, furnace pipe">
+            </div>
+            <div class="form-group" id="libFileGroup">
+                <label class="form-label">Submittal PDF</label>
+                <input type="file" id="libFile" class="form-input" accept=".pdf">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('libItemModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
     </div>
 </div>
 

@@ -267,22 +267,117 @@ function viewFile(id) {
 }
 
 // ─── Submittal Library ──────────────────────────────────────
+let libraryItems = [];
+
 async function showLibraryModal() {
     document.getElementById('libraryModal').style.display = 'flex';
+    await loadLibrary();
+}
+
+async function loadLibrary() {
     const res = await fetch('/api/submittal-library');
-    const items = await res.json();
+    libraryItems = await res.json();
+    renderLibrary();
+}
+
+function renderLibrary() {
     const tbody = document.getElementById('libraryBody');
-    if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No library files yet. Import submittals to populate the library.</td></tr>';
+    const search = (document.getElementById('libSearch')?.value || '').toLowerCase();
+    let filtered = libraryItems;
+    if (search) {
+        filtered = libraryItems.filter(f =>
+            (f.title || '').toLowerCase().includes(search) ||
+            (f.vendor || '').toLowerCase().includes(search) ||
+            (f.category || '').toLowerCase().includes(search) ||
+            (f.keywords || '').toLowerCase().includes(search)
+        );
+    }
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No library files found.</td></tr>';
         return;
     }
-    tbody.innerHTML = items.map(f =>
+    tbody.innerHTML = filtered.map(f =>
         `<tr>
-            <td>${f.title || '-'}</td>
+            <td><strong>${f.title || '-'}</strong></td>
             <td>${f.vendor || '-'}</td>
             <td>${f.category || '-'}</td>
+            <td style="font-size:12px;color:var(--gray-500);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(f.keywords || '').replace(/"/g,'&quot;')}">${f.keywords || '-'}</td>
             <td>${f.usage_count || 0} job(s)</td>
-            <td>${f.file_path ? `<a href="/api/submittal-library/${f.id}/file" target="_blank" class="link" style="font-size:13px;">View PDF</a>` : '-'}</td>
+            <td>${f.file_path ? '<a href="/api/submittal-library/' + f.id + '/file" target="_blank" class="link" style="font-size:13px;">View PDF</a>' : '-'}</td>
+            <td>
+                <button class="btn btn-small btn-secondary" onclick='editLibraryItem(${JSON.stringify(f)})'>Edit</button>
+                <button class="btn btn-small btn-danger" onclick="deleteLibraryItem(${f.id})">Del</button>
+            </td>
         </tr>`
     ).join('');
+}
+
+function filterLibrary() { renderLibrary(); }
+
+function showAddLibraryItem() {
+    document.getElementById('libItemModalTitle').textContent = 'Add to Library';
+    document.getElementById('libItemId').value = '';
+    document.getElementById('libTitle').value = '';
+    document.getElementById('libVendor').value = '';
+    document.getElementById('libCategory').value = '';
+    document.getElementById('libDescription').value = '';
+    document.getElementById('libKeywords').value = '';
+    document.getElementById('libFile').value = '';
+    document.getElementById('libFileGroup').style.display = '';
+    document.getElementById('libItemModal').style.display = 'flex';
+}
+
+function editLibraryItem(item) {
+    document.getElementById('libItemModalTitle').textContent = 'Edit Library Item';
+    document.getElementById('libItemId').value = item.id;
+    document.getElementById('libTitle').value = item.title || '';
+    document.getElementById('libVendor').value = item.vendor || '';
+    document.getElementById('libCategory').value = item.category || '';
+    document.getElementById('libDescription').value = item.description || '';
+    document.getElementById('libKeywords').value = item.keywords || '';
+    document.getElementById('libFileGroup').style.display = 'none'; // Can't change file on edit
+    document.getElementById('libItemModal').style.display = 'flex';
+}
+
+async function saveLibraryItem(e) {
+    e.preventDefault();
+    const id = document.getElementById('libItemId').value;
+    if (id) {
+        // Update existing
+        await fetch('/api/submittal-library/' + id, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                title: document.getElementById('libTitle').value,
+                vendor: document.getElementById('libVendor').value,
+                category: document.getElementById('libCategory').value,
+                description: document.getElementById('libDescription').value,
+                keywords: document.getElementById('libKeywords').value
+            })
+        });
+    } else {
+        // Create new with file
+        const fd = new FormData();
+        fd.append('title', document.getElementById('libTitle').value);
+        fd.append('vendor', document.getElementById('libVendor').value);
+        fd.append('category', document.getElementById('libCategory').value);
+        fd.append('description', document.getElementById('libDescription').value);
+        fd.append('keywords', document.getElementById('libKeywords').value);
+        const file = document.getElementById('libFile').files[0];
+        if (file) fd.append('file', file);
+        const res = await fetch('/api/submittal-library', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.duplicate) {
+            alert('Duplicate file detected! Already exists as: ' + data.existing_title);
+            return;
+        }
+    }
+    document.getElementById('libItemModal').style.display = 'none';
+    await loadLibrary();
+}
+
+async function deleteLibraryItem(id) {
+    if (!confirm('Delete this library item? It will be unlinked from any submittals.')) return;
+    await fetch('/api/submittal-library/' + id, { method: 'DELETE' });
+    await loadLibrary();
 }

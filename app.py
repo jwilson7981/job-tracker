@@ -278,16 +278,20 @@ def dashboard():
 @api_role_required('owner', 'admin')
 def api_dashboard():
     conn = get_db()
+    today = datetime.now().strftime('%Y-%m-%d')
+    user_id = session.get('user_id')
     jobs = conn.execute('SELECT * FROM jobs ORDER BY name').fetchall()
 
     total_jobs = len(jobs)
     active_jobs = sum(1 for j in jobs if j['status'] == 'In Progress')
     completed_jobs = sum(1 for j in jobs if j['status'] == 'Complete')
+    needs_bid = sum(1 for j in jobs if j['status'] == 'Needs Bid')
 
     # Financial summary
     total_expenses = conn.execute('SELECT COALESCE(SUM(amount), 0) FROM expenses').fetchone()[0]
     total_payments = conn.execute('SELECT COALESCE(SUM(amount), 0) FROM payments').fetchone()[0]
     total_invoiced = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM client_invoices WHERE status = 'Paid'").fetchone()[0]
+    total_outstanding = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM client_invoices WHERE status IN ('Sent','Overdue','Partial')").fetchone()[0]
 
     # Estimated material costs (from bids/line_items)
     estimated_material_cost = 0
@@ -308,7 +312,7 @@ def api_dashboard():
     ).fetchone()[0]
 
     # Open service calls
-    open_calls = conn.execute("SELECT COUNT(*) FROM service_calls WHERE status NOT IN ('Resolved','Closed')").fetchone()[0]
+    open_calls_count = conn.execute("SELECT COUNT(*) FROM service_calls WHERE status NOT IN ('Resolved','Closed')").fetchone()[0]
 
     # Pending time entries
     pending_hours = conn.execute("SELECT COALESCE(SUM(hours), 0) FROM time_entries WHERE approved = 0").fetchone()[0]
@@ -319,20 +323,117 @@ def api_dashboard():
     for s in stages:
         stage_counts[s] = sum(1 for j in jobs if j['status'] == s)
 
+    # ─── Action Items ───────────────────────────────────────────
+    # Reminders due soon (next 7 days)
+    reminders_due = conn.execute(
+        "SELECT * FROM reminders WHERE user_id = ? AND status = 'Active' AND due_date != '' AND due_date <= date(?, '+7 days') ORDER BY due_date LIMIT 8",
+        (user_id, today)
+    ).fetchall()
+
+    # Open service calls (top 5 by priority)
+    open_calls = conn.execute('''
+        SELECT sc.*, j.name as job_name, u.display_name as assigned_name
+        FROM service_calls sc
+        LEFT JOIN jobs j ON sc.job_id = j.id
+        LEFT JOIN users u ON sc.assigned_to = u.id
+        WHERE sc.status NOT IN ('Resolved','Closed')
+        ORDER BY CASE sc.priority WHEN 'Urgent' THEN 0 WHEN 'High' THEN 1 WHEN 'Normal' THEN 2 ELSE 3 END, sc.created_at DESC
+        LIMIT 5
+    ''').fetchall()
+
+    # Overdue invoices
+    overdue_invoices = conn.execute('''
+        SELECT ci.*, j.name as job_name FROM client_invoices ci
+        LEFT JOIN jobs j ON ci.job_id = j.id
+        WHERE ci.status IN ('Sent','Overdue') AND ci.due_date != '' AND ci.due_date < ?
+        ORDER BY ci.due_date LIMIT 5
+    ''', (today,)).fetchall()
+
+    # Pending submittals (rejected/resubmit)
+    pending_submittals = conn.execute('''
+        SELECT s.*, j.name as job_name FROM submittals s
+        LEFT JOIN jobs j ON s.job_id = j.id
+        WHERE s.status IN ('Rejected','Resubmit')
+        ORDER BY s.updated_at DESC LIMIT 5
+    ''').fetchall()
+
+    # Expiring licenses (next 60 days)
+    expiring_licenses = conn.execute(
+        "SELECT * FROM licenses WHERE expiration_date != '' AND expiration_date <= date(?, '+60 days') AND expiration_date >= ? ORDER BY expiration_date LIMIT 5",
+        (today, today)
+    ).fetchall()
+
+    # ─── Active Projects with progress ──────────────────────────
+    active_project_list = []
+    for j in jobs:
+        if j['status'] != 'In Progress':
+            continue
+        jid = j['id']
+        # Billing progress from pay apps
+        contract_row = conn.execute(
+            'SELECT COALESCE(SUM(original_contract_sum), 0) as total_contract FROM pay_app_contracts WHERE job_id = ?',
+            (jid,)
+        ).fetchone()
+        billed_row = conn.execute('''
+            SELECT COALESCE(SUM(ple.work_this_period + ple.materials_stored), 0) as total_billed
+            FROM pay_app_line_entries ple
+            JOIN pay_applications pa ON ple.pay_app_id = pa.id
+            JOIN pay_app_contracts pac ON pa.contract_id = pac.id
+            WHERE pac.job_id = ?
+        ''', (jid,)).fetchone()
+        contract_val = contract_row['total_contract'] or 0
+        billed_val = billed_row['total_billed'] or 0
+        pct = round(billed_val / contract_val * 100) if contract_val > 0 else 0
+
+        active_project_list.append({
+            'id': jid, 'name': j['name'],
+            'contract': round(contract_val, 2),
+            'billed': round(billed_val, 2),
+            'pct_billed': min(pct, 100),
+        })
+    active_project_list.sort(key=lambda p: p['name'])
+
+    # ─── Recent Activity (last 10) ─────────────────────────────
+    recent_activity = conn.execute('''
+        SELECT al.*, u.display_name FROM activity_logs al
+        LEFT JOIN users u ON al.user_id = u.id
+        ORDER BY al.created_at DESC LIMIT 10
+    ''').fetchall()
+
+    # ─── Upcoming Schedule (next 14 days) ──────────────────────
+    upcoming_schedule = conn.execute('''
+        SELECT e.*, j.name as job_name, u.display_name as assigned_name
+        FROM job_schedule_events e
+        LEFT JOIN jobs j ON e.job_id = j.id
+        LEFT JOIN users u ON e.assigned_to = u.id
+        WHERE e.status != 'Complete' AND e.start_date != '' AND e.start_date <= date(?, '+14 days')
+        ORDER BY e.start_date LIMIT 8
+    ''', (today,)).fetchall()
+
     conn.close()
     return jsonify({
         'total_jobs': total_jobs,
         'active_jobs': active_jobs,
         'completed_jobs': completed_jobs,
+        'needs_bid': needs_bid,
         'estimated_material_cost': round(estimated_material_cost, 2),
         'actual_material_cost': round(actual_material_cost, 2),
         'material_cost': round(estimated_material_cost, 2),
         'total_expenses': round(total_expenses, 2),
         'total_payments': round(total_payments, 2),
         'total_invoiced': round(total_invoiced, 2),
-        'open_service_calls': open_calls,
+        'total_outstanding': round(total_outstanding, 2),
+        'open_service_calls': open_calls_count,
         'pending_hours': round(pending_hours, 1),
         'stage_counts': stage_counts,
+        'reminders_due': [dict(r) for r in reminders_due],
+        'open_calls_list': [dict(c) for c in open_calls],
+        'overdue_invoices': [dict(i) for i in overdue_invoices],
+        'pending_submittals': [dict(s) for s in pending_submittals],
+        'expiring_licenses': [dict(l) for l in expiring_licenses],
+        'active_projects': active_project_list,
+        'recent_activity': [dict(a) for a in recent_activity],
+        'upcoming_schedule': [dict(e) for e in upcoming_schedule],
     })
 
 # ─── Materials (relocated from old / and /job routes) ────────────
@@ -2285,7 +2386,182 @@ def api_employees_ssn(uid):
         return jsonify({'error': 'Failed to decrypt SSN'}), 500
     return jsonify({'ssn': ssn})
 
+# ─── Tax Forms (W4 / W9) ────────────────────────────────────────
+
+TAX_FORMS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'tax_forms')
+os.makedirs(TAX_FORMS_DIR, exist_ok=True)
+
+@app.route('/tax-forms')
+@role_required('owner', 'admin')
+def tax_forms_list():
+    return render_template('tax_forms/list.html')
+
+@app.route('/api/tax-forms')
+@api_role_required('owner', 'admin')
+def api_tax_forms_list():
+    entity = request.args.get('entity_type', '')
+    form_type = request.args.get('form_type', '')
+    user_id = request.args.get('user_id', type=int)
+    conn = get_db()
+    sql = '''SELECT tf.*, u.display_name as employee_name
+             FROM tax_forms tf LEFT JOIN users u ON tf.user_id = u.id WHERE 1=1'''
+    params = []
+    if entity:
+        sql += ' AND tf.entity_type = ?'
+        params.append(entity)
+    if form_type:
+        sql += ' AND tf.form_type = ?'
+        params.append(form_type)
+    if user_id:
+        sql += ' AND tf.user_id = ?'
+        params.append(user_id)
+    sql += ' ORDER BY tf.updated_at DESC'
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d['has_file'] = bool(d.get('file_path'))
+        result.append(d)
+    return jsonify(result)
+
+@app.route('/api/tax-forms', methods=['POST'])
+@api_role_required('owner', 'admin')
+def api_tax_forms_create():
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+    else:
+        data = request.get_json()
+    conn = get_db()
+
+    # Build insert from data
+    fields = ['form_type','entity_type','status','user_id',
+              'w9_name','w9_business_name','w9_tax_class','w9_exemptions',
+              'w9_address','w9_city_state_zip','w9_account_numbers','w9_tin','w9_tin_type',
+              'w9_signature_name','w9_signature_date',
+              'w4_first_name','w4_last_name','w4_address','w4_city_state_zip','w4_ssn',
+              'w4_filing_status','w4_multiple_jobs','w4_dependents_amount',
+              'w4_other_income','w4_deductions','w4_extra_withholding','w4_exempt',
+              'w4_signature_name','w4_signature_date',
+              'w4_employer_name','w4_employer_ein','w4_first_date_employment',
+              'f1099_payer_name','f1099_payer_tin','f1099_recipient_name','f1099_recipient_tin',
+              'f1099_recipient_address','f1099_recipient_city_state_zip','f1099_amount',
+              'f1099_tax_year','f1099_type',
+              'notes']
+    cols = ['created_by']
+    vals = [session.get('user_id')]
+    for f in fields:
+        if f in data and data[f] != '':
+            cols.append(f)
+            vals.append(data[f])
+    placeholders = ','.join(['?'] * len(vals))
+    col_names = ','.join(cols)
+    cursor = conn.execute(f'INSERT INTO tax_forms ({col_names}) VALUES ({placeholders})', vals)
+    tf_id = cursor.lastrowid
+
+    file = request.files.get('file')
+    if file and file.filename:
+        from werkzeug.utils import secure_filename
+        original_name = file.filename
+        fname = secure_filename(file.filename)
+        fname = f"{int(datetime.now().timestamp())}_{fname}"
+        file.save(os.path.join(TAX_FORMS_DIR, fname))
+        conn.execute('UPDATE tax_forms SET file_path = ?, original_filename = ? WHERE id = ?',
+                     (fname, original_name, tf_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': tf_id}), 201
+
+@app.route('/api/tax-forms/<int:tf_id>')
+@api_role_required('owner', 'admin')
+def api_tax_form_detail(tf_id):
+    conn = get_db()
+    row = conn.execute(
+        '''SELECT tf.*, u.display_name as employee_name
+           FROM tax_forms tf LEFT JOIN users u ON tf.user_id = u.id
+           WHERE tf.id = ?''', (tf_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    d = dict(row)
+    d['has_file'] = bool(d.get('file_path'))
+    return jsonify(d)
+
+@app.route('/api/tax-forms/<int:tf_id>', methods=['PUT'])
+@api_role_required('owner', 'admin')
+def api_tax_forms_update(tf_id):
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+    else:
+        data = request.get_json()
+    conn = get_db()
+    allowed = ['form_type','entity_type','status','user_id',
+               'w9_name','w9_business_name','w9_tax_class','w9_exemptions',
+               'w9_address','w9_city_state_zip','w9_account_numbers','w9_tin','w9_tin_type',
+               'w9_signature_name','w9_signature_date',
+               'w4_first_name','w4_last_name','w4_address','w4_city_state_zip','w4_ssn',
+               'w4_filing_status','w4_multiple_jobs','w4_dependents_amount',
+               'w4_other_income','w4_deductions','w4_extra_withholding','w4_exempt',
+               'w4_signature_name','w4_signature_date',
+               'w4_employer_name','w4_employer_ein','w4_first_date_employment',
+               'notes']
+    fields = []
+    values = []
+    for f in allowed:
+        if f in data:
+            fields.append(f'{f} = ?')
+            values.append(data[f] if data[f] != '' else None if f == 'user_id' else data[f])
+    fields.append("updated_at = datetime('now','localtime')")
+    if fields:
+        values.append(tf_id)
+        conn.execute(f"UPDATE tax_forms SET {', '.join(fields)} WHERE id = ?", values)
+
+    file = request.files.get('file')
+    if file and file.filename:
+        from werkzeug.utils import secure_filename
+        original_name = file.filename
+        fname = secure_filename(file.filename)
+        fname = f"{int(datetime.now().timestamp())}_{fname}"
+        file.save(os.path.join(TAX_FORMS_DIR, fname))
+        conn.execute('UPDATE tax_forms SET file_path = ?, original_filename = ? WHERE id = ?',
+                     (fname, original_name, tf_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/tax-forms/<int:tf_id>', methods=['DELETE'])
+@api_role_required('owner', 'admin')
+def api_tax_forms_delete(tf_id):
+    conn = get_db()
+    row = conn.execute('SELECT file_path FROM tax_forms WHERE id = ?', (tf_id,)).fetchone()
+    if row and row['file_path']:
+        fpath = os.path.join(TAX_FORMS_DIR, row['file_path'])
+        if os.path.exists(fpath):
+            os.remove(fpath)
+    conn.execute('DELETE FROM tax_forms WHERE id = ?', (tf_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/tax-forms/<int:tf_id>/file')
+@api_role_required('owner', 'admin')
+def api_tax_form_file(tf_id):
+    conn = get_db()
+    row = conn.execute('SELECT file_path, original_filename FROM tax_forms WHERE id = ?', (tf_id,)).fetchone()
+    conn.close()
+    if not row or not row['file_path']:
+        return 'File not found', 404
+    fpath = os.path.join(TAX_FORMS_DIR, row['file_path'])
+    if not os.path.exists(fpath):
+        return 'File not found', 404
+    from flask import send_file
+    return send_file(fpath, download_name=row['original_filename'] or row['file_path'])
+
 # ─── Warranty ───────────────────────────────────────────────────
+
+WARRANTY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'warranty')
+os.makedirs(WARRANTY_DIR, exist_ok=True)
 
 @app.route('/warranty')
 @role_required('owner', 'admin', 'project_manager')
@@ -2302,26 +2578,48 @@ def warranty_job(job_id):
         return 'Job not found', 404
     return render_template('warranty/job.html', job=job)
 
+@app.route('/warranty/claims/<int:claim_id>')
+@role_required('owner', 'admin', 'project_manager')
+def warranty_claim_detail(claim_id):
+    return render_template('warranty/claim_detail.html', claim_id=claim_id)
+
 @app.route('/api/warranty')
 @api_role_required('owner', 'admin', 'project_manager')
 def api_warranty_list():
     conn = get_db()
     items = conn.execute(
-        '''SELECT wi.*, j.name as job_name FROM warranty_items wi
+        '''SELECT wi.*, j.name as job_name,
+           (SELECT COUNT(*) FROM warranty_claims wc WHERE wc.warranty_id = wi.id) as claim_count,
+           (SELECT COUNT(*) FROM warranty_claims wc WHERE wc.warranty_id = wi.id AND wc.status NOT IN ('Resolved','Denied')) as open_claims
+           FROM warranty_items wi
            LEFT JOIN jobs j ON wi.job_id = j.id ORDER BY wi.warranty_end ASC'''
     ).fetchall()
     conn.close()
-    return jsonify([dict(i) for i in items])
+    result = []
+    for i in items:
+        d = dict(i)
+        d['has_file'] = bool(d.get('file_path'))
+        result.append(d)
+    return jsonify(result)
 
 @app.route('/api/warranty/job/<int:job_id>')
 @api_role_required('owner', 'admin', 'project_manager')
 def api_warranty_job(job_id):
     conn = get_db()
-    items = conn.execute('SELECT * FROM warranty_items WHERE job_id = ? ORDER BY warranty_end', (job_id,)).fetchall()
+    items = conn.execute('SELECT * FROM warranty_items WHERE job_id = ? ORDER BY building, unit_number, warranty_end', (job_id,)).fetchall()
     result = []
     for item in items:
-        claims = conn.execute('SELECT * FROM warranty_claims WHERE warranty_id = ? ORDER BY claim_date DESC', (item['id'],)).fetchall()
+        claims = conn.execute(
+            '''SELECT wc.*, u.display_name as assigned_name
+               FROM warranty_claims wc
+               LEFT JOIN users u ON wc.assigned_to = u.id
+               WHERE wc.warranty_id = ? ORDER BY
+               CASE wc.status WHEN 'Open' THEN 0 WHEN 'In Progress' THEN 1 WHEN 'Resolved' THEN 2 ELSE 3 END,
+               wc.claim_date DESC''',
+            (item['id'],)
+        ).fetchall()
         d = dict(item)
+        d['has_file'] = bool(d.get('file_path'))
         d['claims'] = [dict(c) for c in claims]
         result.append(d)
     conn.close()
@@ -2330,41 +2628,165 @@ def api_warranty_job(job_id):
 @app.route('/api/warranty/items', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
 def create_warranty_item():
-    data = request.get_json()
+    # Support both JSON and multipart (file upload)
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+    else:
+        data = request.get_json()
     conn = get_db()
-    conn.execute(
-        '''INSERT INTO warranty_items (job_id, item_description, manufacturer, warranty_start, warranty_end, coverage_details, status)
-           VALUES (?,?,?,?,?,?,?)''',
-        (data['job_id'], data.get('item_description',''), data.get('manufacturer',''),
+    cursor = conn.execute(
+        '''INSERT INTO warranty_items (job_id, item_description, manufacturer, warranty_start, warranty_end,
+           coverage_details, status, building, unit_number, model_number, serial_number, equipment_type)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (data.get('job_id'), data.get('item_description',''), data.get('manufacturer',''),
          data.get('warranty_start',''), data.get('warranty_end',''),
-         data.get('coverage_details',''), data.get('status','Active'))
+         data.get('coverage_details',''), data.get('status','Active'),
+         data.get('building',''), data.get('unit_number',''),
+         data.get('model_number',''), data.get('serial_number',''),
+         data.get('equipment_type',''))
     )
+    wid = cursor.lastrowid
+
+    # Handle file upload
+    file = request.files.get('file')
+    if file and file.filename:
+        from werkzeug.utils import secure_filename
+        original_name = file.filename
+        fname = secure_filename(file.filename)
+        fname = f"{int(datetime.now().timestamp())}_{fname}"
+        file.save(os.path.join(WARRANTY_DIR, fname))
+        conn.execute('UPDATE warranty_items SET file_path = ?, original_filename = ? WHERE id = ?',
+                     (fname, original_name, wid))
+
+        # Auto-add to closeout checklist if not already there
+        job_id = data.get('job_id')
+        if job_id:
+            existing = conn.execute(
+                "SELECT id FROM closeout_checklists WHERE job_id = ? AND item_type = 'Warranty Letter' AND item_name = ?",
+                (job_id, data.get('item_description', original_name))
+            ).fetchone()
+            if not existing:
+                max_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) FROM closeout_checklists WHERE job_id = ?', (job_id,)).fetchone()[0]
+                conn.execute(
+                    '''INSERT INTO closeout_checklists (job_id, item_name, item_type, status, file_path, sort_order, created_by)
+                       VALUES (?,?,?,?,?,?,?)''',
+                    (job_id, data.get('item_description', original_name), 'Warranty Letter', 'Complete',
+                     fname, max_sort + 1, session.get('user_id'))
+                )
+
     conn.commit()
     conn.close()
-    return jsonify({'ok': True}), 201
+    return jsonify({'ok': True, 'id': wid}), 201
 
 @app.route('/api/warranty/items/<int:wid>', methods=['PUT'])
 @api_role_required('owner', 'admin', 'project_manager')
 def update_warranty_item(wid):
-    data = request.get_json()
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+    else:
+        data = request.get_json()
     conn = get_db()
     fields = []
     values = []
-    for f in ('item_description','manufacturer','warranty_start','warranty_end','coverage_details','status'):
+    for f in ('item_description','manufacturer','warranty_start','warranty_end','coverage_details','status',
+              'building','unit_number','model_number','serial_number','equipment_type'):
         if f in data:
             fields.append(f'{f} = ?')
             values.append(data[f])
     if fields:
         values.append(wid)
         conn.execute(f"UPDATE warranty_items SET {', '.join(fields)} WHERE id = ?", values)
-        conn.commit()
+
+    # Handle file upload on edit
+    file = request.files.get('file')
+    if file and file.filename:
+        from werkzeug.utils import secure_filename
+        original_name = file.filename
+        fname = secure_filename(file.filename)
+        fname = f"{int(datetime.now().timestamp())}_{fname}"
+        file.save(os.path.join(WARRANTY_DIR, fname))
+        conn.execute('UPDATE warranty_items SET file_path = ?, original_filename = ? WHERE id = ?',
+                     (fname, original_name, wid))
+
+        # Auto-add to closeout
+        item = conn.execute('SELECT job_id, item_description FROM warranty_items WHERE id = ?', (wid,)).fetchone()
+        if item and item['job_id']:
+            existing = conn.execute(
+                "SELECT id FROM closeout_checklists WHERE job_id = ? AND item_type = 'Warranty Letter' AND item_name = ?",
+                (item['job_id'], item['item_description'])
+            ).fetchone()
+            if not existing:
+                max_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) FROM closeout_checklists WHERE job_id = ?', (item['job_id'],)).fetchone()[0]
+                conn.execute(
+                    '''INSERT INTO closeout_checklists (job_id, item_name, item_type, status, file_path, sort_order, created_by)
+                       VALUES (?,?,?,?,?,?,?)''',
+                    (item['job_id'], item['item_description'], 'Warranty Letter', 'Complete',
+                     fname, max_sort + 1, session.get('user_id'))
+                )
+
+    conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+@app.route('/api/warranty/items/<int:wid>/upload', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def upload_warranty_file(wid):
+    """Upload a warranty letter file to an existing warranty item."""
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': 'No file provided'}), 400
+    from werkzeug.utils import secure_filename
+    original_name = file.filename
+    fname = secure_filename(file.filename)
+    fname = f"{int(datetime.now().timestamp())}_{fname}"
+    file.save(os.path.join(WARRANTY_DIR, fname))
+    conn = get_db()
+    conn.execute('UPDATE warranty_items SET file_path = ?, original_filename = ? WHERE id = ?',
+                 (fname, original_name, wid))
+    # Auto-add to closeout
+    item = conn.execute('SELECT job_id, item_description FROM warranty_items WHERE id = ?', (wid,)).fetchone()
+    if item and item['job_id']:
+        existing = conn.execute(
+            "SELECT id FROM closeout_checklists WHERE job_id = ? AND item_type = 'Warranty Letter' AND item_name = ?",
+            (item['job_id'], item['item_description'] or original_name)
+        ).fetchone()
+        if not existing:
+            max_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) FROM closeout_checklists WHERE job_id = ?', (item['job_id'],)).fetchone()[0]
+            conn.execute(
+                '''INSERT INTO closeout_checklists (job_id, item_name, item_type, status, file_path, sort_order, created_by)
+                   VALUES (?,?,?,?,?,?,?)''',
+                (item['job_id'], item['item_description'] or original_name, 'Warranty Letter', 'Complete',
+                 fname, max_sort + 1, session.get('user_id'))
+            )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'filename': fname})
+
+@app.route('/api/warranty/items/<int:wid>/file')
+@api_role_required('owner', 'admin', 'project_manager')
+def serve_warranty_file(wid):
+    """Serve the warranty letter file."""
+    conn = get_db()
+    item = conn.execute('SELECT file_path, original_filename FROM warranty_items WHERE id = ?', (wid,)).fetchone()
+    conn.close()
+    if not item or not item['file_path']:
+        return 'File not found', 404
+    fpath = os.path.join(WARRANTY_DIR, item['file_path'])
+    if not os.path.exists(fpath):
+        return 'File not found', 404
+    from flask import send_file
+    return send_file(fpath, download_name=item['original_filename'] or item['file_path'])
 
 @app.route('/api/warranty/items/<int:wid>', methods=['DELETE'])
 @api_role_required('owner', 'admin', 'project_manager')
 def delete_warranty_item(wid):
     conn = get_db()
+    item = conn.execute('SELECT file_path FROM warranty_items WHERE id = ?', (wid,)).fetchone()
+    if item and item['file_path']:
+        fpath = os.path.join(WARRANTY_DIR, item['file_path'])
+        if os.path.exists(fpath):
+            os.remove(fpath)
+    conn.execute('DELETE FROM warranty_claims WHERE warranty_id = ?', (wid,))
     conn.execute('DELETE FROM warranty_items WHERE id = ?', (wid,))
     conn.commit()
     conn.close()
@@ -2375,14 +2797,57 @@ def delete_warranty_item(wid):
 def create_warranty_claim():
     data = request.get_json()
     conn = get_db()
-    conn.execute(
-        'INSERT INTO warranty_claims (warranty_id, claim_date, description, resolution, status) VALUES (?,?,?,?,?)',
+    cursor = conn.execute(
+        '''INSERT INTO warranty_claims (warranty_id, claim_date, description, resolution, status,
+           priority, assigned_to, caller_name, caller_phone, caller_email,
+           building, unit_number, scheduled_date, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (data['warranty_id'], data.get('claim_date', datetime.now().strftime('%Y-%m-%d')),
-         data.get('description',''), data.get('resolution',''), data.get('status','Open'))
+         data.get('description',''), data.get('resolution',''), data.get('status','Open'),
+         data.get('priority','Normal'), data.get('assigned_to') or None,
+         data.get('caller_name',''), data.get('caller_phone',''), data.get('caller_email',''),
+         data.get('building',''), data.get('unit_number',''),
+         data.get('scheduled_date',''), session.get('user_id'))
     )
+    # Notify assigned user
+    assigned_to = data.get('assigned_to')
+    if assigned_to:
+        try:
+            wi = conn.execute('SELECT item_description, job_id FROM warranty_items WHERE id = ?', (data['warranty_id'],)).fetchone()
+            job = conn.execute('SELECT name FROM jobs WHERE id = ?', (wi['job_id'],)).fetchone() if wi else None
+            conn.execute(
+                'INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)',
+                (int(assigned_to), 'warranty_claim',
+                 'New Warranty Claim Assigned',
+                 f"Warranty claim for {wi['item_description'] if wi else 'unknown'} on {job['name'] if job else 'unknown'}: {data.get('description', '')[:100]}",
+                 f"/warranty/claims/{cursor.lastrowid}")
+            )
+            conn.commit()
+        except Exception:
+            pass
     conn.commit()
     conn.close()
-    return jsonify({'ok': True}), 201
+    return jsonify({'ok': True, 'id': cursor.lastrowid}), 201
+
+@app.route('/api/warranty/claims/<int:cid>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_warranty_claim_detail(cid):
+    conn = get_db()
+    claim = conn.execute(
+        '''SELECT wc.*, wi.item_description, wi.manufacturer, wi.model_number, wi.serial_number,
+           wi.equipment_type, wi.building as equip_building, wi.unit_number as equip_unit,
+           wi.job_id, wi.file_path as warranty_file, wi.original_filename as warranty_filename,
+           j.name as job_name, u.display_name as assigned_name
+           FROM warranty_claims wc
+           JOIN warranty_items wi ON wc.warranty_id = wi.id
+           LEFT JOIN jobs j ON wi.job_id = j.id
+           LEFT JOIN users u ON wc.assigned_to = u.id
+           WHERE wc.id = ?''', (cid,)
+    ).fetchone()
+    conn.close()
+    if not claim:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify(dict(claim))
 
 @app.route('/api/warranty/claims/<int:cid>', methods=['PUT'])
 @api_role_required('owner', 'admin', 'project_manager')
@@ -2391,14 +2856,32 @@ def update_warranty_claim(cid):
     conn = get_db()
     fields = []
     values = []
-    for f in ('description','resolution','status'):
+    for f in ('description','resolution','status','priority','assigned_to',
+              'caller_name','caller_phone','caller_email','building','unit_number',
+              'scheduled_date','resolved_date'):
         if f in data:
             fields.append(f'{f} = ?')
-            values.append(data[f])
+            val = data[f]
+            if f == 'assigned_to' and (val == '' or val is None):
+                val = None
+            values.append(val)
+    # Auto-set resolved_date when status changes to Resolved
+    if 'status' in data and data['status'] == 'Resolved' and 'resolved_date' not in data:
+        fields.append('resolved_date = ?')
+        values.append(datetime.now().strftime('%Y-%m-%d'))
     if fields:
         values.append(cid)
         conn.execute(f"UPDATE warranty_claims SET {', '.join(fields)} WHERE id = ?", values)
         conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/warranty/claims/<int:cid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def delete_warranty_claim(cid):
+    conn = get_db()
+    conn.execute('DELETE FROM warranty_claims WHERE id = ?', (cid,))
+    conn.commit()
     conn.close()
     return jsonify({'ok': True})
 
@@ -3097,8 +3580,18 @@ def api_projects():
             if cust:
                 customer_name = cust['company_name']
 
+        jid = job['id']
+        co_count = conn.execute('SELECT COUNT(*) FROM change_orders WHERE job_id = ?', (jid,)).fetchone()[0]
+        rfi_count = conn.execute('SELECT COUNT(*) FROM rfis WHERE job_id = ?', (jid,)).fetchone()[0]
+        submittal_count = conn.execute('SELECT COUNT(*) FROM submittals WHERE job_id = ?', (jid,)).fetchone()[0]
+        lw_count = conn.execute('SELECT COUNT(*) FROM lien_waivers WHERE job_id = ?', (jid,)).fetchone()[0]
+        payapp_count = conn.execute('SELECT COUNT(*) FROM pay_applications pa JOIN pay_app_contracts pac ON pa.contract_id = pac.id WHERE pac.job_id = ?', (jid,)).fetchone()[0]
+        plan_count = conn.execute('SELECT COUNT(*) FROM plans WHERE job_id = ?', (jid,)).fetchone()[0]
+        contract_count = conn.execute('SELECT COUNT(*) FROM contracts WHERE job_id = ?', (jid,)).fetchone()[0]
+        permit_count = conn.execute('SELECT COUNT(*) FROM permits WHERE job_id = ?', (jid,)).fetchone()[0]
+
         result.append({
-            'id': job['id'],
+            'id': jid,
             'name': job['name'],
             'status': job['status'],
             'location': f"{job['city'] or ''} {job['state'] or ''}".strip() or '-',
@@ -3110,6 +3603,14 @@ def api_projects():
             'updated_at': job['updated_at'],
             'customer_id': customer_id,
             'customer_name': customer_name,
+            'co_count': co_count,
+            'rfi_count': rfi_count,
+            'submittal_count': submittal_count,
+            'lw_count': lw_count,
+            'payapp_count': payapp_count,
+            'plan_count': plan_count,
+            'contract_count': contract_count,
+            'permit_count': permit_count,
         })
     conn.close()
     return jsonify(result)
@@ -5818,15 +6319,26 @@ def api_payapps_sov_list(cid):
 def api_payapps_sov_create(cid):
     data = request.get_json(force=True)
     conn = get_db()
-    # Auto-assign item number
-    max_num = conn.execute('SELECT MAX(item_number) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
+    insert_at = data.get('insert_at')  # sort_order position to insert before
+    if insert_at is not None:
+        insert_at = int(insert_at)
+        # Shift all items at or after this position down by 1
+        conn.execute('UPDATE pay_app_sov_items SET sort_order = sort_order + 1 WHERE contract_id = ? AND sort_order >= ?', (cid, insert_at))
+        sort_order = insert_at
+    else:
+        max_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0]
+        sort_order = max_sort + 1
     conn.execute(
         '''INSERT INTO pay_app_sov_items (contract_id, item_number, description, scheduled_value,
            is_header, retainage_exempt, sort_order)
            VALUES (?,?,?,?,?,?,?)''',
-        (cid, max_num + 1, data.get('description', ''), data.get('scheduled_value', 0),
-         data.get('is_header', 0), data.get('retainage_exempt', 0), data.get('sort_order', max_num + 1))
+        (cid, 0, data.get('description', ''), data.get('scheduled_value', 0),
+         data.get('is_header', 0), data.get('retainage_exempt', 0), sort_order)
     )
+    # Renumber all item_numbers sequentially by sort_order
+    rows = conn.execute('SELECT id FROM pay_app_sov_items WHERE contract_id = ? ORDER BY sort_order, id', (cid,)).fetchall()
+    for idx, row in enumerate(rows):
+        conn.execute('UPDATE pay_app_sov_items SET item_number = ? WHERE id = ?', (idx + 1, row['id']))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -5853,7 +6365,26 @@ def api_payapps_sov_update(sid):
 @api_role_required('owner', 'admin', 'project_manager')
 def api_payapps_sov_delete(sid):
     conn = get_db()
+    item = conn.execute('SELECT contract_id FROM pay_app_sov_items WHERE id = ?', (sid,)).fetchone()
     conn.execute('DELETE FROM pay_app_sov_items WHERE id = ?', (sid,))
+    # Renumber remaining items
+    if item:
+        rows = conn.execute('SELECT id FROM pay_app_sov_items WHERE contract_id = ? ORDER BY sort_order, id', (item['contract_id'],)).fetchall()
+        for idx, row in enumerate(rows):
+            conn.execute('UPDATE pay_app_sov_items SET item_number = ?, sort_order = ? WHERE id = ?', (idx + 1, idx, row['id']))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/payapps/contracts/<int:cid>/sov/reorder', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_payapps_sov_reorder(cid):
+    """Reorder SOV items. Expects {order: [{id, sort_order, item_number}, ...]}"""
+    data = request.get_json(force=True)
+    conn = get_db()
+    for item in data.get('order', []):
+        conn.execute('UPDATE pay_app_sov_items SET sort_order = ?, item_number = ? WHERE id = ? AND contract_id = ?',
+                     (item['sort_order'], item['item_number'], item['id'], cid))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -8787,10 +9318,21 @@ def api_get_change_order(coid):
         'SELECT co.*, j.name as job_name FROM change_orders co LEFT JOIN jobs j ON co.job_id = j.id WHERE co.id = ?',
         (coid,)
     ).fetchone()
-    conn.close()
     if not co:
+        conn.close()
         return jsonify({'error': 'Change order not found'}), 404
-    return jsonify(dict(co))
+    result = dict(co)
+    # Find which building section this CO's SOV line belongs to
+    if co['sov_item_id'] and co['pay_app_contract_id']:
+        sov_line = conn.execute('SELECT sort_order FROM pay_app_sov_items WHERE id = ?', (co['sov_item_id'],)).fetchone()
+        if sov_line:
+            header = conn.execute(
+                'SELECT id FROM pay_app_sov_items WHERE contract_id = ? AND is_header = 1 AND sort_order < ? ORDER BY sort_order DESC LIMIT 1',
+                (co['pay_app_contract_id'], sov_line['sort_order'])
+            ).fetchone()
+            result['sov_building_id'] = header['id'] if header else None
+    conn.close()
+    return jsonify(result)
 
 @app.route('/api/change-orders', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
@@ -8819,16 +9361,47 @@ def api_create_change_order():
     ).fetchone()
 
     sov_item_id = None
+    sov_section_id = data.get('sov_section_id')  # header item ID for building placement
     if contract:
         cid = contract['id']
-        max_item = conn.execute('SELECT MAX(item_number) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
-        max_sort = conn.execute('SELECT MAX(sort_order) FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0] or 0
+
+        # Determine insert position
+        if sov_section_id:
+            # Find the last item in this building section (everything after the header
+            # until the next header or end of list)
+            section_header = conn.execute(
+                'SELECT sort_order FROM pay_app_sov_items WHERE id = ? AND contract_id = ?',
+                (sov_section_id, cid)
+            ).fetchone()
+            if section_header:
+                # Find next header after this one
+                next_header = conn.execute(
+                    'SELECT MIN(sort_order) FROM pay_app_sov_items WHERE contract_id = ? AND is_header = 1 AND sort_order > ?',
+                    (cid, section_header['sort_order'])
+                ).fetchone()[0]
+                if next_header is not None:
+                    insert_sort = next_header  # insert before the next header
+                else:
+                    # Last section — insert at end
+                    insert_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0]
+                # Shift items down
+                conn.execute('UPDATE pay_app_sov_items SET sort_order = sort_order + 1 WHERE contract_id = ? AND sort_order >= ?', (cid, insert_sort))
+            else:
+                insert_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0]
+        else:
+            insert_sort = conn.execute('SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pay_app_sov_items WHERE contract_id = ?', (cid,)).fetchone()[0]
+
         sov_cursor = conn.execute(
             '''INSERT INTO pay_app_sov_items (contract_id, item_number, description, scheduled_value, sort_order)
                VALUES (?,?,?,?,?)''',
-            (cid, max_item + 1, f"CO #{co_number}: {co_title}", co_amount, max_sort + 1)
+            (cid, 0, f"CO #{co_number}: {co_title}", co_amount, insert_sort)
         )
         sov_item_id = sov_cursor.lastrowid
+
+        # Renumber all item_numbers sequentially
+        rows = conn.execute('SELECT id FROM pay_app_sov_items WHERE contract_id = ? ORDER BY sort_order, id', (cid,)).fetchall()
+        for idx, row in enumerate(rows):
+            conn.execute('UPDATE pay_app_sov_items SET item_number = ? WHERE id = ?', (idx + 1, row['id']))
 
         # Backfill existing pay apps with 0 entries
         existing_apps = conn.execute(
@@ -9151,10 +9724,11 @@ def api_create_submittal_library():
             file.save(os.path.join(SUBMITTALS_DIR, fname))
             file_path = fname
         cursor = conn.execute(
-            '''INSERT INTO submittal_files (title, file_path, file_hash, vendor, category, description)
-               VALUES (?,?,?,?,?,?)''',
+            '''INSERT INTO submittal_files (title, file_path, file_hash, vendor, category, description, keywords)
+               VALUES (?,?,?,?,?,?,?)''',
             (data.get('title', ''), file_path, file_hash,
-             data.get('vendor', ''), data.get('category', ''), data.get('description', ''))
+             data.get('vendor', ''), data.get('category', ''), data.get('description', ''),
+             data.get('keywords', ''))
         )
         lib_id = cursor.lastrowid
         conn.commit()
@@ -9163,10 +9737,11 @@ def api_create_submittal_library():
     else:
         data = request.get_json(force=True)
         cursor = conn.execute(
-            '''INSERT INTO submittal_files (title, file_path, file_hash, vendor, category, description)
-               VALUES (?,?,?,?,?,?)''',
+            '''INSERT INTO submittal_files (title, file_path, file_hash, vendor, category, description, keywords)
+               VALUES (?,?,?,?,?,?,?)''',
             (data.get('title', ''), data.get('file_path', ''), data.get('file_hash', ''),
-             data.get('vendor', ''), data.get('category', ''), data.get('description', ''))
+             data.get('vendor', ''), data.get('category', ''), data.get('description', ''),
+             data.get('keywords', ''))
         )
         lib_id = cursor.lastrowid
         conn.commit()
@@ -9202,6 +9777,40 @@ def api_link_submittal_to_library(sid):
         "UPDATE submittals SET submittal_file_id = ?, updated_at = datetime('now','localtime') WHERE id = ?",
         (lib_id, sid)
     )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/submittal-library/<int:lid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_update_submittal_library(lid):
+    data = request.get_json(force=True)
+    conn = get_db()
+    fields = []
+    values = []
+    for f in ('title', 'vendor', 'category', 'description', 'keywords'):
+        if f in data:
+            fields.append(f'{f} = ?')
+            values.append(data[f])
+    if fields:
+        values.append(lid)
+        conn.execute(f"UPDATE submittal_files SET {', '.join(fields)} WHERE id = ?", values)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/submittal-library/<int:lid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_delete_submittal_library(lid):
+    conn = get_db()
+    row = conn.execute('SELECT file_path FROM submittal_files WHERE id = ?', (lid,)).fetchone()
+    if row and row['file_path']:
+        fpath = os.path.join(SUBMITTALS_DIR, row['file_path'])
+        if os.path.exists(fpath):
+            os.remove(fpath)
+    # Unlink any submittals that reference this library file
+    conn.execute('UPDATE submittals SET submittal_file_id = NULL WHERE submittal_file_id = ?', (lid,))
+    conn.execute('DELETE FROM submittal_files WHERE id = ?', (lid,))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -10102,10 +10711,11 @@ def api_lien_waivers_upload(wid):
     from werkzeug.utils import secure_filename
     fname = secure_filename(file.filename)
     fname = f"{int(datetime.now().timestamp())}_{fname}"
+    original_name = file.filename
     file.save(os.path.join(LIEN_WAIVERS_DIR, fname))
     conn = get_db()
-    conn.execute('UPDATE lien_waivers SET file_path = ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
-                 (fname, wid))
+    conn.execute('UPDATE lien_waivers SET file_path = ?, original_filename = ?, updated_at = datetime(\'now\',\'localtime\') WHERE id = ?',
+                 (fname, original_name, wid))
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'filename': fname})
@@ -10124,20 +10734,24 @@ def api_lien_waivers_upload_new():
     job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
     job_name = job['name'] if job else ''
     pay_app_id = request.form.get('pay_app_id') or None
+    waiver_type = request.form.get('waiver_type', 'Conditional Progress')
+    if waiver_type not in ('Conditional Progress', 'Unconditional Progress', 'Conditional Final', 'Unconditional Final'):
+        waiver_type = 'Conditional Progress'
     max_num = conn.execute('SELECT MAX(waiver_number) FROM lien_waivers WHERE job_id = ?', (job_id,)).fetchone()[0] or 0
     today = datetime.now().strftime('%Y-%m-%d')
     cursor = conn.execute(
         '''INSERT INTO lien_waivers (job_id, waiver_number, waiver_type, waiver_date, claimant,
            premises_description, status, created_by, pay_app_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now','localtime'))''',
-        (job_id, max_num + 1, 'Conditional Progress', today, 'LGHVAC Mechanical, LLC',
+        (job_id, max_num + 1, waiver_type, today, 'LGHVAC Mechanical, LLC',
          job_name, 'Draft', session['user_id'], pay_app_id)
     )
     wid = cursor.lastrowid
     from werkzeug.utils import secure_filename
     fname = secure_filename(file.filename)
+    original_name = file.filename
     fname = f"{int(datetime.now().timestamp())}_{fname}"
     file.save(os.path.join(LIEN_WAIVERS_DIR, fname))
-    conn.execute('UPDATE lien_waivers SET file_path = ? WHERE id = ?', (fname, wid))
+    conn.execute('UPDATE lien_waivers SET file_path = ?, original_filename = ? WHERE id = ?', (fname, original_name, wid))
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'id': wid})
@@ -12480,11 +13094,13 @@ def api_save_supplier_quote_items(qid):
         ext = float(item.get('quantity',0) or 0) * float(item.get('unit_price',0) or 0)
         conn.execute(
             '''INSERT INTO supplier_quote_items (quote_id, line_number, sku, description,
-               quantity, unit_price, extended_price, takeoff_sku, notes)
-               VALUES (?,?,?,?,?,?,?,?,?)''',
+               quantity, unit_price, extended_price, takeoff_sku, notes, requires_submittal, submittal_file_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
             (qid, i+1, item.get('sku',''), item.get('description',''),
              float(item.get('quantity',0) or 0), float(item.get('unit_price',0) or 0),
-             ext, item.get('takeoff_sku',''), item.get('notes',''))
+             ext, item.get('takeoff_sku',''), item.get('notes',''),
+             1 if item.get('requires_submittal') else 0,
+             int(item['submittal_file_id']) if item.get('submittal_file_id') else None)
         )
         subtotal += ext
     conn.execute('UPDATE supplier_quotes SET subtotal=?, updated_at=datetime("now","localtime") WHERE id=?', (subtotal, qid))
@@ -12574,6 +13190,148 @@ def api_delete_supplier_quote(qid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+@app.route('/api/supplier-quotes/<int:qid>/toggle-submittal', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_toggle_quote_item_submittal(qid):
+    """Toggle requires_submittal on a quote line item."""
+    data = request.get_json(force=True)
+    item_id = data.get('item_id')
+    requires = 1 if data.get('requires_submittal') else 0
+    conn = get_db()
+    conn.execute(
+        "UPDATE supplier_quote_items SET requires_submittal = ? WHERE id = ? AND quote_id = ?",
+        (requires, item_id, qid)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/supplier-quotes/<int:qid>/generate-submittals', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_generate_submittals_from_quote(qid):
+    """Generate submittals for all quote items marked requires_submittal.
+    Matches against submittal_files library by description/vendor.
+    Returns which items were matched, created, and which are missing."""
+    conn = get_db()
+    quote = conn.execute(
+        'SELECT sq.*, j.name as job_name FROM supplier_quotes sq LEFT JOIN jobs j ON sq.job_id = j.id WHERE sq.id = ?',
+        (qid,)
+    ).fetchone()
+    if not quote:
+        conn.close()
+        return jsonify({'error': 'Quote not found'}), 404
+
+    job_id = quote['job_id']
+    if not job_id:
+        conn.close()
+        return jsonify({'error': 'Quote has no job assigned'}), 400
+
+    # Get items that require submittals
+    items = conn.execute(
+        'SELECT * FROM supplier_quote_items WHERE quote_id = ? AND requires_submittal = 1 ORDER BY line_number',
+        (qid,)
+    ).fetchall()
+
+    if not items:
+        conn.close()
+        return jsonify({'error': 'No line items marked as requiring submittals'}), 400
+
+    # Get all library files for matching
+    library = conn.execute('SELECT * FROM submittal_files ORDER BY title').fetchall()
+
+    # Get existing submittals for this job to avoid duplicates
+    existing = conn.execute(
+        'SELECT description, vendor, submittal_file_id FROM submittals WHERE job_id = ?',
+        (job_id,)
+    ).fetchall()
+    existing_descs = set((r['description'].lower().strip(), (r['vendor'] or '').lower().strip()) for r in existing)
+
+    created = []
+    matched = []
+    missing = []
+
+    for item in items:
+        desc = (item['description'] or '').strip()
+        sku = (item['sku'] or '').strip()
+        vendor = (quote['supplier_name'] or '').strip()
+
+        # Skip if already exists in this job's submittals
+        if (desc.lower(), vendor.lower()) in existing_descs:
+            matched.append({'item_id': item['id'], 'description': desc, 'status': 'already_exists'})
+            continue
+
+        # Try to find a match in the library
+        lib_match = None
+
+        # If item already has a linked library file, use that
+        if item['submittal_file_id']:
+            lib_match = conn.execute('SELECT * FROM submittal_files WHERE id = ?', (item['submittal_file_id'],)).fetchone()
+
+        # Search library by description keywords or SKU
+        if not lib_match:
+            for lib in library:
+                lib_title = (lib['title'] or '').lower()
+                lib_desc = (lib['description'] or '').lower()
+                lib_keywords = (lib['keywords'] or '').lower() if 'keywords' in lib.keys() else ''
+                lib_searchable = lib_title + ' ' + lib_desc + ' ' + lib_keywords
+                item_desc_lower = desc.lower()
+
+                # Match by SKU if available
+                if sku and (sku.lower() in lib_title or sku.lower() in lib_keywords):
+                    lib_match = lib
+                    break
+                # Match by description keywords (at least 3 significant words match)
+                desc_words = [w for w in item_desc_lower.split() if len(w) > 3]
+                if desc_words:
+                    title_matches = sum(1 for w in desc_words if w in lib_searchable)
+                    if title_matches >= min(3, len(desc_words)):
+                        lib_match = lib
+                        break
+
+        # Create the submittal entry
+        max_num = conn.execute('SELECT MAX(submittal_number) FROM submittals WHERE job_id = ?',
+                               (job_id,)).fetchone()[0] or 0
+
+        submittal_file_id = lib_match['id'] if lib_match else None
+        file_path = ''
+        if lib_match and lib_match['file_path']:
+            file_path = lib_match['file_path']
+
+        conn.execute(
+            '''INSERT INTO submittals (job_id, submittal_number, description, vendor,
+               submittal_file_id, file_path, status, created_by)
+               VALUES (?,?,?,?,?,?,?,?)''',
+            (job_id, max_num + 1, desc, vendor, submittal_file_id,
+             file_path, 'Pending', session.get('user_id'))
+        )
+
+        # Update the quote item with the library link if found
+        if lib_match and not item['submittal_file_id']:
+            conn.execute(
+                'UPDATE supplier_quote_items SET submittal_file_id = ? WHERE id = ?',
+                (lib_match['id'], item['id'])
+            )
+
+        if lib_match:
+            matched.append({'item_id': item['id'], 'description': desc, 'status': 'matched',
+                           'library_title': lib_match['title']})
+        else:
+            missing.append({'item_id': item['id'], 'description': desc, 'sku': sku, 'vendor': vendor})
+
+        created.append({'description': desc, 'has_library_file': bool(lib_match)})
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        'ok': True,
+        'created': len(created),
+        'matched': len([m for m in matched if m['status'] == 'matched']),
+        'already_existed': len([m for m in matched if m['status'] == 'already_exists']),
+        'missing': missing,
+        'details': {'created': created, 'matched': matched, 'missing': missing}
+    })
 
 @app.route('/api/supplier-quotes/<int:qid>/parse', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
@@ -15769,6 +16527,183 @@ def api_coi_file(cid):
         return jsonify({'error': 'No file'}), 404
     return send_file(os.path.join(app.root_path, coi['file_path']))
 
+# ─── Billing Summary ─────────────────────────────────────────────
+
+@app.route('/billing-summary')
+@role_required('owner', 'admin')
+def billing_summary_page():
+    return render_template('billing_summary.html')
+
+@app.route('/api/billing-summary')
+@api_role_required('owner', 'admin')
+def api_billing_summary():
+    """Comprehensive billing summary across all projects — pay apps, invoices, retainage."""
+    conn = get_db()
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # Get all jobs
+    jobs = conn.execute("SELECT id, name, status FROM jobs ORDER BY name").fetchall()
+
+    projects = []
+    totals = {
+        'total_contract': 0, 'total_billed': 0, 'total_paid': 0,
+        'total_retained': 0, 'total_outstanding': 0, 'total_cos': 0
+    }
+
+    for job in jobs:
+        job_id = job['id']
+
+        # Pay app contracts for this job
+        contracts = conn.execute(
+            'SELECT * FROM pay_app_contracts WHERE job_id = ?', (job_id,)
+        ).fetchall()
+
+        if not contracts:
+            continue
+
+        for contract in contracts:
+            cid = contract['id']
+            original_sum = contract['original_contract_sum'] or 0
+
+            # Get all pay apps for this contract
+            pay_apps = conn.execute(
+                '''SELECT pa.*, GROUP_CONCAT(
+                       COALESCE(ple.work_this_period, 0) + COALESCE(ple.materials_stored, 0)
+                   ) as line_totals
+                   FROM pay_applications pa
+                   LEFT JOIN pay_app_line_entries ple ON ple.pay_app_id = pa.id
+                   WHERE pa.contract_id = ?
+                   GROUP BY pa.id
+                   ORDER BY pa.application_number''',
+                (cid,)
+            ).fetchall()
+
+            # Calculate totals from SOV entries
+            total_billed = 0
+            total_paid = 0
+            total_retained = 0
+            co_net = 0
+
+            app_details = []
+            for pa in pay_apps:
+                # Sum work+materials for this pay app
+                entries = conn.execute(
+                    '''SELECT SUM(COALESCE(work_this_period, 0) + COALESCE(materials_stored, 0)) as period_total
+                       FROM pay_app_line_entries WHERE pay_app_id = ?''',
+                    (pa['id'],)
+                ).fetchone()
+                period_billed = entries['period_total'] or 0
+
+                ret_pct = contract['retainage_work_pct'] or 10
+                period_retained = round(period_billed * ret_pct / 100, 2)
+                period_paid_net = period_billed - period_retained if pa['status'] == 'Paid' else 0
+
+                # If approved but not paid, it's outstanding
+                if pa['status'] in ('Approved', 'Submitted'):
+                    period_paid_net = 0
+
+                total_billed += period_billed
+                if pa['status'] == 'Paid':
+                    total_paid += period_billed - period_retained
+                    total_retained += period_retained
+
+                co_net += (pa['co_additions'] or 0) - (pa['co_deductions'] or 0)
+
+                app_details.append({
+                    'id': pa['id'],
+                    'number': pa['application_number'],
+                    'period_to': pa['period_to'] or '',
+                    'date': pa['application_date'] or '',
+                    'billed': round(period_billed, 2),
+                    'retained': round(period_retained, 2),
+                    'paid': round(period_paid_net, 2),
+                    'status': pa['status'],
+                })
+
+            current_contract = original_sum + co_net
+            outstanding = total_billed - total_paid - total_retained
+
+            proj = {
+                'job_id': job_id,
+                'job_name': job['name'],
+                'job_status': job['status'],
+                'contract_id': cid,
+                'gc_name': contract['gc_name'] or '',
+                'original_contract': original_sum,
+                'co_net': round(co_net, 2),
+                'current_contract': round(current_contract, 2),
+                'total_billed': round(total_billed, 2),
+                'total_paid': round(total_paid, 2),
+                'total_retained': round(total_retained, 2),
+                'outstanding': round(outstanding, 2),
+                'pct_billed': round(total_billed / current_contract * 100, 1) if current_contract else 0,
+                'pct_collected': round(total_paid / total_billed * 100, 1) if total_billed else 0,
+                'pay_apps': app_details,
+                'retainage_pct': contract['retainage_work_pct'] or 10,
+            }
+            projects.append(proj)
+
+            totals['total_contract'] += current_contract
+            totals['total_billed'] += total_billed
+            totals['total_paid'] += total_paid
+            totals['total_retained'] += total_retained
+            totals['total_outstanding'] += outstanding
+            totals['total_cos'] += co_net
+
+    # Service invoices (non-pay-app billing)
+    svc_invoices = conn.execute('''
+        SELECT ci.*, j.name as job_name FROM client_invoices ci
+        LEFT JOIN jobs j ON ci.job_id = j.id
+        ORDER BY ci.issue_date DESC
+    ''').fetchall()
+
+    svc_total = sum(i['amount'] or 0 for i in svc_invoices)
+    svc_paid = sum(i['amount'] or 0 for i in svc_invoices if i['status'] == 'Paid')
+    svc_outstanding = svc_total - svc_paid
+
+    # Aging buckets for outstanding
+    aging = {'0_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0}
+    for p in projects:
+        if p['outstanding'] > 0 and p['pay_apps']:
+            last_app = p['pay_apps'][-1]
+            app_date = last_app.get('date') or last_app.get('period_to') or ''
+            if app_date:
+                try:
+                    days = (datetime.strptime(today, '%Y-%m-%d') - datetime.strptime(app_date, '%Y-%m-%d')).days
+                except (ValueError, TypeError):
+                    days = 0
+                if days <= 30: aging['0_30'] += p['outstanding']
+                elif days <= 60: aging['31_60'] += p['outstanding']
+                elif days <= 90: aging['61_90'] += p['outstanding']
+                else: aging['90_plus'] += p['outstanding']
+
+    for inv in svc_invoices:
+        if inv['status'] != 'Paid' and (inv['amount'] or 0) > 0:
+            if inv['issue_date']:
+                try:
+                    days = (datetime.strptime(today, '%Y-%m-%d') - datetime.strptime(inv['issue_date'], '%Y-%m-%d')).days
+                except (ValueError, TypeError):
+                    days = 0
+                amt = (inv['amount'] or 0) - (inv['amount_paid'] or 0)
+                if days <= 30: aging['0_30'] += amt
+                elif days <= 60: aging['31_60'] += amt
+                elif days <= 90: aging['61_90'] += amt
+                else: aging['90_plus'] += amt
+
+    conn.close()
+
+    return jsonify({
+        'projects': projects,
+        'totals': {k: round(v, 2) for k, v in totals.items()},
+        'service_invoices': [dict(i) for i in svc_invoices],
+        'service_totals': {
+            'total': round(svc_total, 2),
+            'paid': round(svc_paid, 2),
+            'outstanding': round(svc_outstanding, 2),
+        },
+        'aging': {k: round(v, 2) for k, v in aging.items()},
+    })
+
 # ─── Payment Days-to-Receive & Aged Receivables ──────────────────
 
 @app.route('/api/accounting/receivables')
@@ -17008,6 +17943,378 @@ def api_shared_files_download(fid):
     as_attachment = request.args.get('download') == '1'
     return send_file(fpath, mimetype=row['mime_type'] or 'application/octet-stream',
                      as_attachment=as_attachment, download_name=row['name'])
+
+# ─── Service Invoices ────────────────────────────────────────────
+
+@app.route('/service-invoices')
+@login_required
+def service_invoices_page():
+    return render_template('service_invoices/list.html')
+
+
+@app.route('/api/service-invoices', methods=['GET'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoices_list():
+    conn = get_db()
+    today = datetime.now().strftime('%Y-%m-%d')
+    rows = conn.execute('''
+        SELECT ci.*, j.name as job_name,
+               (SELECT COUNT(*) FROM service_invoice_items WHERE invoice_id = ci.id) as item_count
+        FROM client_invoices ci
+        LEFT JOIN jobs j ON ci.job_id = j.id
+        ORDER BY ci.issue_date DESC, ci.id DESC
+    ''').fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        # Auto-mark overdue
+        if d['status'] not in ('Paid',) and d['due_date'] and d['due_date'] < today:
+            if d['status'] != 'Overdue' and d['amount_paid'] == 0:
+                d['status'] = 'Overdue'
+            elif d['status'] != 'Overdue' and d['amount_paid'] > 0 and d['amount_paid'] < d['amount']:
+                d['status'] = 'Partial'
+        result.append(d)
+    conn.close()
+    return jsonify(result)
+
+
+@app.route('/api/service-invoices/<int:sid>', methods=['GET'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_detail(sid):
+    conn = get_db()
+    inv = conn.execute('SELECT ci.*, j.name as job_name FROM client_invoices ci LEFT JOIN jobs j ON ci.job_id = j.id WHERE ci.id = ?', (sid,)).fetchone()
+    if not inv:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    d = dict(inv)
+    d['items'] = [dict(i) for i in conn.execute('SELECT * FROM service_invoice_items WHERE invoice_id = ? ORDER BY id', (sid,)).fetchall()]
+    d['payments'] = [dict(p) for p in conn.execute('''
+        SELECT sip.*, u.display_name as recorded_by_name
+        FROM service_invoice_payments sip
+        LEFT JOIN users u ON sip.created_by = u.id
+        WHERE sip.invoice_id = ? ORDER BY sip.payment_date DESC, sip.id DESC
+    ''', (sid,)).fetchall()]
+    conn.close()
+    return jsonify(d)
+
+
+@app.route('/api/service-invoices', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_create():
+    data = request.get_json()
+    conn = get_db()
+
+    # Auto-generate invoice number if not provided
+    inv_num = data.get('invoice_number', '').strip()
+    if not inv_num:
+        last = conn.execute("SELECT invoice_number FROM client_invoices WHERE invoice_number LIKE 'INV-%' ORDER BY id DESC LIMIT 1").fetchone()
+        if last and last['invoice_number']:
+            try:
+                num = int(last['invoice_number'].replace('INV-', '')) + 1
+            except ValueError:
+                num = 1
+        else:
+            num = 1
+        inv_num = f'INV-{num:04d}'
+
+    # Calculate totals from line items
+    items = data.get('items', [])
+    subtotal = sum(float(it.get('quantity', 0)) * float(it.get('unit_price', 0)) for it in items)
+    tax_rate = float(data.get('tax_rate', 0))
+    tax_amount = round(subtotal * tax_rate / 100, 2)
+    total = round(subtotal + tax_amount, 2)
+
+    job_id = data.get('job_id') or None
+
+    cursor = conn.execute(
+        '''INSERT INTO client_invoices (job_id, invoice_number, amount, status, description,
+           issue_date, due_date, created_by, customer_name, customer_email, customer_address,
+           notes, terms, tax_rate, subtotal, tax_amount, balance_due, amount_paid)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)''',
+        (job_id, inv_num, total, data.get('status', 'Draft'),
+         data.get('description', ''), data.get('issue_date', datetime.now().strftime('%Y-%m-%d')),
+         data.get('due_date', ''), session.get('user_id'),
+         data.get('customer_name', ''), data.get('customer_email', ''),
+         data.get('customer_address', ''), data.get('notes', ''),
+         data.get('terms', 'Net 30'), tax_rate, subtotal, tax_amount, total)
+    )
+    inv_id = cursor.lastrowid
+
+    for it in items:
+        qty = float(it.get('quantity', 1))
+        up = float(it.get('unit_price', 0))
+        amt = round(qty * up, 2)
+        conn.execute(
+            'INSERT INTO service_invoice_items (invoice_id, description, quantity, unit_price, amount) VALUES (?,?,?,?,?)',
+            (inv_id, it.get('description', ''), qty, up, amt)
+        )
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': inv_id, 'invoice_number': inv_num}), 201
+
+
+@app.route('/api/service-invoices/<int:sid>', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_update(sid):
+    data = request.get_json()
+    conn = get_db()
+
+    inv = conn.execute('SELECT * FROM client_invoices WHERE id = ?', (sid,)).fetchone()
+    if not inv:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+
+    items = data.get('items', [])
+    subtotal = sum(float(it.get('quantity', 0)) * float(it.get('unit_price', 0)) for it in items)
+    tax_rate = float(data.get('tax_rate', 0))
+    tax_amount = round(subtotal * tax_rate / 100, 2)
+    total = round(subtotal + tax_amount, 2)
+    amount_paid = float(inv['amount_paid'] or 0)
+    balance_due = round(total - amount_paid, 2)
+
+    job_id = data.get('job_id') or None
+
+    conn.execute(
+        '''UPDATE client_invoices SET job_id=?, invoice_number=?, amount=?, status=?,
+           description=?, issue_date=?, due_date=?, customer_name=?, customer_email=?,
+           customer_address=?, notes=?, terms=?, tax_rate=?, subtotal=?, tax_amount=?,
+           balance_due=?
+           WHERE id=?''',
+        (job_id, data.get('invoice_number', inv['invoice_number']),
+         total, data.get('status', inv['status']),
+         data.get('description', inv['description']),
+         data.get('issue_date', inv['issue_date']),
+         data.get('due_date', inv['due_date']),
+         data.get('customer_name', inv['customer_name']),
+         data.get('customer_email', inv['customer_email']),
+         data.get('customer_address', inv['customer_address']),
+         data.get('notes', inv['notes']),
+         data.get('terms', inv['terms']),
+         tax_rate, subtotal, tax_amount, balance_due, sid)
+    )
+
+    # Replace line items
+    conn.execute('DELETE FROM service_invoice_items WHERE invoice_id = ?', (sid,))
+    for it in items:
+        qty = float(it.get('quantity', 1))
+        up = float(it.get('unit_price', 0))
+        amt = round(qty * up, 2)
+        conn.execute(
+            'INSERT INTO service_invoice_items (invoice_id, description, quantity, unit_price, amount) VALUES (?,?,?,?,?)',
+            (sid, it.get('description', ''), qty, up, amt)
+        )
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/service-invoices/<int:sid>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_delete(sid):
+    conn = get_db()
+    inv = conn.execute('SELECT status FROM client_invoices WHERE id = ?', (sid,)).fetchone()
+    if not inv:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if inv['status'] not in ('Draft',):
+        conn.close()
+        return jsonify({'error': 'Only draft invoices can be deleted'}), 400
+    conn.execute('DELETE FROM service_invoice_items WHERE invoice_id = ?', (sid,))
+    conn.execute('DELETE FROM service_invoice_payments WHERE invoice_id = ?', (sid,))
+    conn.execute('DELETE FROM client_invoices WHERE id = ?', (sid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/service-invoices/<int:sid>/generate-pdf', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_generate_pdf(sid):
+    conn = get_db()
+    inv = conn.execute('SELECT ci.*, j.name as job_name FROM client_invoices ci LEFT JOIN jobs j ON ci.job_id = j.id WHERE ci.id = ?', (sid,)).fetchone()
+    if not inv:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    items = conn.execute('SELECT * FROM service_invoice_items WHERE invoice_id = ? ORDER BY id', (sid,)).fetchall()
+    payments = conn.execute('SELECT * FROM service_invoice_payments WHERE invoice_id = ? ORDER BY payment_date', (sid,)).fetchall()
+
+    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'icons', 'sidebar-logo.png')
+    if not os.path.exists(logo_path):
+        logo_path = ''
+    else:
+        logo_path = 'file://' + os.path.abspath(logo_path)
+
+    def fmt_money(val):
+        try:
+            v = float(val or 0)
+            return f'{v:,.2f}'
+        except (ValueError, TypeError):
+            return '0.00'
+
+    html = render_template('service_invoices/invoice_pdf.html',
+        invoice=dict(inv),
+        items=[dict(i) for i in items],
+        payments=[dict(p) for p in payments],
+        logo_path=logo_path,
+        fmt=fmt_money
+    )
+
+    pdf_dir = os.path.join(os.path.dirname(__file__), 'data', 'service_invoices')
+    os.makedirs(pdf_dir, exist_ok=True)
+
+    safe_num = ''.join(c if c.isalnum() or c in '-_' else '' for c in (inv['invoice_number'] or 'invoice'))
+    filename = f"ServiceInvoice_{safe_num}.pdf"
+    filepath = os.path.join(pdf_dir, filename)
+
+    if weasyprint is None:
+        conn.close()
+        return jsonify({'error': 'PDF generation not available. WeasyPrint is not installed.'}), 500
+
+    try:
+        wp = weasyprint.HTML(string=html, base_url=os.path.dirname(__file__))
+        wp.write_pdf(filepath)
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': f'PDF generation failed: {str(e)[:200]}'}), 500
+
+    conn.execute('UPDATE client_invoices SET pdf_file = ? WHERE id = ?', (filename, sid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'filename': filename, 'path': f'/api/service-invoices/{sid}/pdf/{filename}'})
+
+
+@app.route('/api/service-invoices/<int:sid>/pdf/<filename>')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_download_pdf(sid, filename):
+    pdf_dir = os.path.join(os.path.dirname(__file__), 'data', 'service_invoices')
+    filepath = os.path.join(pdf_dir, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    if request.args.get('download'):
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    return send_file(filepath, mimetype='application/pdf')
+
+
+@app.route('/api/service-invoices/<int:sid>/email', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_email(sid):
+    data = request.get_json()
+    recipients = [e.strip() for e in data.get('recipients', []) if e.strip()]
+    subject = data.get('subject', 'Invoice from LGHVAC LLC')
+    body_text = data.get('body', '')
+
+    if not recipients:
+        return jsonify({'error': 'No recipients specified'}), 400
+
+    saved_settings = {}
+    settings_path = os.path.join(os.path.dirname(__file__), 'data', 'email_settings.json')
+    if os.path.exists(settings_path):
+        with open(settings_path) as f:
+            saved_settings = json.load(f)
+
+    smtp_host = saved_settings.get('smtp_host', '')
+    smtp_port = int(saved_settings.get('smtp_port', 587) or 587)
+    smtp_user = saved_settings.get('smtp_user', '')
+    smtp_pass = saved_settings.get('smtp_pass', '')
+    from_email = saved_settings.get('from_email', '') or smtp_user
+
+    if not smtp_host or not smtp_user:
+        return jsonify({'error': 'SMTP not configured. Go to Settings to set up email.'}), 400
+
+    conn = get_db()
+    inv = conn.execute('SELECT pdf_file, invoice_number, status FROM client_invoices WHERE id = ?', (sid,)).fetchone()
+    if not inv or not inv['pdf_file']:
+        conn.close()
+        return jsonify({'error': 'No PDF generated yet. Generate the PDF first.'}), 404
+
+    pdf_dir = os.path.join(os.path.dirname(__file__), 'data', 'service_invoices')
+    pdf_path = os.path.join(pdf_dir, inv['pdf_file'])
+    if not os.path.exists(pdf_path):
+        conn.close()
+        return jsonify({'error': 'PDF file not found on disk.'}), 404
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_text, 'plain'))
+
+        with open(pdf_path, 'rb') as f:
+            part = MIMEBase('application', 'pdf')
+            part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(pdf_path)}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        # Update status to Sent if still Draft
+        if inv['status'] == 'Draft':
+            conn.execute("UPDATE client_invoices SET status = 'Sent' WHERE id = ?", (sid,))
+            conn.commit()
+
+        conn.close()
+        return jsonify({'ok': True, 'sent_to': recipients})
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': f'Email failed: {str(e)[:200]}'}), 500
+
+
+@app.route('/api/service-invoices/<int:sid>/record-payment', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_service_invoice_record_payment(sid):
+    data = request.get_json()
+    conn = get_db()
+
+    inv = conn.execute('SELECT * FROM client_invoices WHERE id = ?', (sid,)).fetchone()
+    if not inv:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+
+    pay_amount = float(data.get('amount', 0))
+    if pay_amount <= 0:
+        conn.close()
+        return jsonify({'error': 'Payment amount must be positive'}), 400
+
+    conn.execute(
+        '''INSERT INTO service_invoice_payments (invoice_id, amount, payment_date, payment_method, reference_number, notes, created_by)
+           VALUES (?,?,?,?,?,?,?)''',
+        (sid, pay_amount, data.get('payment_date', datetime.now().strftime('%Y-%m-%d')),
+         data.get('payment_method', ''), data.get('reference_number', ''),
+         data.get('notes', ''), session.get('user_id'))
+    )
+
+    # Recalculate totals
+    total_paid = conn.execute('SELECT COALESCE(SUM(amount), 0) FROM service_invoice_payments WHERE invoice_id = ?', (sid,)).fetchone()[0]
+    balance = round(float(inv['amount']) - total_paid, 2)
+
+    if balance <= 0:
+        new_status = 'Paid'
+        paid_date = datetime.now().strftime('%Y-%m-%d')
+        # Calculate days_to_pay
+        days = None
+        if inv['issue_date']:
+            try:
+                issue = datetime.strptime(inv['issue_date'], '%Y-%m-%d')
+                days = (datetime.now() - issue).days
+            except ValueError:
+                pass
+        conn.execute('UPDATE client_invoices SET status=?, amount_paid=?, balance_due=?, paid_date=?, days_to_pay=? WHERE id=?',
+                     (new_status, total_paid, 0, paid_date, days, sid))
+    else:
+        conn.execute('UPDATE client_invoices SET status=?, amount_paid=?, balance_due=? WHERE id=?',
+                     ('Partial', total_paid, balance, sid))
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 
 # ─── Startup ────────────────────────────────────────────────────
 

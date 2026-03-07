@@ -185,6 +185,7 @@ let empDetail = null;
 
 if (window.EMPLOYEE_ID) {
     loadEmployeeDetail();
+    loadEmpTaxForms();
 }
 
 async function loadEmployeeDetail() {
@@ -395,6 +396,47 @@ function updateStatusWarning() {
     } else {
         warn.style.display = 'none';
     }
+}
+
+// ─── Tax Forms on Employee Detail ───────────────────────────────
+async function loadEmpTaxForms() {
+    if (!window.EMPLOYEE_ID) return;
+    var res = await fetch('/api/tax-forms?user_id=' + EMPLOYEE_ID);
+    var forms = await res.json();
+    var tbody = document.getElementById('taxFormsBody');
+    if (!tbody) return;
+    if (!forms.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No tax forms on file.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = forms.map(function(f) {
+        var sc = f.status === 'Signed' ? 'status-complete' : f.status === 'Complete' ? 'status-in-progress' : 'status-needs-bid';
+        var label = f.form_type;
+        if (f.form_type === 'W9') label += ' (' + (f.w9_name || '-') + ')';
+        else if (f.form_type === 'W4') label += ' (' + (f.w4_filing_status || '-') + ')';
+        else if (f.form_type === '1099') label += ' (' + (f.notes || '-') + ')';
+        var signed = f.form_type === 'W9' ? (f.w9_signature_date || '-') :
+                     f.form_type === 'W4' ? (f.w4_signature_date || '-') : '-';
+        return '<tr>' +
+            '<td><strong>' + label + '</strong></td>' +
+            '<td><span class="status-badge ' + sc + '">' + f.status + '</span></td>' +
+            '<td>' + signed + '</td>' +
+            '<td>' + (f.has_file ? '<a href="/api/tax-forms/' + f.id + '/file" target="_blank" class="btn btn-secondary btn-small" style="font-size:11px;">View</a>' : '-') + '</td>' +
+            '<td style="white-space:nowrap;">' +
+                '<a href="/tax-forms" class="btn btn-secondary btn-small" style="font-size:11px;">Edit</a> ' +
+                '<button class="btn btn-secondary btn-small" onclick="deleteEmpTaxForm(' + f.id + ')" style="font-size:11px;color:#EF4444;">Del</button>' +
+            '</td></tr>';
+    }).join('');
+}
+
+function showEmpTaxForm(type) {
+    window.location.href = '/tax-forms';
+}
+
+async function deleteEmpTaxForm(id) {
+    if (!confirm('Delete this tax form?')) return;
+    await fetch('/api/tax-forms/' + id, { method: 'DELETE' });
+    loadEmpTaxForms();
 }
 
 async function saveStatusChange() {
