@@ -137,7 +137,7 @@ function switchTab(tabName) {
 /* ─── Title Editing ─────────────────────────────────────────── */
 function setupTitleEditing() {
     const title = document.getElementById('jobName');
-    if (!title) return;
+    if (!title || window.SUPPLIER_READ_ONLY) return;
 
     title.addEventListener('click', () => {
         title.contentEditable = 'true';
@@ -165,6 +165,7 @@ function setupTitleEditing() {
 function setupStatusChange() {
     const select = document.getElementById('jobStatus');
     if (!select) return;
+    if (window.SUPPLIER_READ_ONLY) { select.disabled = true; return; }
     select.addEventListener('change', async () => {
         await fetch(`/api/job/${jobId}`, {
             method: 'PUT',
@@ -252,6 +253,9 @@ function addMasterRow() {
         quote_qty: 0,
         qty_ordered: 0,
         price_per: 0,
+        pricing_type: 'each',
+        notes: '',
+        quote_total: 0,
         total_net_price: 0,
         total_received: 0,
         total_shipped: 0,
@@ -260,10 +264,18 @@ function addMasterRow() {
     markUnsaved();
 }
 
+function calcExtPrice(qty, price, pricingType) {
+    if (pricingType === 'per_c') return qty * price / 100;
+    if (pricingType === 'per_m') return qty * price / 1000;
+    return qty * price;
+}
+
 function addMasterRowWithData(item) {
     const tbody = document.getElementById('masterBody');
     const tr = document.createElement('tr');
     tr.dataset.itemId = item.id || '';
+    const missing = Math.max(0, (item.qty_ordered || 0) - (item.total_received || 0));
+    const missingClass = missing > 0 ? ' style="color:#DC2626;font-weight:600;"' : '';
 
     tr.innerHTML = `
         <td class="cell-editable">
@@ -289,32 +301,76 @@ function addMasterRowWithData(item) {
             <input type="number" class="input-qty-ordered" value="${item.qty_ordered || ''}" min="0" step="any">
         </td>
         <td class="cell-editable">
-            <input type="number" class="input-price-per" value="${item.price_per || ''}" min="0" step="any">
+            <input type="text" class="input-price-per" value="${item.price_per ? formatMoney(item.price_per) : ''}" style="text-align:right;">
         </td>
-        <td class="cell-computed total-net-price">${formatMoney(item.total_net_price)}</td>
+        <td class="cell-editable" style="width:60px;">
+            <select class="input-pricing-type" style="font-size:11px;padding:2px;">
+                <option value="each" ${(item.pricing_type||'each') === 'each' ? 'selected' : ''}>Each</option>
+                <option value="per_c" ${item.pricing_type === 'per_c' ? 'selected' : ''}>Per C</option>
+                <option value="per_m" ${item.pricing_type === 'per_m' ? 'selected' : ''}>Per M</option>
+            </select>
+        </td>
+        <td class="cell-computed quote-total">${formatMoney(item.quote_total || 0)}</td>
+        <td class="cell-computed order-total">${formatMoney(item.total_net_price)}</td>
         <td class="cell-summary total-received">${item.total_received || 0}</td>
+        <td class="cell-summary missing"${missingClass}>${missing}</td>
         <td class="cell-summary total-shipped">${item.total_shipped || 0}</td>
         <td class="cell-summary total-invoiced">${item.total_invoiced || 0}</td>
+        <td class="cell-editable cell-notes">
+            <input type="text" class="input-notes" value="${escapeAttr(item.notes || '')}" placeholder="">
+        </td>
         <td class="cell-editable" style="background:transparent;text-align:center;">
             <button class="btn-delete-row" onclick="deleteMasterRow(this)" title="Remove line item">&times;</button>
         </td>
     `;
 
     // Wire up live calculation
+    const quoteQtyInput = tr.querySelector('.input-quote-qty');
     const qtyInput = tr.querySelector('.input-qty-ordered');
     const priceInput = tr.querySelector('.input-price-per');
-    const calcTotal = () => {
+    const pricingSelect = tr.querySelector('.input-pricing-type');
+
+    // Currency formatting for price field
+    priceInput.addEventListener('focus', () => {
+        const raw = parseMoney(priceInput.value);
+        priceInput.value = raw || '';
+    });
+    priceInput.addEventListener('blur', () => {
+        const raw = parseMoney(priceInput.value);
+        priceInput.value = raw ? formatMoney(raw) : '';
+    });
+
+    const calcTotals = () => {
+        const quoteQty = parseFloat(quoteQtyInput.value) || 0;
         const qty = parseFloat(qtyInput.value) || 0;
-        const price = parseFloat(priceInput.value) || 0;
-        tr.querySelector('.total-net-price').textContent = formatMoney(qty * price);
+        const price = parseMoney(priceInput.value);
+        const pt = pricingSelect.value;
+        tr.querySelector('.quote-total').textContent = formatMoney(calcExtPrice(quoteQty, price, pt));
+        tr.querySelector('.order-total').textContent = formatMoney(calcExtPrice(qty, price, pt));
+        // Update missing
+        const received = parseFloat(tr.querySelector('.total-received').textContent) || 0;
+        const miss = Math.max(0, qty - received);
+        const missCell = tr.querySelector('.missing');
+        missCell.textContent = miss;
+        missCell.style.color = miss > 0 ? '#DC2626' : '';
+        missCell.style.fontWeight = miss > 0 ? '600' : '';
     };
-    qtyInput.addEventListener('input', () => { calcTotal(); markUnsaved(); });
-    priceInput.addEventListener('input', () => { calcTotal(); markUnsaved(); });
+    quoteQtyInput.addEventListener('input', () => { calcTotals(); markUnsaved(); });
+    qtyInput.addEventListener('input', () => { calcTotals(); markUnsaved(); });
+    priceInput.addEventListener('input', () => { calcTotals(); markUnsaved(); });
+    pricingSelect.addEventListener('change', () => { calcTotals(); markUnsaved(); });
 
     // Mark unsaved on any edit
     tr.querySelectorAll('input, select').forEach(el => {
         el.addEventListener('input', markUnsaved);
     });
+
+    // Supplier read-only: disable all inputs
+    if (window.SUPPLIER_READ_ONLY) {
+        tr.querySelectorAll('input, select').forEach(el => { el.disabled = true; });
+        const delBtn = tr.querySelector('.btn-delete-row');
+        if (delBtn) delBtn.style.display = 'none';
+    }
 
     tbody.appendChild(tr);
 }
@@ -347,18 +403,45 @@ function renderEntryTab(tabType) {
         }
     });
 
+    // Determine max column number from data (minimum 15)
+    let maxCol = 15;
+    jobData.line_items.forEach(item => {
+        const entries = item[entryKey] || {};
+        for (const col of Object.keys(entries)) {
+            const cn = parseInt(col);
+            if (cn > maxCol) maxCol = cn;
+        }
+    });
+
     // Build header
+    const customHeaders = (jobData.column_headers || {})[tabType] || {};
     let headerHtml = '<tr>';
     headerHtml += '<th class="col-line">Line #</th>';
     headerHtml += '<th class="col-desc">Description</th>';
     headerHtml += '<th class="col-num">Total Ordered</th>';
     headerHtml += '<th class="col-num">Total</th>';
-    for (let c = 1; c <= 15; c++) {
-        const label = dateHeaders[String(c)] || `Col ${c}`;
-        headerHtml += `<th>${label}</th>`;
+    for (let c = 1; c <= maxCol; c++) {
+        if (tabType === 'invoiced') {
+            const val = customHeaders[String(c)] || '';
+            headerHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" value="${escapeHtml(val)}" placeholder="Invoice ${c}"></th>`;
+        } else if (tabType === 'received') {
+            headerHtml += `<th>Delivery ${c}</th>`;
+        } else if (tabType === 'shipped') {
+            headerHtml += `<th>Shipped ${c}</th>`;
+        }
     }
     headerHtml += '</tr>';
     headEl.innerHTML = headerHtml;
+
+    // Wire up header input change tracking for invoiced tab
+    if (tabType === 'invoiced') {
+        headEl.querySelectorAll('.header-input').forEach(input => {
+            input.addEventListener('input', () => markUnsaved());
+        });
+        if (window.SUPPLIER_READ_ONLY) {
+            headEl.querySelectorAll('.header-input').forEach(el => { el.disabled = true; });
+        }
+    }
 
     // Build rows
     bodyEl.innerHTML = '';
@@ -368,7 +451,7 @@ function renderEntryTab(tabType) {
 
         const entries = item[entryKey] || {};
         let totalEntries = 0;
-        for (let c = 1; c <= 15; c++) {
+        for (let c = 1; c <= maxCol; c++) {
             totalEntries += (entries[String(c)]?.quantity || 0);
         }
 
@@ -387,7 +470,7 @@ function renderEntryTab(tabType) {
         html += `<td class="cell-readonly" style="text-align:right;">${item.qty_ordered || 0}</td>`;
         html += `<td class="cell-computed entry-total ${totalClass}" style="text-align:right;">${totalEntries}</td>`;
 
-        for (let c = 1; c <= 15; c++) {
+        for (let c = 1; c <= maxCol; c++) {
             const qty = entries[String(c)]?.quantity || '';
             html += `<td class="cell-entry"><input type="number" min="0" step="any" data-col="${c}" value="${qty || ''}"></td>`;
         }
@@ -401,6 +484,11 @@ function renderEntryTab(tabType) {
                 markUnsaved();
             });
         });
+
+        // Supplier read-only: disable entry inputs
+        if (window.SUPPLIER_READ_ONLY) {
+            tr.querySelectorAll('input').forEach(el => { el.disabled = true; });
+        }
 
         bodyEl.appendChild(tr);
     });
@@ -488,8 +576,8 @@ async function saveMasterList() {
     const lineItems = [];
 
     rows.forEach(tr => {
-        // Parse displayed total net price (strip $ and commas)
-        const displayedNet = tr.querySelector('.total-net-price').textContent
+        // Parse displayed order total (strip $ and commas)
+        const displayedNet = tr.querySelector('.order-total').textContent
             .replace(/[$,]/g, '');
         lineItems.push({
             id: tr.dataset.itemId ? parseInt(tr.dataset.itemId) : null,
@@ -499,8 +587,10 @@ async function saveMasterList() {
             description: tr.querySelector('.input-description').value,
             quote_qty: parseFloat(tr.querySelector('.input-quote-qty').value) || 0,
             qty_ordered: parseFloat(tr.querySelector('.input-qty-ordered').value) || 0,
-            price_per: parseFloat(tr.querySelector('.input-price-per').value) || 0,
+            price_per: parseMoney(tr.querySelector('.input-price-per').value),
             total_net_price: parseFloat(displayedNet) || 0,
+            pricing_type: tr.querySelector('.input-pricing-type').value || 'each',
+            notes: tr.querySelector('.input-notes').value || '',
         });
     });
 
@@ -537,10 +627,20 @@ async function saveEntryTab(tabType) {
         });
     });
 
+    // Collect custom column headers for invoiced tab
+    const payload = { entries };
+    if (tabType === 'invoiced') {
+        const columnHeaders = {};
+        document.querySelectorAll('#invoicedHead .header-input').forEach(input => {
+            columnHeaders[input.dataset.col] = input.value.trim();
+        });
+        payload.column_headers = columnHeaders;
+    }
+
     const res = await fetch(`/api/job/${jobId}/${tabType}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries })
+        body: JSON.stringify(payload)
     });
 
     if (!res.ok) throw new Error('Save failed');
@@ -654,7 +754,7 @@ async function confirmImport() {
                 description: desc,
                 quote_qty: parseFloat(tr.querySelector('.input-quote-qty').value) || 0,
                 qty_ordered: parseFloat(tr.querySelector('.input-qty-ordered').value) || 0,
-                price_per: parseFloat(tr.querySelector('.input-price-per').value) || 0,
+                price_per: parseMoney(tr.querySelector('.input-price-per').value),
                 total_net_price: parseFloat(displayedNet) || 0,
             });
         });
@@ -722,6 +822,11 @@ async function confirmImport() {
 /* ─── Helpers ───────────────────────────────────────────────── */
 function formatMoney(val) {
     return '$' + (val || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function parseMoney(str) {
+    if (!str) return 0;
+    return parseFloat(String(str).replace(/[$,]/g, '')) || 0;
 }
 
 function escapeHtml(text) {

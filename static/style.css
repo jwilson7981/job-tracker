@@ -48,7 +48,7 @@ body {
     display: flex;
     flex-direction: column;
     z-index: 200;
-    overflow-y: auto;
+    overflow: hidden;
 }
 
 .sidebar-header {
@@ -81,6 +81,8 @@ body {
 .sidebar-nav {
     flex: 1;
     padding: 12px 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .sidebar-link {
@@ -751,15 +753,29 @@ body {
 }
 .data-table a.link:hover { text-decoration: underline; }
 
-/* Column widths */
-.col-line { width: 60px; }
-.col-stock { width: 90px; }
-.col-sku { width: 130px; }
-.col-desc { min-width: 200px; }
-.col-num { width: 100px; }
-.col-computed { width: 120px; }
-.col-summary { width: 110px; }
-.col-action { width: 40px; }
+/* Column widths — master list */
+.col-line { width: 48px; }
+.col-stock { width: 42px; }
+.col-sku { width: 110px; }
+.col-desc { min-width: 160px; }
+.col-num { width: 78px; }
+.col-pricing { width: 54px; }
+.col-computed { width: 95px; }
+.col-summary { width: 70px; }
+.col-notes { min-width: 110px; }
+.col-action { width: 30px; }
+
+/* Compact master table */
+#masterTable {
+    font-size: 12px;
+}
+#masterTable th {
+    padding: 6px 4px;
+    font-size: 11px;
+}
+#masterTable td {
+    padding: 2px 3px;
+}
 
 /* Editable cells */
 .cell-editable {
@@ -768,10 +784,10 @@ body {
 .cell-editable input,
 .cell-editable select {
     width: 100%;
-    padding: 6px 8px;
+    padding: 3px 4px;
     border: 1px solid transparent;
     border-radius: 3px;
-    font-size: 14px;
+    font-size: 12px;
     background: transparent;
 }
 .cell-editable input:focus,
@@ -788,16 +804,20 @@ body {
 .cell-computed {
     background: var(--gray-100);
     text-align: right;
-    padding: 6px 10px;
+    padding: 3px 5px;
     font-weight: 500;
+    font-size: 12px;
     color: var(--gray-700);
+    white-space: nowrap;
 }
 
 .cell-summary {
     background: var(--green-light);
     text-align: right;
-    padding: 6px 10px;
+    padding: 3px 5px;
     font-weight: 500;
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .cell-total-green {
@@ -831,6 +851,27 @@ body {
     text-align: right;
 }
 .cell-entry input:focus {
+    outline: 2px solid var(--blue-primary);
+    outline-offset: -2px;
+    background: var(--white);
+}
+
+.editable-header { padding: 0; }
+.header-input {
+    width: 100%;
+    padding: 6px 8px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    color: var(--gray-700);
+}
+.header-input::placeholder {
+    color: var(--gray-400);
+    font-weight: 400;
+}
+.header-input:focus {
     outline: 2px solid var(--blue-primary);
     outline-offset: -2px;
     background: var(--white);

@@ -41,7 +41,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS received_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             line_item_id INTEGER NOT NULL,
-            column_number INTEGER NOT NULL CHECK(column_number BETWEEN 1 AND 15),
+            column_number INTEGER NOT NULL CHECK(column_number BETWEEN 1 AND 200),
             quantity REAL DEFAULT 0,
             entry_date TEXT,
             FOREIGN KEY (line_item_id) REFERENCES line_items(id) ON DELETE CASCADE,
@@ -51,7 +51,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS shipped_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             line_item_id INTEGER NOT NULL,
-            column_number INTEGER NOT NULL CHECK(column_number BETWEEN 1 AND 15),
+            column_number INTEGER NOT NULL CHECK(column_number BETWEEN 1 AND 200),
             quantity REAL DEFAULT 0,
             entry_date TEXT,
             FOREIGN KEY (line_item_id) REFERENCES line_items(id) ON DELETE CASCADE,
@@ -61,7 +61,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS invoiced_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             line_item_id INTEGER NOT NULL,
-            column_number INTEGER NOT NULL CHECK(column_number BETWEEN 1 AND 15),
+            column_number INTEGER NOT NULL CHECK(column_number BETWEEN 1 AND 200),
             quantity REAL DEFAULT 0,
             entry_date TEXT,
             FOREIGN KEY (line_item_id) REFERENCES line_items(id) ON DELETE CASCADE,
@@ -84,7 +84,7 @@ def init_db():
             username TEXT NOT NULL UNIQUE,
             display_name TEXT NOT NULL DEFAULT '',
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'employee' CHECK(role IN ('owner','admin','project_manager','warehouse','employee')),
+            role TEXT NOT NULL DEFAULT 'employee' CHECK(role IN ('owner','admin','project_manager','warehouse','employee','supplier')),
             email TEXT DEFAULT '',
             phone TEXT DEFAULT '',
             hourly_rate REAL DEFAULT 0,
@@ -1760,12 +1760,23 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_project_documents_job ON project_documents(job_id);
+
+        CREATE TABLE IF NOT EXISTS email_autocomplete (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            used_count INTEGER NOT NULL DEFAULT 1,
+            last_used_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
     ''')
 
-    # Migration: add total_net_price column if missing
+    # Migration: add total_net_price, pricing_type, notes columns if missing
     cols = [row[1] for row in conn.execute("PRAGMA table_info(line_items)").fetchall()]
     if 'total_net_price' not in cols:
         conn.execute("ALTER TABLE line_items ADD COLUMN total_net_price REAL DEFAULT 0")
+    if 'pricing_type' not in cols:
+        conn.execute("ALTER TABLE line_items ADD COLUMN pricing_type TEXT DEFAULT 'each'")
+    if 'notes' not in cols:
+        conn.execute("ALTER TABLE line_items ADD COLUMN notes TEXT DEFAULT ''")
 
     # Migration: add address/tax columns to jobs if missing
     job_cols = [row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()]
@@ -2014,6 +2025,33 @@ def init_db():
             fn = parts[0] if parts else ''
             ln = parts[1] if len(parts) > 1 else ''
             conn.execute("UPDATE users SET first_name = ?, last_name = ? WHERE id = ?", (fn, ln, u['id']))
+
+    # Migration: add 'supplier' to users role CHECK constraint
+    role_check = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+    if role_check and 'supplier' not in role_check[0]:
+        conn.execute("PRAGMA writable_schema = ON")
+        conn.execute("""UPDATE sqlite_master SET sql = REPLACE(sql,
+            "role IN ('owner','admin','project_manager','warehouse','employee')",
+            "role IN ('owner','admin','project_manager','warehouse','employee','supplier')")
+            WHERE type='table' AND name='users'""")
+        conn.execute("PRAGMA writable_schema = OFF")
+        conn.execute("PRAGMA integrity_check")
+        conn.commit()
+
+    # Migration: expand column_number CHECK to 200 on entry tables
+    for tbl in ['received_entries', 'shipped_entries', 'invoiced_entries']:
+        tbl_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (tbl,)).fetchone()
+        if tbl_sql:
+            for old_limit in ['BETWEEN 1 AND 15', 'BETWEEN 1 AND 50']:
+                if old_limit in tbl_sql[0]:
+                    conn.execute("PRAGMA writable_schema = ON")
+                    conn.execute("""UPDATE sqlite_master SET sql = REPLACE(sql,
+                        ?, 'BETWEEN 1 AND 200')
+                        WHERE type='table' AND name=?""", (old_limit, tbl))
+                    conn.execute("PRAGMA writable_schema = OFF")
+                    break
+    conn.execute("PRAGMA integrity_check")
+    conn.commit()
 
     # Migration: Team Pay tables (internal progress-based payroll)
     existing_tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
@@ -2712,6 +2750,19 @@ def init_db():
                 original = fp
             conn.execute("UPDATE lien_waivers SET original_filename = ? WHERE id = ?", (original, row[0]))
 
+    # Migration: column_headers table for custom entry tab column names
+    existing_tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if 'column_headers' not in existing_tables:
+        conn.execute("""CREATE TABLE IF NOT EXISTS column_headers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            tab_type TEXT NOT NULL,
+            column_number INTEGER NOT NULL,
+            header_name TEXT DEFAULT '',
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            UNIQUE(job_id, tab_type, column_number)
+        )""")
+
     conn.commit()
     conn.close()
 
@@ -2995,6 +3046,8 @@ def build_snapshot(conn, job_id):
             'qty_ordered': li['qty_ordered'],
             'price_per': li['price_per'],
             'total_net_price': li['total_net_price'] or 0,
+            'pricing_type': li['pricing_type'] if 'pricing_type' in li.keys() else 'each',
+            'notes': (li['notes'] if 'notes' in li.keys() else '') or '',
             'received': {},
             'shipped': {},
             'invoiced': {},
@@ -3028,6 +3081,22 @@ def build_snapshot(conn, job_id):
             }
 
         snapshot['line_items'].append(item)
+
+    # Include column headers in snapshot
+    try:
+        headers = conn.execute(
+            'SELECT tab_type, column_number, header_name FROM column_headers WHERE job_id = ?',
+            (job_id,)
+        ).fetchall()
+        col_headers = {}
+        for h in headers:
+            tab = h['tab_type']
+            if tab not in col_headers:
+                col_headers[tab] = {}
+            col_headers[tab][str(h['column_number'])] = h['header_name']
+        snapshot['column_headers'] = col_headers
+    except Exception:
+        snapshot['column_headers'] = {}
 
     return snapshot
 
@@ -3064,11 +3133,11 @@ def restore_snapshot(conn, job_id, snapshot_data):
     # Re-create line items and entries
     for item in snapshot_data['line_items']:
         cursor = conn.execute(
-            '''INSERT INTO line_items (job_id, line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            '''INSERT INTO line_items (job_id, line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price, pricing_type, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (job_id, item['line_number'], item['stock_ns'], item['sku'],
              item['description'], item['quote_qty'], item['qty_ordered'], item['price_per'],
-             item.get('total_net_price', 0))
+             item.get('total_net_price', 0), item.get('pricing_type', 'each'), item.get('notes', ''))
         )
         li_id = cursor.lastrowid
 
@@ -3088,6 +3157,24 @@ def restore_snapshot(conn, job_id, snapshot_data):
                 (li_id, int(col), entry['quantity'], entry['entry_date'])
             )
 
+    # Restore column headers
+    conn.execute('DELETE FROM column_headers WHERE job_id = ?', (job_id,))
+    for tab, cols in snapshot_data.get('column_headers', {}).items():
+        for col_num, header_name in cols.items():
+            if header_name:
+                conn.execute(
+                    'INSERT INTO column_headers (job_id, tab_type, column_number, header_name) VALUES (?, ?, ?, ?)',
+                    (job_id, tab, int(col_num), header_name)
+                )
+
+def _calc_price(qty, price, pricing_type):
+    """Calculate extended price based on pricing type."""
+    if pricing_type == 'per_c':
+        return qty * price / 100
+    elif pricing_type == 'per_m':
+        return qty * price / 1000
+    return qty * price
+
 def get_job_data(conn, job_id):
     """Get full job data with all computed fields for the API."""
     job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
@@ -3100,8 +3187,12 @@ def get_job_data(conn, job_id):
 
     items = []
     for li in line_items:
+        pricing_type = li['pricing_type'] if 'pricing_type' in li.keys() else 'each'
         stored_net = li['total_net_price'] or 0
-        total_net_price = stored_net if stored_net else (li['qty_ordered'] or 0) * (li['price_per'] or 0)
+        if stored_net:
+            total_net_price = stored_net
+        else:
+            total_net_price = _calc_price((li['qty_ordered'] or 0), (li['price_per'] or 0), pricing_type)
 
         received = conn.execute(
             'SELECT column_number, quantity, entry_date FROM received_entries WHERE line_item_id = ? ORDER BY column_number',
@@ -3120,6 +3211,8 @@ def get_job_data(conn, job_id):
         total_shipped = sum(s['quantity'] or 0 for s in shipped)
         total_invoiced = sum(i['quantity'] or 0 for i in invoiced)
 
+        quote_total = _calc_price((li['quote_qty'] or 0), (li['price_per'] or 0), pricing_type)
+
         item = {
             'id': li['id'],
             'line_number': li['line_number'],
@@ -3129,6 +3222,9 @@ def get_job_data(conn, job_id):
             'quote_qty': li['quote_qty'] or 0,
             'qty_ordered': li['qty_ordered'] or 0,
             'price_per': li['price_per'] or 0,
+            'pricing_type': pricing_type or 'each',
+            'notes': (li['notes'] if 'notes' in li.keys() else '') or '',
+            'quote_total': round(quote_total, 2),
             'total_net_price': round(total_net_price, 2),
             'total_received': total_received,
             'total_shipped': total_shipped,
@@ -3138,6 +3234,21 @@ def get_job_data(conn, job_id):
             'invoiced_entries': {str(i['column_number']): {'quantity': i['quantity'], 'entry_date': i['entry_date']} for i in invoiced},
         }
         items.append(item)
+
+    # Load custom column headers
+    column_headers = {}
+    try:
+        headers = conn.execute(
+            'SELECT tab_type, column_number, header_name FROM column_headers WHERE job_id = ?',
+            (job_id,)
+        ).fetchall()
+        for h in headers:
+            tab = h['tab_type']
+            if tab not in column_headers:
+                column_headers[tab] = {}
+            column_headers[tab][str(h['column_number'])] = h['header_name']
+    except Exception:
+        pass  # table may not exist yet
 
     return {
         'job': {
@@ -3153,4 +3264,5 @@ def get_job_data(conn, job_id):
             'tax_rate': job['tax_rate'] or 0,
         },
         'line_items': items,
+        'column_headers': column_headers,
     }

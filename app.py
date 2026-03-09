@@ -264,6 +264,8 @@ def index():
         return redirect(url_for('materials_list'))
     elif role == 'warehouse':
         return redirect(url_for('materials_list'))
+    elif role == 'supplier':
+        return redirect(url_for('materials_list'))
     else:
         return redirect(url_for('time_entry'))
 
@@ -510,9 +512,11 @@ def api_materials_import():
         'price_per': ['price per', 'unit price', 'price', 'cost', 'unit cost', 'rate',
                       'price each', 'each', 'price/unit', 'cost/unit', 'unit', 'sell price',
                       'sell', 'net price each', 'net each', 'per'],
-        'total_net_price': ['total net price', 'total price', 'total', 'net price', 'extended',
+        'total_net_price': ['total net price', 'total price', 'order total', 'net price', 'extended',
                             'ext price', 'amount', 'ext.', 'ext', 'extension', 'line total',
-                            'extended price', 'total cost', 'net total', 'net amount', 'net'],
+                            'extended price', 'total cost', 'net total', 'net amount', 'net',
+                            'total', 'quote total'],
+        'notes': ['notes', 'note', 'remarks', 'comments', 'memo'],
     }
 
     # Scan first 10 rows for a header row (some files have title rows before headers)
@@ -592,17 +596,35 @@ def api_materials_import():
         qty_ordered = safe_num(master_sheet.cell(row=row, column=col_map.get('qty_ordered', 0)).value) if 'qty_ordered' in col_map else 0
         price_per = safe_num(master_sheet.cell(row=row, column=col_map.get('price_per', 0)).value) if 'price_per' in col_map else 0
         total_net = safe_num(master_sheet.cell(row=row, column=col_map.get('total_net_price', 0)).value) if 'total_net_price' in col_map else 0
+        notes = str(master_sheet.cell(row=row, column=col_map.get('notes', 0)).value or '') if 'notes' in col_map else ''
 
-        # Auto-calc total if missing
-        if total_net == 0 and qty_ordered > 0 and price_per > 0:
-            total_net = qty_ordered * price_per
+        # Detect per-C or per-M pricing by comparing total to qty * price
+        pricing_type = 'each'
+        qty_for_calc = qty_ordered if qty_ordered > 0 else quote_qty
+        if total_net and price_per and qty_for_calc:
+            simple = qty_for_calc * price_per
+            if simple > 0:
+                ratio = total_net / simple
+                if abs(ratio - 0.01) < 0.003:
+                    pricing_type = 'per_c'
+                elif abs(ratio - 0.001) < 0.0003:
+                    pricing_type = 'per_m'
+
+        # Auto-calc total if missing, using detected pricing type
+        if total_net == 0 and qty_for_calc > 0 and price_per > 0:
+            if pricing_type == 'per_c':
+                total_net = qty_for_calc * price_per / 100
+            elif pricing_type == 'per_m':
+                total_net = qty_for_calc * price_per / 1000
+            else:
+                total_net = qty_for_calc * price_per
 
         cursor = conn.execute(
             '''INSERT INTO line_items (job_id, line_number, stock_ns, sku, description,
-               quote_qty, qty_ordered, price_per, total_net_price)
-               VALUES (?,?,?,?,?,?,?,?,?)''',
+               quote_qty, qty_ordered, price_per, total_net_price, pricing_type, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
             (job_id, int(line_num), stock_ns, str(sku or ''), str(desc or ''),
-             quote_qty, qty_ordered, price_per, total_net)
+             quote_qty, qty_ordered, price_per, total_net, pricing_type, notes)
         )
         line_id_map[int(line_num)] = cursor.lastrowid
         # Also map by description (normalized) for tracking sheets that don't have line numbers
@@ -660,7 +682,10 @@ def api_materials_import():
         qty_start_col = None
         for c in range(1, min(ws.max_column + 1, 50)):
             hdr = str(ws.cell(row=t_header_row, column=c).value or '').strip().lower()
-            if any(kw in hdr for kw in ['qty received', 'qty shipped', 'invoiced', 'qty 1']):
+            # Skip "total" summary columns — we want the first actual entry column
+            if 'total' in hdr:
+                continue
+            if any(kw in hdr for kw in ['qty received', 'qty shipped', 'invoice', 'qty 1']):
                 qty_start_col = c
                 break
         if qty_start_col is None:
@@ -741,7 +766,7 @@ def api_materials_import():
 
 
 @app.route('/materials')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def materials_list():
     conn = get_db()
     jobs = conn.execute('SELECT * FROM jobs ORDER BY name ASC').fetchall()
@@ -749,7 +774,7 @@ def materials_list():
     return render_template('materials/list.html', jobs=jobs)
 
 @app.route('/materials/job/<int:job_id>')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def materials_job(job_id):
     conn = get_db()
     job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
@@ -759,7 +784,7 @@ def materials_job(job_id):
     return render_template('materials/job.html', job=job)
 
 @app.route('/materials/job/<int:job_id>/history')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def materials_history(job_id):
     conn = get_db()
     job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
@@ -956,19 +981,21 @@ def save_line_items(job_id):
         qty_ordered = item.get('qty_ordered', 0) or 0
         price_per = item.get('price_per', 0) or 0
         total_net_price = item.get('total_net_price', 0) or 0
+        pricing_type = item.get('pricing_type', 'each') or 'each'
+        notes = item.get('notes', '') or ''
 
         if li_id and li_id in existing_ids:
             conn.execute(
                 '''UPDATE line_items SET line_number=?, stock_ns=?, sku=?, description=?,
-                   quote_qty=?, qty_ordered=?, price_per=?, total_net_price=? WHERE id=? AND job_id=?''',
-                (line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price, li_id, job_id)
+                   quote_qty=?, qty_ordered=?, price_per=?, total_net_price=?, pricing_type=?, notes=? WHERE id=? AND job_id=?''',
+                (line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price, pricing_type, notes, li_id, job_id)
             )
             incoming_ids.add(li_id)
         else:
             cursor = conn.execute(
-                '''INSERT INTO line_items (job_id, line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                (job_id, line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price)
+                '''INSERT INTO line_items (job_id, line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price, pricing_type, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (job_id, line_number, stock_ns, sku, description, quote_qty, qty_ordered, price_per, total_net_price, pricing_type, notes)
             )
             incoming_ids.add(cursor.lastrowid)
 
@@ -983,6 +1010,35 @@ def save_line_items(job_id):
     result['ok'] = True
     conn.close()
     return jsonify(result)
+
+@app.route('/api/job/<int:job_id>/detect-pricing', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def detect_pricing_types(job_id):
+    """Auto-detect per-C/per-M pricing on existing line items by comparing stored totals to qty*price."""
+    conn = get_db()
+    items = conn.execute('SELECT id, qty_ordered, quote_qty, price_per, total_net_price, pricing_type FROM line_items WHERE job_id = ?', (job_id,)).fetchall()
+    updated = 0
+    for item in items:
+        total = item['total_net_price'] or 0
+        price = item['price_per'] or 0
+        qty = item['qty_ordered'] or item['quote_qty'] or 0
+        if not (total and price and qty):
+            continue
+        simple = qty * price
+        if simple == 0:
+            continue
+        ratio = total / simple
+        new_type = 'each'
+        if abs(ratio - 0.01) < 0.003:
+            new_type = 'per_c'
+        elif abs(ratio - 0.001) < 0.0003:
+            new_type = 'per_m'
+        if new_type != (item['pricing_type'] or 'each'):
+            conn.execute('UPDATE line_items SET pricing_type = ? WHERE id = ?', (new_type, item['id']))
+            updated += 1
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'updated': updated})
 
 def _save_entries(job_id, table_name, data):
     conn = get_db()
@@ -1027,6 +1083,25 @@ def _save_entries(job_id, table_name, data):
                 conn.execute(
                     f'INSERT INTO {table_name} (line_item_id, column_number, quantity, entry_date) VALUES (?, ?, ?, ?)',
                     (line_item_id, column_number, quantity, entry_date)
+                )
+
+    # Save custom column headers if provided
+    col_headers = data.get('column_headers', {})
+    if col_headers:
+        tab = table_name.replace('_entries', '')
+        for col_num_str, header_name in col_headers.items():
+            col_num = int(col_num_str)
+            if header_name:
+                conn.execute(
+                    '''INSERT INTO column_headers (job_id, tab_type, column_number, header_name)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(job_id, tab_type, column_number) DO UPDATE SET header_name = ?''',
+                    (job_id, tab, col_num, header_name, header_name)
+                )
+            else:
+                conn.execute(
+                    'DELETE FROM column_headers WHERE job_id = ? AND tab_type = ? AND column_number = ?',
+                    (job_id, tab, col_num)
                 )
 
     conn.execute('UPDATE jobs SET updated_at = datetime("now","localtime") WHERE id = ?', (job_id,))
@@ -1181,7 +1256,7 @@ def import_pdf(job_id):
 # ─── Excel Export ───────────────────────────────────────────────
 
 @app.route('/api/job/<int:job_id>/export')
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def export_excel(job_id):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -1210,9 +1285,9 @@ def export_excel(job_id):
 
     ws1 = wb.active
     ws1.title = 'Master List'
-    headers1 = ['Line #', 'Stock/NS', 'SKU', 'Description', 'Quote QTY',
-                 'QTY Ordered', 'Price Per', 'Total Net Price',
-                 'Total Received', 'Total Shipped', 'Total Invoiced']
+    headers1 = ['Line #', 'Non-Stock', 'Product', 'Description', 'Quote QTY',
+                 'Order QTY', 'Price', 'Unit', 'Quote Total', 'Order Total',
+                 'QTY Received', 'Missing', 'QTY Shipped', 'QTY Invoiced', 'Notes']
     for c, h in enumerate(headers1, 1):
         cell = ws1.cell(row=1, column=c, value=h)
         cell.fill = header_fill
@@ -1221,31 +1296,70 @@ def export_excel(job_id):
         cell.border = thin_border
 
     for r, item in enumerate(items, 2):
+        pricing_type = item.get('pricing_type', 'each')
+        unit_label = 'Each' if pricing_type == 'each' else ('Per C' if pricing_type == 'per_c' else 'Per M')
         vals = [
             item['line_number'], item['stock_ns'], item['sku'], item['description'],
-            item['quote_qty'], item['qty_ordered'], item['price_per'],
+            item['quote_qty'], item['qty_ordered'], item['price_per'], unit_label,
         ]
         for c, v in enumerate(vals, 1):
             cell = ws1.cell(row=r, column=c, value=v)
             cell.fill = editable_fill
             cell.border = thin_border
-            if c in (5, 6, 7):
-                cell.number_format = money_format if c == 7 else '#,##0'
+            if c in (5, 6):
+                cell.number_format = '#,##0'
+            elif c == 7:
+                cell.number_format = money_format
 
-        cell = ws1.cell(row=r, column=8)
+        # Quote Total (col 9)
+        cell = ws1.cell(row=r, column=9)
+        cell.value = item.get('quote_total', 0)
+        cell.fill = computed_fill
+        cell.border = thin_border
+        cell.number_format = money_format
+
+        # Order Total (col 10)
+        cell = ws1.cell(row=r, column=10)
         cell.value = item['total_net_price']
         cell.fill = computed_fill
         cell.border = thin_border
         cell.number_format = money_format
 
-        for offset, sheet_name in [(9, 'Received'), (10, 'Shipped to Site'), (11, 'Invoiced')]:
-            cell = ws1.cell(row=r, column=offset)
-            cell.value = f"='{sheet_name}'!D{r}"
-            cell.fill = green_fill
-            cell.border = thin_border
-            cell.number_format = '#,##0'
+        # Received (col 11)
+        cell = ws1.cell(row=r, column=11)
+        cell.value = f"='Received'!D{r}"
+        cell.fill = green_fill
+        cell.border = thin_border
+        cell.number_format = '#,##0'
 
-    widths1 = [8, 10, 15, 35, 12, 12, 12, 15, 14, 14, 14]
+        # Missing (col 12) = Order QTY - Received
+        cell = ws1.cell(row=r, column=12)
+        missing = max(0, (item['qty_ordered'] or 0) - (item['total_received'] or 0))
+        cell.value = missing
+        cell.fill = amber_fill if missing > 0 else green_fill
+        cell.border = thin_border
+        cell.number_format = '#,##0'
+
+        # Shipped (col 13)
+        cell = ws1.cell(row=r, column=13)
+        cell.value = f"='Shipped to Site'!D{r}"
+        cell.fill = green_fill
+        cell.border = thin_border
+        cell.number_format = '#,##0'
+
+        # Invoiced (col 14)
+        cell = ws1.cell(row=r, column=14)
+        cell.value = f"='Invoiced'!D{r}"
+        cell.fill = green_fill
+        cell.border = thin_border
+        cell.number_format = '#,##0'
+
+        # Notes (col 15)
+        cell = ws1.cell(row=r, column=15)
+        cell.value = item.get('notes', '')
+        cell.border = thin_border
+
+    widths1 = [8, 10, 15, 35, 12, 12, 12, 8, 14, 14, 12, 10, 12, 12, 20]
     for i, w in enumerate(widths1, 1):
         ws1.column_dimensions[get_column_letter(i)].width = w
 
@@ -4236,6 +4350,36 @@ def log_activity(user_id, action, entity_type='', entity_id=None, description=''
     except Exception:
         pass
 
+# ─── Email Autocomplete ─────────────────────────────────────
+
+def save_email_autocomplete(recipients):
+    """Save/update email addresses for autocomplete suggestions."""
+    conn = get_db()
+    for email in recipients:
+        conn.execute('''INSERT INTO email_autocomplete (email, used_count, last_used_at)
+            VALUES (?, 1, datetime('now','localtime'))
+            ON CONFLICT(email) DO UPDATE SET
+                used_count = used_count + 1,
+                last_used_at = datetime('now','localtime')''',
+            (email.lower().strip(),))
+    conn.commit()
+    conn.close()
+
+@app.route('/api/email-autocomplete')
+@api_login_required
+def api_email_autocomplete():
+    q = request.args.get('q', '').strip()
+    conn = get_db()
+    if q:
+        rows = conn.execute(
+            'SELECT email FROM email_autocomplete WHERE email LIKE ? ORDER BY used_count DESC, last_used_at DESC LIMIT 10',
+            (f'{q}%',)).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT email FROM email_autocomplete ORDER BY used_count DESC, last_used_at DESC LIMIT 10').fetchall()
+    conn.close()
+    return jsonify({'emails': [r['email'] for r in rows]})
+
 # ─── Notifications ──────────────────────────────────────────
 
 def create_notification(user_id, ntype, title, message='', link=''):
@@ -4842,6 +4986,7 @@ def api_email_proposal(bid_id):
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
+        save_email_autocomplete(recipients)
         return jsonify({'ok': True, 'sent_to': recipients})
 
     except Exception as e:
@@ -5669,6 +5814,7 @@ def api_email_takeoff(bid_id):
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
+        save_email_autocomplete(recipients)
         return jsonify({'ok': True, 'sent_to': recipients})
     except Exception as e:
         return jsonify({'error': f'Email failed: {str(e)}'}), 500
@@ -7246,6 +7392,7 @@ def api_payapps_email(aid):
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
+        save_email_autocomplete(recipients)
         return jsonify({'ok': True, 'sent_to': recipients})
     except Exception as e:
         return jsonify({'error': f'Email failed: {str(e)}'}), 500
@@ -9262,6 +9409,7 @@ def api_schedule_plan_email():
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
+        save_email_autocomplete(recipients)
         return jsonify({'ok': True, 'sent_to': recipients})
 
     except Exception as e:
@@ -14387,17 +14535,17 @@ PDF TEXT:
 # ─── Inventory (Phase 3) ────────────────────────────────────────
 
 @app.route('/inventory')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def inventory_list():
     return render_template('inventory/list.html')
 
 @app.route('/inventory/<int:iid>')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def inventory_detail(iid):
     return render_template('inventory/detail.html', item_id=iid)
 
 @app.route('/api/inventory')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_inventory():
     search = request.args.get('q', '').strip()
     category = request.args.get('category', '')
@@ -14435,7 +14583,7 @@ def api_create_inventory_item():
     return jsonify({'ok': True, 'id': iid}), 201
 
 @app.route('/api/inventory/<int:iid>')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_inventory_detail(iid):
     conn = get_db()
     item = conn.execute('SELECT * FROM inventory_items WHERE id = ?', (iid,)).fetchone()
@@ -14521,7 +14669,7 @@ def api_inventory_bulk_count():
     return jsonify({'ok': True})
 
 @app.route('/api/inventory/check-availability')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_inventory_check_availability():
     job_id = request.args.get('job_id')
     if not job_id:
@@ -16161,12 +16309,12 @@ def api_pipeline_overview():
 # ─── Material Receiving ──────────────────────────────────────────
 
 @app.route('/receiving')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def receiving_page():
     return render_template('receiving/list.html')
 
 @app.route('/api/receiving/<int:job_id>')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_receiving_items(job_id):
     conn = get_db()
     items = conn.execute('''
@@ -16231,7 +16379,7 @@ def api_quick_receive(job_id):
     return jsonify({'ok': True, 'receipt_id': receipt_id})
 
 @app.route('/api/receiving/pending')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_receiving_pending():
     conn = get_db()
     jobs = conn.execute('''
@@ -16543,12 +16691,12 @@ def api_move_photo(pid):
 # ─── Material Shipments by Phase ──────────────────────────────────
 
 @app.route('/material-shipments')
-@role_required('owner', 'admin', 'project_manager', 'warehouse')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def material_shipments_page():
     return render_template('material_shipments/list.html')
 
 @app.route('/api/material-shipments')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_list_shipments():
     conn = get_db()
     shipments = conn.execute('''
@@ -16591,7 +16739,7 @@ def api_create_shipment():
     return jsonify({'ok': True, 'id': shipment_id}), 201
 
 @app.route('/api/material-shipments/<int:sid>', methods=['GET'])
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_get_shipment(sid):
     conn = get_db()
     s = conn.execute('SELECT ms.*, j.name as job_name FROM material_shipments ms LEFT JOIN jobs j ON ms.job_id = j.id WHERE ms.id = ?', (sid,)).fetchone()
@@ -16638,7 +16786,7 @@ def api_delete_shipment(sid):
     return jsonify({'ok': True})
 
 @app.route('/api/jobs/<int:job_id>/available-materials')
-@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
 def api_available_materials(job_id):
     conn = get_db()
     items = conn.execute('''
@@ -18699,6 +18847,7 @@ def api_service_invoice_email(sid):
             conn.commit()
 
         conn.close()
+        save_email_autocomplete(recipients)
         return jsonify({'ok': True, 'sent_to': recipients})
     except Exception as e:
         conn.close()
