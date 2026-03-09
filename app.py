@@ -475,45 +475,82 @@ def api_materials_import():
         conn.close()
         return jsonify({'error': 'Job not found'}), 404
 
-    # Find the master list sheet (try common names)
+    # Find the master list sheet (try common names, then fall back to first non-tracking sheet)
     master_sheet = None
+    tracking_names_lower = ['received', 'shipped', 'shipped to site', 'invoiced']
     for name in ['Master List', 'master list', 'Sheet1', 'Materials', 'Line Items']:
         if name in wb.sheetnames:
             master_sheet = wb[name]
             break
     if not master_sheet:
+        # Use first sheet that isn't a tracking sheet
+        for name in wb.sheetnames:
+            if name.lower().strip() not in tracking_names_lower:
+                master_sheet = wb[name]
+                break
+    if not master_sheet:
         master_sheet = wb.active
 
-    # Read headers from row 1 to map columns
-    headers = {}
-    for col in range(1, master_sheet.max_column + 1):
-        val = master_sheet.cell(row=1, column=col).value
-        if val:
-            headers[str(val).strip().lower()] = col
-
     # Map header names to DB fields
-    col_map = {}
     header_aliases = {
-        'line_number': ['line #', 'line', 'line number', 'line no', '#'],
-        'stock_ns': ['stock/ns', 'stock', 'stock ns', 'type'],
-        'sku': ['sku', 'part number', 'part #', 'part no', 'product code', 'item'],
-        'description': ['description', 'desc', 'item description', 'product'],
-        'quote_qty': ['quote qty', 'quote quantity', 'qty quoted', 'est qty'],
-        'qty_ordered': ['qty ordered', 'quantity ordered', 'ordered', 'qty', 'quantity'],
-        'price_per': ['price per', 'unit price', 'price', 'cost', 'unit cost', 'rate'],
-        'total_net_price': ['total net price', 'total price', 'total', 'net price', 'extended', 'ext price', 'amount'],
+        'line_number': ['line #', 'line', 'line number', 'line no', '#', 'ln', 'no', 'no.'],
+        'stock_ns': ['stock/ns', 'stock', 'stock ns', 'type', 's/ns', 'non-stock', 'nonstock', 'ns'],
+        'sku': ['sku', 'part number', 'part #', 'part no', 'product code', 'item', 'item #',
+                'item no', 'item number', 'catalog', 'catalog #', 'cat #', 'cat no', 'code',
+                'material', 'mat', 'product #', 'product no', 'product number', 'part',
+                'product'],
+        'description': ['description', 'desc', 'item description', 'product', 'product description',
+                        'material description', 'name', 'item name', 'material name',
+                        'desc.', 'descriptions', 'comments'],
+        'quote_qty': ['quote qty', 'quote quantity', 'qty quoted', 'est qty', 'estimated qty',
+                      'est quantity', 'bid qty'],
+        'qty_ordered': ['qty ordered', 'quantity ordered', 'ordered', 'qty', 'quantity',
+                        'order qty', 'order quantity', 'qty.', 'qty on order', 'ship qty',
+                        'qty to ship', 'pieces', 'pcs', 'count', 'units', 'order'],
+        'price_per': ['price per', 'unit price', 'price', 'cost', 'unit cost', 'rate',
+                      'price each', 'each', 'price/unit', 'cost/unit', 'unit', 'sell price',
+                      'sell', 'net price each', 'net each', 'per'],
+        'total_net_price': ['total net price', 'total price', 'total', 'net price', 'extended',
+                            'ext price', 'amount', 'ext.', 'ext', 'extension', 'line total',
+                            'extended price', 'total cost', 'net total', 'net amount', 'net'],
     }
-    for field, aliases in header_aliases.items():
-        for alias in aliases:
-            if alias in headers:
-                col_map[field] = headers[alias]
-                break
+
+    # Scan first 10 rows for a header row (some files have title rows before headers)
+    header_row = 1
+    headers = {}
+    col_map = {}
+    for try_row in range(1, min(11, master_sheet.max_row + 1)):
+        trial_headers = {}
+        for col in range(1, master_sheet.max_column + 1):
+            val = master_sheet.cell(row=try_row, column=col).value
+            if val:
+                trial_headers[str(val).strip().lower()] = col
+
+        # Check if this row has at least description or sku
+        trial_map = {}
+        for field, aliases in header_aliases.items():
+            for alias in aliases:
+                if alias in trial_headers:
+                    trial_map[field] = trial_headers[alias]
+                    break
+        if 'description' in trial_map or 'sku' in trial_map:
+            headers = trial_headers
+            col_map = trial_map
+            header_row = try_row
+            break
 
     # Must have at least description or sku to be useful
     if 'description' not in col_map and 'sku' not in col_map:
+        # Show what headers we found to help debug
+        row1_headers = []
+        for r in range(1, min(4, master_sheet.max_row + 1)):
+            vals = [str(master_sheet.cell(row=r, column=c).value or '') for c in range(1, min(master_sheet.max_column + 1, 15))]
+            row1_headers.append(f'Row {r}: {", ".join(v for v in vals if v)}')
+        found_str = ' | '.join(row1_headers)
         conn.close()
-        return jsonify({'error': 'Could not find Description or SKU column in the spreadsheet. '
-                        'Expected headers like: Line #, Stock/NS, SKU, Description, Qty Ordered, Price Per, Total Net Price'}), 400
+        return jsonify({'error': f'Could not find a Description or SKU column. '
+                        f'Found in your file: {found_str}. '
+                        f'Expected headers like: Line #, SKU, Description, Qty, Price Per, Total'}), 400
 
     # Clear existing line_items for this job (full re-import)
     existing = conn.execute('SELECT id FROM line_items WHERE job_id = ?', (job_id,)).fetchall()
@@ -535,10 +572,10 @@ def api_materials_import():
         except (ValueError, TypeError):
             return 0
 
-    # Import line items
+    # Import line items (start after the header row we found)
     imported = 0
     line_id_map = {}  # line_number -> new line_item id
-    for row in range(2, master_sheet.max_row + 1):
+    for row in range(header_row + 1, master_sheet.max_row + 1):
         desc = master_sheet.cell(row=row, column=col_map.get('description', 0)).value if 'description' in col_map else ''
         sku = master_sheet.cell(row=row, column=col_map.get('sku', 0)).value if 'sku' in col_map else ''
 
@@ -568,38 +605,121 @@ def api_materials_import():
              quote_qty, qty_ordered, price_per, total_net)
         )
         line_id_map[int(line_num)] = cursor.lastrowid
+        # Also map by description (normalized) for tracking sheets that don't have line numbers
+        desc_key = str(desc or '').strip().lower()
+        if desc_key:
+            line_id_map['desc:' + desc_key] = cursor.lastrowid
         imported += 1
 
     # Import tracking entries from Received/Shipped/Invoiced sheets
     tracking_sheets = {
         'Received': 'received_entries',
         'Shipped to Site': 'shipped_entries',
+        'Shipped': 'shipped_entries',
         'Invoiced': 'invoiced_entries',
     }
     for sheet_name, table_name in tracking_sheets.items():
         if sheet_name not in wb.sheetnames:
             continue
         ws = wb[sheet_name]
-        # Read date headers from row 1 (columns E onward = col 5+)
-        date_headers = {}
-        for col in range(5, min(ws.max_column + 1, 20)):
-            val = ws.cell(row=1, column=col).value
-            if val:
-                date_headers[col] = str(val)
 
-        for row in range(2, ws.max_row + 1):
-            line_num_val = safe_num(ws.cell(row=row, column=1).value)
-            if line_num_val == 0:
-                continue
-            line_item_id = line_id_map.get(int(line_num_val))
+        # Find the header row (scan first 10 rows for one with known column names)
+        t_header_row = 1
+        t_data_start = 2
+        known_headers = ['description', 'desc', 'line #', 'line', 'sku', 'product',
+                         'qty', 'quantity', 'total', 'item', 'name', 'material']
+        for try_r in range(1, min(11, ws.max_row + 1)):
+            row_vals = [str(ws.cell(row=try_r, column=c).value or '').strip().lower()
+                       for c in range(1, min(ws.max_column + 1, 20))]
+            matches = sum(1 for v in row_vals if v in known_headers or
+                         any(kw in v for kw in ['description', 'qty', 'received', 'shipped', 'invoiced']))
+            if matches >= 2:
+                t_header_row = try_r
+                t_data_start = try_r + 1
+                break
+
+        # Find which column has line numbers and which has descriptions
+        t_headers = {}
+        for c in range(1, min(ws.max_column + 1, 50)):
+            val = ws.cell(row=t_header_row, column=c).value
+            if val:
+                t_headers[str(val).strip().lower()] = c
+
+        line_col = None
+        desc_col = None
+        for alias in ['line #', 'line', 'line number', '#']:
+            if alias in t_headers:
+                line_col = t_headers[alias]
+                break
+        for alias in ['description', 'desc', 'item description', 'product', 'product description', 'name']:
+            if alias in t_headers:
+                desc_col = t_headers[alias]
+                break
+
+        # Find where quantity columns start (after description/totals)
+        qty_start_col = None
+        for c in range(1, min(ws.max_column + 1, 50)):
+            hdr = str(ws.cell(row=t_header_row, column=c).value or '').strip().lower()
+            if any(kw in hdr for kw in ['qty received', 'qty shipped', 'invoiced', 'qty 1']):
+                qty_start_col = c
+                break
+        if qty_start_col is None:
+            # Fall back: first column after "total" columns
+            for c in range(3, min(ws.max_column + 1, 50)):
+                hdr = str(ws.cell(row=t_header_row, column=c).value or '').strip().lower()
+                if hdr and ('1' in hdr or 'date' in hdr.lower()):
+                    qty_start_col = c
+                    break
+        if qty_start_col is None:
+            qty_start_col = 3  # default fallback
+
+        # Check row above header for dates (some files put dates in a separate row)
+        date_headers = {}
+        date_row = t_header_row - 1 if t_header_row > 1 else None
+        for col in range(qty_start_col, min(ws.max_column + 1, qty_start_col + 15)):
+            # Check header row first, then row above
+            val = ws.cell(row=t_header_row, column=col).value
+            if date_row and not val:
+                val = ws.cell(row=date_row, column=col).value
+            # Also check row below header for dates
+            if not val and t_data_start <= ws.max_row:
+                check_val = ws.cell(row=t_data_start, column=col).value
+                if hasattr(check_val, 'strftime'):
+                    val = check_val
+                    t_data_start = t_data_start + 1  # dates row, data starts after
+            if val:
+                if hasattr(val, 'strftime'):
+                    date_headers[col] = val.strftime('%Y-%m-%d')
+                else:
+                    date_headers[col] = str(val)
+
+        for row in range(t_data_start, ws.max_row + 1):
+            # Try to match by line number first, then by description
+            line_item_id = None
+            if line_col:
+                line_num_val = safe_num(ws.cell(row=row, column=line_col).value)
+                if line_num_val > 0:
+                    line_item_id = line_id_map.get(int(line_num_val))
+
+            if not line_item_id and desc_col:
+                desc_val = str(ws.cell(row=row, column=desc_col).value or '').strip().lower()
+                if desc_val:
+                    line_item_id = line_id_map.get('desc:' + desc_val)
+
+            # Also try column 1 as description if no line_col/desc_col matched
+            if not line_item_id:
+                desc_val = str(ws.cell(row=row, column=1).value or '').strip().lower()
+                if desc_val:
+                    line_item_id = line_id_map.get('desc:' + desc_val)
+
             if not line_item_id:
                 continue
 
-            for col in range(5, min(ws.max_column + 1, 20)):
+            for col in range(qty_start_col, min(ws.max_column + 1, qty_start_col + 15)):
                 qty = safe_num(ws.cell(row=row, column=col).value)
                 if qty == 0:
                     continue
-                col_number = col - 4  # columns 5-19 map to column_number 1-15
+                col_number = col - qty_start_col + 1
                 if col_number < 1 or col_number > 15:
                     continue
                 entry_date = date_headers.get(col, '')
