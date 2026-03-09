@@ -217,13 +217,16 @@ function renderEvents() {
 }
 
 async function updatePctComplete(id, value) {
+    // Auto-set status based on percentage
+    var newStatus = value === 0 ? 'Pending' : value >= 100 ? 'Complete' : 'In Progress';
     await fetch('/api/schedule/events/' + id, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pct_complete: value })
+        body: JSON.stringify({ pct_complete: value, status: newStatus })
     });
     // Update local cache
     const ev = allEvents.find(e => e.id === id);
-    if (ev) ev.pct_complete = value;
+    if (ev) { ev.pct_complete = value; ev.status = newStatus; }
+    renderEvents();
     renderGantt(allEvents);
 }
 
