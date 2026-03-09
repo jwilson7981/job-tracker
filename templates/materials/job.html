@@ -5,8 +5,10 @@
 {% block header %}
 <div class="page-top-bar">
     <div class="page-top-actions">
+        {% if current_user.role != 'supplier' %}
         <button class="btn btn-secondary" onclick="openImportModal()">Import PDF</button>
         <button class="btn btn-secondary" onclick="document.getElementById('excelImportModal').style.display='flex'">Import Excel</button>
+        {% endif %}
         <a href="/api/job/{{ job.id }}/export" class="btn btn-secondary">Download Excel</a>
         <a href="/materials/job/{{ job.id }}/history" class="btn btn-secondary">History</a>
     </div>
@@ -47,23 +49,29 @@
                 <thead>
                     <tr>
                         <th class="col-line">Line #</th>
-                        <th class="col-stock">Stock/NS</th>
+                        <th class="col-stock">NS</th>
                         <th class="col-sku">SKU</th>
-                        <th class="col-desc">Item Description</th>
+                        <th class="col-desc">Description</th>
                         <th class="col-num">Quote QTY</th>
-                        <th class="col-num">QTY Ordered</th>
-                        <th class="col-num">Price Per</th>
-                        <th class="col-computed">Total Net Price</th>
-                        <th class="col-summary">Total Received</th>
-                        <th class="col-summary">Total Shipped</th>
-                        <th class="col-summary">Total Invoiced</th>
+                        <th class="col-num">Order QTY</th>
+                        <th class="col-num">Price</th>
+                        <th class="col-pricing" style="width:60px;">Unit</th>
+                        <th class="col-computed">Quote Total</th>
+                        <th class="col-computed">Order Total</th>
+                        <th class="col-summary">Received</th>
+                        <th class="col-summary">Missing</th>
+                        <th class="col-summary">Shipped</th>
+                        <th class="col-summary">Invoiced</th>
+                        <th class="col-notes">Notes</th>
                         <th class="col-action"></th>
                     </tr>
                 </thead>
                 <tbody id="masterBody"></tbody>
             </table>
         </div>
+        {% if current_user.role != 'supplier' %}
         <button class="btn btn-secondary" id="addRowBtn" onclick="addMasterRow()">+ Add Line Item</button>
+        {% endif %}
 
         <div class="cost-summary" id="costSummary">
             <h3>Cost Summary</h3>
@@ -99,6 +107,9 @@
                 <tbody id="receivedBody"></tbody>
             </table>
         </div>
+        {% if current_user.role != 'supplier' %}
+        <button class="btn btn-secondary" style="margin-top:8px;" onclick="addEntryColumn('received')">+ Add Delivery</button>
+        {% endif %}
     </div>
 
     <div class="tab-content" id="tab-shipped">
@@ -108,6 +119,9 @@
                 <tbody id="shippedBody"></tbody>
             </table>
         </div>
+        {% if current_user.role != 'supplier' %}
+        <button class="btn btn-secondary" style="margin-top:8px;" onclick="addEntryColumn('shipped')">+ Add Shipment</button>
+        {% endif %}
     </div>
 
     <div class="tab-content" id="tab-invoiced">
@@ -117,13 +131,18 @@
                 <tbody id="invoicedBody"></tbody>
             </table>
         </div>
+        {% if current_user.role != 'supplier' %}
+        <button class="btn btn-secondary" style="margin-top:8px;" onclick="addEntryColumn('invoiced')">+ Add Invoice</button>
+        {% endif %}
     </div>
 
+    {% if current_user.role != 'supplier' %}
     <div class="save-bar">
         <span class="save-bar-total" id="saveBarTotal"></span>
         <span id="saveStatus" class="save-status"></span>
         <button class="btn btn-primary btn-large" id="saveBtn" onclick="saveCurrentTab()">Save</button>
     </div>
+    {% endif %}
 </div>
 
 <!-- Import PDF Modal -->
@@ -198,6 +217,7 @@
 
 {% block scripts %}
 <script>
+    window.SUPPLIER_READ_ONLY = {{ 'true' if current_user.role == 'supplier' else 'false' }};
     document.addEventListener('DOMContentLoaded', function() {
         initJobView({{ job.id }});
     });

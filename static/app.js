@@ -403,8 +403,10 @@ function renderEntryTab(tabType) {
         }
     });
 
-    // Determine max column number from data (minimum 15)
-    let maxCol = 15;
+    // Determine max column number from data, headers, and dates (minimum 1)
+    const customHeaders = (jobData.column_headers || {})[tabType] || {};
+    const customDates = (jobData.column_dates || {})[tabType] || {};
+    let maxCol = 1;
     jobData.line_items.forEach(item => {
         const entries = item[entryKey] || {};
         for (const col of Object.keys(entries)) {
@@ -412,10 +414,10 @@ function renderEntryTab(tabType) {
             if (cn > maxCol) maxCol = cn;
         }
     });
-
-    // Build header with date row above label row
-    const customHeaders = (jobData.column_headers || {})[tabType] || {};
-    const customDates = (jobData.column_dates || {})[tabType] || {};
+    for (const col of Object.keys(customHeaders).concat(Object.keys(customDates))) {
+        const cn = parseInt(col);
+        if (cn > maxCol) maxCol = cn;
+    }
 
     // Date row
     let dateRowHtml = '<tr class="date-header-row">';
@@ -429,14 +431,16 @@ function renderEntryTab(tabType) {
     dateRowHtml += '</tr>';
 
     // Label row
+    const canDelete = !window.SUPPLIER_READ_ONLY && document.body.dataset.role !== 'warehouse';
     let labelRowHtml = '<tr class="label-header-row">';
     for (let c = 1; c <= maxCol; c++) {
+        const delBtn = canDelete ? `<button class="col-delete-btn" onclick="deleteEntryColumn('${tabType}', ${c})" title="Delete column ${c}">&times;</button>` : '';
         if (tabType === 'invoiced') {
-            labelRowHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" placeholder="Invoice ${c}"></th>`;
+            labelRowHtml += `<th class="editable-header" style="position:relative;">${delBtn}<input type="text" class="header-input" data-col="${c}" placeholder="Invoice ${c}"></th>`;
         } else if (tabType === 'received') {
-            labelRowHtml += `<th>Delivery ${c}</th>`;
+            labelRowHtml += `<th style="position:relative;">${delBtn}Delivery ${c}</th>`;
         } else if (tabType === 'shipped') {
-            labelRowHtml += `<th>Shipped ${c}</th>`;
+            labelRowHtml += `<th style="position:relative;">${delBtn}Shipped ${c}</th>`;
         }
     }
     labelRowHtml += '</tr>';
@@ -537,6 +541,60 @@ function updateEntryTotal(tr, ordered) {
     } else {
         totalCell.classList.add('cell-total-none');
     }
+}
+
+async function deleteEntryColumn(tabType, colNum) {
+    const label = tabType === 'invoiced' ? 'Invoice' : tabType === 'received' ? 'Delivery' : 'Shipped';
+    if (!confirm(`Delete ${label} column ${colNum} and all its data? Remaining columns will shift down. This cannot be undone.`)) return;
+
+    const res = await fetch(`/api/job/${jobId}/${tabType}/delete-column/${colNum}`, {method: 'DELETE'});
+    if (!res.ok) {
+        alert('Delete failed');
+        return;
+    }
+    jobData = await res.json();
+    renderMasterList();
+    renderEntryTab('received');
+    renderEntryTab('shipped');
+    renderEntryTab('invoiced');
+    renderCostSummary();
+}
+
+function addEntryColumn(tabType) {
+    const entryKey = `${tabType}_entries`;
+    // Find the current max column number from data
+    let maxCol = 0;
+    jobData.line_items.forEach(item => {
+        const entries = item[entryKey] || {};
+        for (const col of Object.keys(entries)) {
+            const cn = parseInt(col);
+            if (cn > maxCol) maxCol = cn;
+        }
+    });
+    // Also check column_headers and column_dates
+    const headers = (jobData.column_headers || {})[tabType] || {};
+    const dates = (jobData.column_dates || {})[tabType] || {};
+    for (const col of Object.keys(headers).concat(Object.keys(dates))) {
+        const cn = parseInt(col);
+        if (cn > maxCol) maxCol = cn;
+    }
+    // New column is one past the current max
+    const newCol = maxCol + 1;
+
+    // Add an empty placeholder entry for the first line item to force the column to exist
+    if (jobData.line_items.length > 0) {
+        const firstItem = jobData.line_items[0];
+        if (!firstItem[entryKey]) firstItem[entryKey] = {};
+        firstItem[entryKey][String(newCol)] = { quantity: 0, entry_date: '' };
+    }
+
+    // Re-render the tab
+    renderEntryTab(tabType);
+    markUnsaved();
+
+    // Scroll the table wrapper to the right to show the new column
+    const wrapper = document.getElementById(`tab-${tabType}`).querySelector('.table-wrapper');
+    if (wrapper) setTimeout(() => wrapper.scrollLeft = wrapper.scrollWidth, 100);
 }
 
 /* ─── Cost Summary ─────────────────────────────────────────── */

@@ -701,7 +701,7 @@ def api_materials_import():
         # Check row above header for dates (some files put dates in a separate row)
         date_headers = {}
         date_row = t_header_row - 1 if t_header_row > 1 else None
-        for col in range(qty_start_col, min(ws.max_column + 1, qty_start_col + 15)):
+        for col in range(qty_start_col, min(ws.max_column + 1, qty_start_col + 200)):
             # Check header row first, then row above
             val = ws.cell(row=t_header_row, column=col).value
             if date_row and not val:
@@ -740,12 +740,12 @@ def api_materials_import():
             if not line_item_id:
                 continue
 
-            for col in range(qty_start_col, min(ws.max_column + 1, qty_start_col + 15)):
+            for col in range(qty_start_col, min(ws.max_column + 1, qty_start_col + 200)):
                 qty = safe_num(ws.cell(row=row, column=col).value)
                 if qty == 0:
                     continue
                 col_number = col - qty_start_col + 1
-                if col_number < 1 or col_number > 15:
+                if col_number < 1 or col_number > 200:
                     continue
                 entry_date = date_headers.get(col, '')
                 conn.execute(
@@ -1130,6 +1130,79 @@ def save_shipped(job_id):
 @api_role_required('owner', 'admin', 'project_manager', 'warehouse')
 def save_invoiced(job_id):
     return _save_entries(job_id, 'invoiced_entries', request.get_json())
+
+
+@app.route('/api/job/<int:job_id>/<tab_type>/delete-column/<int:col_num>', methods=['DELETE'])
+@api_role_required('owner', 'admin', 'project_manager')
+def delete_entry_column(job_id, tab_type, col_num):
+    """Delete an entire entry column and shift remaining columns down."""
+    if tab_type not in ('received', 'shipped', 'invoiced'):
+        return jsonify({'error': 'Invalid tab type'}), 400
+
+    table_name = f'{tab_type}_entries'
+    conn = get_db()
+
+    job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    if not job:
+        conn.close()
+        return jsonify({'error': 'Job not found'}), 404
+
+    from database import save_snapshot
+    save_snapshot(conn, job_id, f'Before delete {tab_type} column {col_num}')
+
+    # Get all line_item_ids for this job
+    item_ids = [r['id'] for r in conn.execute('SELECT id FROM line_items WHERE job_id = ?', (job_id,)).fetchall()]
+    if not item_ids:
+        conn.close()
+        return jsonify({'error': 'No line items'}), 404
+
+    ph = ','.join('?' * len(item_ids))
+
+    # Delete entries in the target column
+    conn.execute(
+        f'DELETE FROM {table_name} WHERE line_item_id IN ({ph}) AND column_number = ?',
+        item_ids + [col_num]
+    )
+
+    # Find max column for this job
+    max_col = conn.execute(
+        f'SELECT COALESCE(MAX(column_number), 0) FROM {table_name} WHERE line_item_id IN ({ph})',
+        item_ids
+    ).fetchone()[0]
+
+    # Shift all higher columns down by 1
+    if col_num < max_col:
+        # Work from low to high to avoid unique constraint conflicts
+        for c in range(col_num + 1, max_col + 1):
+            conn.execute(
+                f'UPDATE {table_name} SET column_number = ? WHERE line_item_id IN ({ph}) AND column_number = ?',
+                [c - 1] + item_ids + [c]
+            )
+
+    # Also shift column_headers
+    conn.execute(
+        'DELETE FROM column_headers WHERE job_id = ? AND tab_type = ? AND column_number = ?',
+        (job_id, tab_type, col_num)
+    )
+    max_hdr = conn.execute(
+        'SELECT COALESCE(MAX(column_number), 0) FROM column_headers WHERE job_id = ? AND tab_type = ?',
+        (job_id, tab_type)
+    ).fetchone()[0]
+    if col_num < max_hdr:
+        for c in range(col_num + 1, max_hdr + 1):
+            conn.execute(
+                'UPDATE column_headers SET column_number = ? WHERE job_id = ? AND tab_type = ? AND column_number = ?',
+                (c - 1, job_id, tab_type, c)
+            )
+
+    conn.execute('UPDATE jobs SET updated_at = datetime("now","localtime") WHERE id = ?', (job_id,))
+    conn.commit()
+
+    result = get_job_data(conn, job_id)
+    result['ok'] = True
+    conn.close()
+    return jsonify(result)
+
 
 # ─── Tax Lookup ─────────────────────────────────────────────────
 
