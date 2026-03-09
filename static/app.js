@@ -423,7 +423,7 @@ function renderEntryTab(tabType) {
     for (let c = 1; c <= maxCol; c++) {
         if (tabType === 'invoiced') {
             const val = customHeaders[String(c)] || '';
-            headerHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" value="${escapeHtml(val)}" placeholder="Invoice ${c}"></th>`;
+            headerHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" value="${escapeAttr(val)}" placeholder="Invoice ${c}"></th>`;
         } else if (tabType === 'received') {
             headerHtml += `<th>Delivery ${c}</th>`;
         } else if (tabType === 'shipped') {
