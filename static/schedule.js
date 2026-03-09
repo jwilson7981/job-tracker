@@ -420,6 +420,12 @@ async function generateBuildingPhases(e) {
     var total = labels.length * phases.length;
     if (!confirm('This will create ' + total + ' phases. Continue?')) return;
 
+    // Show loading state on button
+    var btn = e.target.querySelector('button[type="submit"]');
+    var origText = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;"><span class="spinner-sm"></span> Generating...</span>';
+
     var sortBase = allEvents.length;
     var bulkPhases = [];
     var idx = 0;
@@ -432,13 +438,27 @@ async function generateBuildingPhases(e) {
             idx++;
         }
     }
-    await fetch('/api/schedule/events/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_id: window.SCHEDULE_JOB_ID, phases: bulkPhases })
-    });
-    document.getElementById('bulkBldgModal').style.display = 'none';
-    loadEvents();
+    try {
+        var res = await fetch('/api/schedule/events/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: window.SCHEDULE_JOB_ID, phases: bulkPhases })
+        });
+        var data = await res.json();
+        if (!res.ok || !data.ok) {
+            alert('Error: ' + (data.error || 'Failed to create phases'));
+            btn.disabled = false;
+            btn.textContent = origText;
+            return;
+        }
+        document.getElementById('bulkBldgModal').style.display = 'none';
+        loadEvents();
+        if (window.showToast) window.showToast('Created ' + total + ' phases');
+    } catch (err) {
+        alert('Error creating phases: ' + err.message);
+    }
+    btn.disabled = false;
+    btn.textContent = origText;
 }
 
 /* ─── Smart Backwards Planning ─────────────────────────────── */
