@@ -846,6 +846,52 @@ body {
 .entry-table th:not(.col-line):not(.col-desc):not(.col-num) {
     min-width: 80px;
 }
+
+/* Freeze first 4 columns (Line #, Description, Total Ordered, Total) in entry tabs */
+.entry-table th:nth-child(1),
+.entry-table td:nth-child(1) {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    min-width: 48px;
+    max-width: 48px;
+}
+.entry-table td:nth-child(1) { background: var(--white); }
+.entry-table th:nth-child(1) { z-index: 12; }
+
+.entry-table th:nth-child(2),
+.entry-table td:nth-child(2) {
+    position: sticky;
+    left: 48px;
+    z-index: 5;
+    min-width: 160px;
+    max-width: 160px;
+}
+.entry-table td:nth-child(2) { background: var(--white); }
+.entry-table th:nth-child(2) { z-index: 12; }
+
+.entry-table th:nth-child(3),
+.entry-table td:nth-child(3) {
+    position: sticky;
+    left: 208px;
+    z-index: 5;
+    min-width: 90px;
+    max-width: 90px;
+}
+.entry-table td:nth-child(3) { background: var(--white); }
+.entry-table th:nth-child(3) { z-index: 12; }
+
+.entry-table th:nth-child(4),
+.entry-table td:nth-child(4) {
+    position: sticky;
+    left: 298px;
+    z-index: 5;
+    min-width: 60px;
+    max-width: 60px;
+    border-right: 2px solid var(--gray-400);
+}
+.entry-table td:nth-child(4) { background: var(--white); }
+.entry-table th:nth-child(4) { z-index: 12; }
 .cell-entry input {
     width: 100%;
     padding: 6px 8px;
@@ -860,7 +906,7 @@ body {
     background: var(--white);
 }
 
-.editable-header { padding: 0; min-width: 140px; }
+.editable-header { padding: 0; min-width: 240px; }
 .header-input {
     width: 100%;
     padding: 6px 8px;

@@ -954,7 +954,7 @@ def get_analytics():
     })
 
 @app.route('/api/job/<int:job_id>/line-items', methods=['PUT'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
 def save_line_items(job_id):
     conn = get_db()
     job = conn.execute('SELECT * FROM jobs WHERE id = ?', (job_id,)).fetchone()
@@ -1113,17 +1113,17 @@ def _save_entries(job_id, table_name, data):
     return jsonify(result)
 
 @app.route('/api/job/<int:job_id>/received', methods=['PUT'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
 def save_received(job_id):
     return _save_entries(job_id, 'received_entries', request.get_json())
 
 @app.route('/api/job/<int:job_id>/shipped', methods=['PUT'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
 def save_shipped(job_id):
     return _save_entries(job_id, 'shipped_entries', request.get_json())
 
 @app.route('/api/job/<int:job_id>/invoiced', methods=['PUT'])
-@api_role_required('owner', 'admin', 'project_manager')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
 def save_invoiced(job_id):
     return _save_entries(job_id, 'invoiced_entries', request.get_json())
 
@@ -4203,6 +4203,11 @@ def api_heartbeat():
     return jsonify({'ok': True, '_noToast': True})
 
 # ─── Activity Log (Owner Only) ──────────────────────────────────
+
+@app.route('/admin/sms-settings')
+@role_required('owner')
+def admin_sms_settings():
+    return render_template('admin/sms_settings.html')
 
 @app.route('/admin/activity-log')
 @role_required('owner')
@@ -18902,6 +18907,612 @@ def api_service_invoice_record_payment(sid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+
+# ─── Deliveries ──────────────────────────────────────────────────
+
+DELIVERIES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'deliveries')
+
+CARRIER_GATEWAYS = {
+    'att': 'txt.att.net',
+    'verizon': 'vtext.com',
+    'tmobile': 'tmomail.net',
+    'sprint': 'messaging.sprintpcs.com',
+    'uscellular': 'email.uscc.net',
+    'cricket': 'sms.cricketwireless.net',
+    'metro': 'mymetropcs.com',
+    'boost': 'sms.myboostmobile.com',
+    'xfinity': 'vtext.com',
+    'googlefi': 'msg.fi.google.com',
+    'mint': 'tmomail.net',
+    'visible': 'vtext.com',
+}
+
+def send_sms(message):
+    """Send SMS to all active recipients via email-to-SMS gateways."""
+    try:
+        conn = get_db()
+        settings_row = conn.execute('SELECT * FROM sms_settings WHERE is_active = 1').fetchone()
+        if not settings_row:
+            conn.close()
+            return
+        recipients = conn.execute('''
+            SELECT sr.phone, sr.carrier FROM sms_recipients sr
+            JOIN users u ON sr.user_id = u.id
+            WHERE sr.is_active = 1 AND u.is_active = 1
+        ''').fetchall()
+        conn.close()
+
+        if not recipients:
+            return
+
+        # Load SMTP settings
+        settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'email_settings.json')
+        if not os.path.exists(settings_path):
+            print("SMS: No email_settings.json found")
+            return
+        with open(settings_path) as f:
+            email_settings = json.load(f)
+
+        smtp_host = email_settings.get('smtp_host', '')
+        smtp_port = int(email_settings.get('smtp_port', 587) or 587)
+        smtp_user = email_settings.get('smtp_user', '')
+        smtp_pass = email_settings.get('smtp_pass', '')
+        from_email = email_settings.get('from_email', '') or smtp_user
+
+        if not smtp_host or not smtp_user:
+            print("SMS: SMTP not configured")
+            return
+
+        for r in recipients:
+            phone = r['phone'].strip().replace('-', '').replace(' ', '').replace('(', '').replace(')', '')
+            carrier = (r['carrier'] or '').strip().lower()
+            gateway = CARRIER_GATEWAYS.get(carrier)
+            if not gateway or not phone:
+                print(f"SMS: skipping {phone} — no carrier gateway")
+                continue
+
+            to_addr = f"{phone}@{gateway}"
+            try:
+                msg = MIMEText(message)
+                msg['From'] = from_email
+                msg['To'] = to_addr
+                msg['Subject'] = ''
+
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(msg)
+                print(f"SMS sent to {to_addr}")
+            except Exception as e:
+                print(f"SMS to {to_addr} failed: {e}")
+    except Exception as e:
+        print(f"SMS send error: {e}")
+
+
+def extract_delivery_items(pdf_path):
+    """Use Claude Vision to extract line items from a scanned delivery sheet PDF or image."""
+    import anthropic
+    import base64
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return []
+
+    ext = pdf_path.lower().rsplit('.', 1)[-1] if '.' in pdf_path else ''
+    images = []
+    media_type = 'image/png'
+
+    if ext in ('jpg', 'jpeg', 'png'):
+        # Direct image upload
+        try:
+            with open(pdf_path, 'rb') as f:
+                img_bytes = f.read()
+            b64 = base64.standard_b64encode(img_bytes).decode('utf-8')
+            media_type = 'image/jpeg' if ext in ('jpg', 'jpeg') else 'image/png'
+            images.append((b64, media_type))
+        except Exception as e:
+            print(f"Image read failed: {e}")
+            return []
+    else:
+        # PDF — convert pages to images
+        try:
+            import fitz
+            doc = fitz.open(pdf_path)
+            for page in doc:
+                pix = page.get_pixmap(dpi=200)
+                img_bytes = pix.tobytes("png")
+                b64 = base64.standard_b64encode(img_bytes).decode('utf-8')
+                images.append((b64, 'image/png'))
+            doc.close()
+        except Exception as e:
+            print(f"PDF to image conversion failed: {e}")
+            return []
+
+    # Build message content with all page images
+    content = []
+    for b64, mtype in images:
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mtype, "data": b64}
+        })
+    content.append({
+        "type": "text",
+        "text": """Extract ALL line items from this delivery sheet / packing slip.
+The document may be upside down or rotated — read it in the correct orientation.
+
+Return ONLY a valid JSON array of objects with these fields:
+- sku: the product code/SKU (e.g. "L0220", "B1234") — string
+- description: item description (string)
+- quantity: the quantity delivered (number)
+
+If the document has a header with job name, order number, or supplier info, include one extra object at the START of the array with:
+- _meta: true
+- supplier_name: supplier name if visible
+- order_number: order/PO number if visible
+- job_name: job/project name if visible
+
+Return ONLY the JSON array, no other text."""
+    })
+
+    client = anthropic.Anthropic(api_key=api_key)
+    try:
+        resp = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=4000,
+            messages=[{'role': 'user', 'content': content}]
+        )
+        raw = resp.content[0].text
+        import re
+        match = re.search(r'\[[\s\S]*\]', raw)
+        if match:
+            items = json.loads(match.group())
+            return items
+    except Exception as e:
+        print(f"Claude extraction error: {e}")
+
+    return []
+
+
+def match_delivery_to_master(extracted_items, job_id):
+    """Match extracted delivery items to master list line items."""
+    conn = get_db()
+    line_items = conn.execute(
+        'SELECT id, line_number, sku, description FROM line_items WHERE job_id = ?', (job_id,)
+    ).fetchall()
+    conn.close()
+
+    # Build lookup maps
+    sku_map = {}
+    desc_map = {}
+    for li in line_items:
+        if li['sku']:
+            sku_map[li['sku'].strip().upper()] = li
+        if li['description']:
+            desc_map[li['description'].strip().lower()] = li
+
+    matched = []
+    meta = None
+    for item in extracted_items:
+        if item.get('_meta'):
+            meta = item
+            continue
+
+        sku = str(item.get('sku', '')).strip()
+        desc = str(item.get('description', '')).strip()
+        qty = float(item.get('quantity', 0) or 0)
+
+        # Try SKU match first
+        li_match = sku_map.get(sku.upper())
+
+        # Try description match
+        if not li_match and desc:
+            li_match = desc_map.get(desc.lower())
+            # Fuzzy: check if extracted desc is contained in a master desc or vice versa
+            if not li_match:
+                for d, li in desc_map.items():
+                    if desc.lower() in d or d in desc.lower():
+                        li_match = li
+                        break
+
+        matched.append({
+            'sku_extracted': sku,
+            'description_extracted': desc,
+            'quantity_extracted': qty,
+            'line_item_id': li_match['id'] if li_match else None,
+            'matched': 1 if li_match else 0,
+            'line_number': li_match['line_number'] if li_match else None,
+            'master_sku': li_match['sku'] if li_match else '',
+            'master_desc': li_match['description'] if li_match else '',
+        })
+
+    return matched, meta
+
+
+@app.route('/deliveries')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
+def deliveries_page():
+    return render_template('deliveries/list.html')
+
+
+@app.route('/deliveries/<int:did>')
+@role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
+def delivery_detail(did):
+    return render_template('deliveries/detail.html', delivery_id=did)
+
+
+@app.route('/api/deliveries')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
+def api_deliveries():
+    conn = get_db()
+    status = request.args.get('status', '')
+    job_id = request.args.get('job_id', '')
+
+    query = '''SELECT d.*, j.name as job_name, u.display_name as supplier_display_name,
+               v.display_name as verified_by_name
+               FROM deliveries d
+               JOIN jobs j ON d.job_id = j.id
+               LEFT JOIN users u ON d.supplier_user_id = u.id
+               LEFT JOIN users v ON d.verified_by = v.id
+               WHERE 1=1'''
+    params = []
+
+    if status:
+        query += ' AND d.status = ?'
+        params.append(status)
+    if job_id:
+        query += ' AND d.job_id = ?'
+        params.append(int(job_id))
+
+    # Suppliers only see their own deliveries
+    if session.get('role') == 'supplier':
+        query += ' AND d.supplier_user_id = ?'
+        params.append(session['user_id'])
+
+    query += ' ORDER BY d.created_at DESC'
+    deliveries = [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    # Add item counts
+    for d in deliveries:
+        d['item_count'] = conn.execute(
+            'SELECT COUNT(*) FROM delivery_items WHERE delivery_id = ?', (d['id'],)
+        ).fetchone()[0]
+
+    conn.close()
+    return jsonify({'deliveries': deliveries})
+
+
+@app.route('/api/deliveries', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
+def api_create_delivery():
+    """Supplier uploads a delivery sheet."""
+    if request.content_type and 'multipart' in request.content_type:
+        data = request.form.to_dict()
+        f = request.files.get('file')
+    else:
+        return jsonify({'error': 'File upload required'}), 400
+
+    job_id = data.get('job_id')
+    delivery_date = data.get('delivery_date', '')
+    delivery_time = data.get('delivery_time', '')
+    notes = data.get('notes', '')
+
+    if not job_id or not delivery_date:
+        return jsonify({'error': 'Job and delivery date are required'}), 400
+
+    if not f:
+        return jsonify({'error': 'Delivery sheet file is required'}), 400
+
+    # Save file
+    os.makedirs(DELIVERIES_DIR, exist_ok=True)
+    from werkzeug.utils import secure_filename as sec_fn
+    orig_name = f.filename
+    filename = f"{int(datetime.now().timestamp())}_{sec_fn(orig_name)}"
+    filepath = os.path.join(DELIVERIES_DIR, filename)
+    f.save(filepath)
+
+    conn = get_db()
+
+    # Get job name for SMS
+    job = conn.execute('SELECT name FROM jobs WHERE id = ?', (int(job_id),)).fetchone()
+    job_name = job['name'] if job else f'Job {job_id}'
+
+    # Get supplier name
+    supplier_name = ''
+    if session.get('role') == 'supplier':
+        user = conn.execute('SELECT display_name FROM users WHERE id = ?', (session['user_id'],)).fetchone()
+        supplier_name = user['display_name'] if user else ''
+    supplier_name = data.get('supplier_name', '') or supplier_name
+
+    # Create delivery record
+    cur = conn.execute(
+        '''INSERT INTO deliveries (job_id, supplier_user_id, supplier_name, delivery_date, delivery_time,
+           pdf_path, original_filename, notes, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        (int(job_id), session.get('user_id'), supplier_name, delivery_date, delivery_time,
+         f'data/deliveries/{filename}', orig_name, notes, session.get('user_id'))
+    )
+    delivery_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Extract items from PDF using AI (run in background-ish, but keep it sync for now)
+    extracted_items = extract_delivery_items(filepath)
+    matched_items, meta = match_delivery_to_master(extracted_items, int(job_id))
+
+    # Update supplier name from document if found
+    if meta and meta.get('supplier_name') and not supplier_name:
+        supplier_name = meta['supplier_name']
+        conn = get_db()
+        conn.execute('UPDATE deliveries SET supplier_name = ? WHERE id = ?', (supplier_name, delivery_id))
+        conn.commit()
+        conn.close()
+
+    # Save matched items
+    conn = get_db()
+    for item in matched_items:
+        conn.execute(
+            '''INSERT INTO delivery_items (delivery_id, line_item_id, sku_extracted, description_extracted,
+               quantity_extracted, matched)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (delivery_id, item['line_item_id'], item['sku_extracted'],
+             item['description_extracted'], item['quantity_extracted'], item['matched'])
+        )
+    conn.commit()
+
+    # Notify all team members (in-app)
+    team = conn.execute(
+        "SELECT id FROM users WHERE role != 'supplier' AND is_active = 1"
+    ).fetchall()
+    for u in team:
+        create_notification(
+            u['id'], 'delivery',
+            f'Delivery for {job_name}',
+            f'{supplier_name or "Supplier"} — {delivery_date} at {delivery_time or "TBD"} — {len(matched_items)} items',
+            f'/deliveries/{delivery_id}'
+        )
+    conn.close()
+
+    # Send SMS
+    time_str = f" at {delivery_time}" if delivery_time else ""
+    sms_msg = f"📦 Delivery for {job_name} on {delivery_date}{time_str} from {supplier_name or 'Supplier'} — {len(matched_items)} items pending verification"
+    send_sms(sms_msg)
+
+    return jsonify({'ok': True, 'delivery_id': delivery_id, 'items_extracted': len(matched_items)})
+
+
+@app.route('/api/deliveries/<int:did>')
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse', 'supplier')
+def api_delivery_detail(did):
+    conn = get_db()
+    d = conn.execute('''SELECT d.*, j.name as job_name, u.display_name as supplier_display_name,
+                        v.display_name as verified_by_name
+                        FROM deliveries d
+                        JOIN jobs j ON d.job_id = j.id
+                        LEFT JOIN users u ON d.supplier_user_id = u.id
+                        LEFT JOIN users v ON d.verified_by = v.id
+                        WHERE d.id = ?''', (did,)).fetchone()
+    if not d:
+        conn.close()
+        return jsonify({'error': 'Delivery not found'}), 404
+
+    # Suppliers can only see their own
+    if session.get('role') == 'supplier' and d['supplier_user_id'] != session.get('user_id'):
+        conn.close()
+        return jsonify({'error': 'Access denied'}), 403
+
+    delivery = dict(d)
+    items = conn.execute('''
+        SELECT di.*, li.line_number, li.sku as master_sku, li.description as master_description,
+               li.qty_ordered
+        FROM delivery_items di
+        LEFT JOIN line_items li ON di.line_item_id = li.id
+        ORDER BY li.line_number, di.id
+    ''').fetchall()
+    delivery['items'] = [dict(i) for i in items]
+
+    # Get all line items for this job (for manual matching dropdown)
+    all_items = conn.execute(
+        'SELECT id, line_number, sku, description FROM line_items WHERE job_id = ? ORDER BY line_number',
+        (delivery['job_id'],)
+    ).fetchall()
+    delivery['all_line_items'] = [dict(i) for i in all_items]
+
+    conn.close()
+    return jsonify(delivery)
+
+
+@app.route('/api/deliveries/<int:did>/verify', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_verify_delivery(did):
+    """Cayden/team verifies delivery — quantities flow into received_entries."""
+    data = request.get_json() or {}
+    verified_items = data.get('items', [])
+
+    conn = get_db()
+    delivery = conn.execute('SELECT * FROM deliveries WHERE id = ?', (did,)).fetchone()
+    if not delivery:
+        conn.close()
+        return jsonify({'error': 'Delivery not found'}), 404
+
+    if delivery['status'] == 'verified':
+        conn.close()
+        return jsonify({'error': 'Already verified'}), 400
+
+    job_id = delivery['job_id']
+    job = conn.execute('SELECT name FROM jobs WHERE id = ?', (job_id,)).fetchone()
+    job_name = job['name'] if job else f'Job {job_id}'
+
+    # Find next available column number for received_entries
+    max_col = conn.execute('''
+        SELECT COALESCE(MAX(re.column_number), 0)
+        FROM received_entries re
+        JOIN line_items li ON re.line_item_id = li.id
+        WHERE li.job_id = ?
+    ''', (job_id,)).fetchone()[0]
+    next_col = max_col + 1
+
+    # Save snapshot before update
+    from database import save_snapshot
+    save_snapshot(conn, job_id, f'Before delivery #{did} verification')
+
+    received_count = 0
+    for vi in verified_items:
+        di_id = vi.get('delivery_item_id')
+        qty_verified = float(vi.get('quantity_verified', 0) or 0)
+        line_item_id = vi.get('line_item_id')
+
+        # Update delivery_item
+        conn.execute(
+            'UPDATE delivery_items SET quantity_verified = ?, line_item_id = ?, matched = 1 WHERE id = ?',
+            (qty_verified, line_item_id, di_id)
+        )
+
+        # Insert into received_entries if qty > 0 and matched
+        if qty_verified > 0 and line_item_id:
+            conn.execute(
+                '''INSERT OR REPLACE INTO received_entries (line_item_id, column_number, quantity, entry_date)
+                   VALUES (?, ?, ?, ?)''',
+                (line_item_id, next_col, qty_verified, delivery['delivery_date'])
+            )
+            received_count += 1
+
+    # Set column header for this delivery
+    supplier_name = delivery['supplier_name'] or 'Delivery'
+    header_label = f"{supplier_name} {delivery['delivery_date']}"
+    conn.execute(
+        '''INSERT INTO column_headers (job_id, tab_type, column_number, header_name)
+           VALUES (?, 'received', ?, ?)
+           ON CONFLICT(job_id, tab_type, column_number) DO UPDATE SET header_name = ?''',
+        (job_id, next_col, header_label, header_label)
+    )
+
+    # Update delivery status
+    conn.execute(
+        '''UPDATE deliveries SET status = 'verified', verified_by = ?, verified_at = datetime('now','localtime')
+           WHERE id = ?''',
+        (session.get('user_id'), did)
+    )
+
+    conn.execute('UPDATE jobs SET updated_at = datetime("now","localtime") WHERE id = ?', (job_id,))
+    conn.commit()
+
+    # Notify team
+    verifier = conn.execute('SELECT display_name FROM users WHERE id = ?', (session.get('user_id'),)).fetchone()
+    verifier_name = verifier['display_name'] if verifier else 'Someone'
+    team = conn.execute("SELECT id FROM users WHERE role != 'supplier' AND is_active = 1").fetchall()
+    for u in team:
+        create_notification(
+            u['id'], 'delivery',
+            f'Delivery Verified — {job_name}',
+            f'{verifier_name} verified {received_count} items from {supplier_name}',
+            f'/deliveries/{did}'
+        )
+    conn.close()
+
+    # Send SMS
+    sms_msg = f"✅ Delivery verified for {job_name} — {received_count} items received, verified by {verifier_name}"
+    send_sms(sms_msg)
+
+    return jsonify({'ok': True, 'received_count': received_count, 'column_number': next_col})
+
+
+@app.route('/api/deliveries/<int:did>/file/<filename>')
+@api_login_required
+def api_delivery_file(did, filename):
+    filepath = os.path.join(DELIVERIES_DIR, filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    return send_file(filepath)
+
+
+@app.route('/api/deliveries/<int:did>/match', methods=['PUT'])
+@api_role_required('owner', 'admin', 'project_manager', 'warehouse')
+def api_update_delivery_match(did):
+    """Manually match/rematch a delivery item to a line item."""
+    data = request.get_json() or {}
+    item_id = data.get('delivery_item_id')
+    line_item_id = data.get('line_item_id')
+
+    conn = get_db()
+    conn.execute(
+        'UPDATE delivery_items SET line_item_id = ?, matched = ? WHERE id = ? AND delivery_id = ?',
+        (line_item_id, 1 if line_item_id else 0, item_id, did)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/sms-settings')
+@api_role_required('owner')
+def api_sms_settings():
+    conn = get_db()
+    settings = conn.execute('SELECT * FROM sms_settings LIMIT 1').fetchone()
+    recipients = conn.execute('''
+        SELECT sr.*, u.display_name, u.phone as user_phone
+        FROM sms_recipients sr
+        JOIN users u ON sr.user_id = u.id
+    ''').fetchall()
+    conn.close()
+    return jsonify({
+        'settings': dict(settings) if settings else {},
+        'recipients': [dict(r) for r in recipients]
+    })
+
+
+@app.route('/api/sms-settings', methods=['PUT'])
+@api_role_required('owner')
+def api_save_sms_settings():
+    data = request.get_json() or {}
+    conn = get_db()
+
+    existing = conn.execute('SELECT id FROM sms_settings LIMIT 1').fetchone()
+    if existing:
+        conn.execute(
+            'UPDATE sms_settings SET is_active=? WHERE id=?',
+            (1 if data.get('is_active') else 0, existing['id'])
+        )
+    else:
+        conn.execute(
+            'INSERT INTO sms_settings (is_active) VALUES (?)',
+            (1 if data.get('is_active') else 0,)
+        )
+
+    # Update recipients
+    recipients = data.get('recipients', [])
+    conn.execute('DELETE FROM sms_recipients')
+    for r in recipients:
+        if r.get('user_id') and r.get('phone') and r.get('carrier'):
+            conn.execute(
+                'INSERT INTO sms_recipients (user_id, phone, carrier, is_active) VALUES (?,?,?,?)',
+                (r['user_id'], r['phone'], r['carrier'], 1 if r.get('is_active', True) else 0)
+            )
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/sms-settings/test', methods=['POST'])
+@api_role_required('owner')
+def api_test_sms():
+    """Send a test text to all configured recipients."""
+    conn = get_db()
+    settings = conn.execute('SELECT * FROM sms_settings WHERE is_active = 1').fetchone()
+    if not settings:
+        conn.close()
+        return jsonify({'error': 'SMS not enabled. Check the Enable box and save first.'}), 400
+    recipients = conn.execute('''
+        SELECT sr.phone, sr.carrier, u.display_name FROM sms_recipients sr
+        JOIN users u ON sr.user_id = u.id WHERE sr.is_active = 1
+    ''').fetchall()
+    conn.close()
+    if not recipients:
+        return jsonify({'error': 'No recipients configured. Add recipients and save first.'}), 400
+
+    send_sms('LGHVAC test — if you got this, delivery texts are working!')
+    return jsonify({'ok': True, 'sent_to': len(recipients)})
 
 
 # ─── Startup ────────────────────────────────────────────────────
