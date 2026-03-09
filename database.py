@@ -1767,6 +1767,65 @@ def init_db():
             used_count INTEGER NOT NULL DEFAULT 1,
             last_used_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
         );
+
+        /* ─── Deliveries ─── */
+
+        CREATE TABLE IF NOT EXISTS deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            supplier_user_id INTEGER,
+            supplier_name TEXT DEFAULT '',
+            delivery_date TEXT NOT NULL,
+            delivery_time TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','verified','disputed')),
+            pdf_path TEXT DEFAULT '',
+            original_filename TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            verified_by INTEGER,
+            verified_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (supplier_user_id) REFERENCES users(id),
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            FOREIGN KEY (verified_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS delivery_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            delivery_id INTEGER NOT NULL,
+            line_item_id INTEGER,
+            sku_extracted TEXT DEFAULT '',
+            description_extracted TEXT DEFAULT '',
+            quantity_extracted REAL DEFAULT 0,
+            quantity_verified REAL,
+            matched INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
+            FOREIGN KEY (line_item_id) REFERENCES line_items(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_deliveries_job ON deliveries(job_id);
+        CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
+        CREATE INDEX IF NOT EXISTS idx_delivery_items_delivery ON delivery_items(delivery_id);
+
+        /* ─── SMS Settings ─── */
+
+        CREATE TABLE IF NOT EXISTS sms_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            twilio_sid TEXT DEFAULT '',
+            twilio_token TEXT DEFAULT '',
+            twilio_phone TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS sms_recipients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            phone TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
     ''')
 
     # Migration: add total_net_price, pricing_type, notes columns if missing
@@ -2762,6 +2821,29 @@ def init_db():
             FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
             UNIQUE(job_id, tab_type, column_number)
         )""")
+
+    # Backfill: migrate existing entry_date values from invoiced_entries into column_headers
+    # entry_date was used to store invoice numbers as column headers
+    ch_count = conn.execute('SELECT COUNT(*) FROM column_headers').fetchone()[0]
+    inv_count = conn.execute('SELECT COUNT(*) FROM invoiced_entries WHERE entry_date IS NOT NULL AND entry_date != ""').fetchone()[0]
+    if ch_count == 0 and inv_count > 0:
+        rows = conn.execute("""
+            SELECT DISTINCT li.job_id, ie.column_number, ie.entry_date
+            FROM invoiced_entries ie
+            JOIN line_items li ON ie.line_item_id = li.id
+            WHERE ie.entry_date IS NOT NULL AND ie.entry_date != ''
+            ORDER BY li.job_id, ie.column_number
+        """).fetchall()
+        seen = set()
+        for r in rows:
+            key = (r['job_id'], r['column_number'])
+            if key not in seen:
+                seen.add(key)
+                conn.execute(
+                    '''INSERT OR IGNORE INTO column_headers (job_id, tab_type, column_number, header_name)
+                       VALUES (?, 'invoiced', ?, ?)''',
+                    (r['job_id'], r['column_number'], r['entry_date'])
+                )
 
     conn.commit()
     conn.close()
