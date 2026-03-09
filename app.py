@@ -3949,7 +3949,21 @@ def api_heartbeat():
             (session['user_id'], today)
         )
         conn.commit()
-        conn.close()
+        # Check schedule notifications once per user per day
+        sched_key = f'sched_notif_{session["user_id"]}_{today}'
+        if not session.get(sched_key):
+            try:
+                events = [dict(r) for r in conn.execute(
+                    "SELECT * FROM job_schedule_events WHERE status NOT IN ('Complete','Cancelled')"
+                ).fetchall()]
+                conn.close()
+                if events:
+                    _check_schedule_notifications(events)
+                session[sched_key] = True
+            except Exception:
+                pass
+        else:
+            conn.close()
     except Exception:
         pass
     return jsonify({'ok': True, '_noToast': True})
@@ -7638,14 +7652,6 @@ def api_schedule_events():
         ).fetchall()
     result = [dict(r) for r in rows]
     conn.close()
-    # Check for upcoming due-date notifications in background thread so it doesn't block
-    import threading
-    def _bg_notify(events):
-        try:
-            _check_schedule_notifications(events)
-        except Exception:
-            pass
-    threading.Thread(target=_bg_notify, args=(result,), daemon=True).start()
     return jsonify(result)
 
 def _check_schedule_notifications(events):
@@ -7656,6 +7662,16 @@ def _check_schedule_notifications(events):
     today_str = now.strftime('%Y-%m-%d')
     two_days = now + timedelta(hours=48)
     conn = get_db()
+    try:
+        _do_schedule_notifications(conn, events, now, today, today_str, two_days)
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+def _do_schedule_notifications(conn, events, now, today, today_str, two_days):
+    from datetime import timedelta
     # Get all owner user IDs for escalation
     owner_ids = [r['id'] for r in conn.execute("SELECT id FROM users WHERE role = 'owner'").fetchall()]
 
@@ -7740,8 +7756,6 @@ def _check_schedule_notifications(events):
                             (uid, 'schedule', 'Schedule: Missed Start',
                              f'{e["phase_name"]} on {job_name} was scheduled to start {e["start_date"]} but hasn\'t begun (event #{e["id"]}) missed_start', link)
                         )
-    conn.commit()
-    conn.close()
 
 @app.route('/api/schedule/events', methods=['POST'])
 @api_role_required('owner', 'admin', 'project_manager')
