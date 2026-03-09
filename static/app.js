@@ -422,8 +422,7 @@ function renderEntryTab(tabType) {
     headerHtml += '<th class="col-num">Total</th>';
     for (let c = 1; c <= maxCol; c++) {
         if (tabType === 'invoiced') {
-            const val = customHeaders[String(c)] || '';
-            headerHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" value="${escapeAttr(val)}" placeholder="Invoice ${c}"></th>`;
+            headerHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" placeholder="Invoice ${c}"></th>`;
         } else if (tabType === 'received') {
             headerHtml += `<th>Delivery ${c}</th>`;
         } else if (tabType === 'shipped') {
@@ -436,6 +435,9 @@ function renderEntryTab(tabType) {
     // Wire up header input change tracking for invoiced tab
     if (tabType === 'invoiced') {
         headEl.querySelectorAll('.header-input').forEach(input => {
+            const c = input.dataset.col;
+            const val = customHeaders[String(c)];
+            if (val) input.value = val;
             input.addEventListener('input', () => markUnsaved());
         });
         if (window.SUPPLIER_READ_ONLY) {
@@ -471,14 +473,18 @@ function renderEntryTab(tabType) {
         html += `<td class="cell-computed entry-total ${totalClass}" style="text-align:right;">${totalEntries}</td>`;
 
         for (let c = 1; c <= maxCol; c++) {
-            const qty = entries[String(c)]?.quantity || '';
-            html += `<td class="cell-entry"><input type="number" min="0" step="any" data-col="${c}" value="${qty || ''}"></td>`;
+            html += `<td class="cell-entry"><input type="number" min="0" step="any" data-col="${c}"></td>`;
         }
 
         tr.innerHTML = html;
 
-        // Wire up live total calculation
+        // Set entry values programmatically and wire up live total calculation
         tr.querySelectorAll('.cell-entry input').forEach(input => {
+            const c = input.dataset.col;
+            const entry = entries[String(c)];
+            if (entry && entry.quantity) {
+                input.value = entry.quantity;
+            }
             input.addEventListener('input', () => {
                 updateEntryTotal(tr, ordered);
                 markUnsaved();

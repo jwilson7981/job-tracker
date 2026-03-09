@@ -841,6 +841,10 @@ body {
 .cell-entry {
     background: var(--blue-light);
     padding: 0;
+    min-width: 80px;
+}
+.entry-table th:not(.col-line):not(.col-desc):not(.col-num) {
+    min-width: 80px;
 }
 .cell-entry input {
     width: 100%;
@@ -856,7 +860,7 @@ body {
     background: var(--white);
 }
 
-.editable-header { padding: 0; }
+.editable-header { padding: 0; min-width: 140px; }
 .header-input {
     width: 100%;
     padding: 6px 8px;
