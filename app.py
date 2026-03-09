@@ -1085,18 +1085,22 @@ def _save_entries(job_id, table_name, data):
                     (line_item_id, column_number, quantity, entry_date)
                 )
 
-    # Save custom column headers if provided
+    # Save custom column headers and dates if provided
+    tab = table_name.replace('_entries', '')
     col_headers = data.get('column_headers', {})
-    if col_headers:
-        tab = table_name.replace('_entries', '')
-        for col_num_str, header_name in col_headers.items():
+    col_dates = data.get('column_dates', {})
+    if col_headers or col_dates:
+        all_cols = set(list(col_headers.keys()) + list(col_dates.keys()))
+        for col_num_str in all_cols:
             col_num = int(col_num_str)
-            if header_name:
+            header_name = col_headers.get(col_num_str, '')
+            header_date = col_dates.get(col_num_str, '')
+            if header_name or header_date:
                 conn.execute(
-                    '''INSERT INTO column_headers (job_id, tab_type, column_number, header_name)
-                       VALUES (?, ?, ?, ?)
-                       ON CONFLICT(job_id, tab_type, column_number) DO UPDATE SET header_name = ?''',
-                    (job_id, tab, col_num, header_name, header_name)
+                    '''INSERT INTO column_headers (job_id, tab_type, column_number, header_name, header_date)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(job_id, tab_type, column_number) DO UPDATE SET header_name = ?, header_date = ?''',
+                    (job_id, tab, col_num, header_name, header_date, header_name, header_date)
                 )
             else:
                 conn.execute(

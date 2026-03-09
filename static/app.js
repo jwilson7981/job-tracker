@@ -413,24 +413,43 @@ function renderEntryTab(tabType) {
         }
     });
 
-    // Build header
+    // Build header with date row above label row
     const customHeaders = (jobData.column_headers || {})[tabType] || {};
-    let headerHtml = '<tr>';
-    headerHtml += '<th class="col-line">Line #</th>';
-    headerHtml += '<th class="col-desc">Description</th>';
-    headerHtml += '<th class="col-num">Total Ordered</th>';
-    headerHtml += '<th class="col-num">Total</th>';
+    const customDates = (jobData.column_dates || {})[tabType] || {};
+
+    // Date row
+    let dateRowHtml = '<tr class="date-header-row">';
+    dateRowHtml += '<th class="col-line freeze-col-1" rowspan="2">Line #</th>';
+    dateRowHtml += '<th class="col-desc freeze-col-2" rowspan="2">Description</th>';
+    dateRowHtml += '<th class="col-num freeze-col-3" rowspan="2">Total Ordered</th>';
+    dateRowHtml += '<th class="col-num freeze-col-4" rowspan="2">Total</th>';
+    for (let c = 1; c <= maxCol; c++) {
+        dateRowHtml += `<th class="date-header-cell"><input type="date" class="date-input" data-col="${c}"></th>`;
+    }
+    dateRowHtml += '</tr>';
+
+    // Label row
+    let labelRowHtml = '<tr class="label-header-row">';
     for (let c = 1; c <= maxCol; c++) {
         if (tabType === 'invoiced') {
-            headerHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" placeholder="Invoice ${c}"></th>`;
+            labelRowHtml += `<th class="editable-header"><input type="text" class="header-input" data-col="${c}" placeholder="Invoice ${c}"></th>`;
         } else if (tabType === 'received') {
-            headerHtml += `<th>Delivery ${c}</th>`;
+            labelRowHtml += `<th>Delivery ${c}</th>`;
         } else if (tabType === 'shipped') {
-            headerHtml += `<th>Shipped ${c}</th>`;
+            labelRowHtml += `<th>Shipped ${c}</th>`;
         }
     }
-    headerHtml += '</tr>';
-    headEl.innerHTML = headerHtml;
+    labelRowHtml += '</tr>';
+
+    headEl.innerHTML = dateRowHtml + labelRowHtml;
+
+    // Set date values programmatically
+    headEl.querySelectorAll('.date-input').forEach(input => {
+        const c = input.dataset.col;
+        const dateVal = customDates[String(c)];
+        if (dateVal) input.value = dateVal;
+        input.addEventListener('input', () => markUnsaved());
+    });
 
     // Wire up header input change tracking for invoiced tab
     if (tabType === 'invoiced') {
@@ -440,9 +459,10 @@ function renderEntryTab(tabType) {
             if (val) input.value = val;
             input.addEventListener('input', () => markUnsaved());
         });
-        if (window.SUPPLIER_READ_ONLY) {
-            headEl.querySelectorAll('.header-input').forEach(el => { el.disabled = true; });
-        }
+    }
+
+    if (window.SUPPLIER_READ_ONLY) {
+        headEl.querySelectorAll('input').forEach(el => { el.disabled = true; });
     }
 
     // Build rows
@@ -467,10 +487,10 @@ function renderEntryTab(tabType) {
         }
 
         let html = '';
-        html += `<td class="cell-readonly" style="text-align:center;">${item.line_number}</td>`;
-        html += `<td class="cell-readonly">${escapeHtml(item.description)}</td>`;
-        html += `<td class="cell-readonly" style="text-align:right;">${item.qty_ordered || 0}</td>`;
-        html += `<td class="cell-computed entry-total ${totalClass}" style="text-align:right;">${totalEntries}</td>`;
+        html += `<td class="cell-readonly freeze-col-1" style="text-align:center;">${item.line_number}</td>`;
+        html += `<td class="cell-readonly freeze-col-2">${escapeHtml(item.description)}</td>`;
+        html += `<td class="cell-readonly freeze-col-3" style="text-align:right;">${item.qty_ordered || 0}</td>`;
+        html += `<td class="cell-computed entry-total freeze-col-4 ${totalClass}" style="text-align:right;">${totalEntries}</td>`;
 
         for (let c = 1; c <= maxCol; c++) {
             html += `<td class="cell-entry"><input type="number" min="0" step="any" data-col="${c}"></td>`;
@@ -642,6 +662,14 @@ async function saveEntryTab(tabType) {
         });
         payload.column_headers = columnHeaders;
     }
+
+    // Collect column dates for all entry tabs
+    const headEl = document.getElementById(`${tabType}Head`);
+    const columnDates = {};
+    headEl.querySelectorAll('.date-input').forEach(input => {
+        columnDates[input.dataset.col] = input.value || '';
+    });
+    payload.column_dates = columnDates;
 
     const res = await fetch(`/api/job/${jobId}/${tabType}`, {
         method: 'PUT',

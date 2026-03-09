@@ -1813,9 +1813,6 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS sms_settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            twilio_sid TEXT DEFAULT '',
-            twilio_token TEXT DEFAULT '',
-            twilio_phone TEXT DEFAULT '',
             is_active INTEGER DEFAULT 0
         );
 
@@ -1823,10 +1820,16 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             phone TEXT NOT NULL,
+            carrier TEXT NOT NULL DEFAULT '',
             is_active INTEGER DEFAULT 1,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
     ''')
+
+    # Migration: add carrier column to sms_recipients
+    sms_cols = [row[1] for row in conn.execute("PRAGMA table_info(sms_recipients)").fetchall()]
+    if sms_cols and 'carrier' not in sms_cols:
+        conn.execute("ALTER TABLE sms_recipients ADD COLUMN carrier TEXT NOT NULL DEFAULT ''")
 
     # Migration: add total_net_price, pricing_type, notes columns if missing
     cols = [row[1] for row in conn.execute("PRAGMA table_info(line_items)").fetchall()]
@@ -2845,6 +2848,11 @@ def init_db():
                     (r['job_id'], r['column_number'], r['entry_date'])
                 )
 
+    # Migration: add header_date column to column_headers
+    ch_cols = [row[1] for row in conn.execute("PRAGMA table_info(column_headers)").fetchall()]
+    if 'header_date' not in ch_cols:
+        conn.execute("ALTER TABLE column_headers ADD COLUMN header_date TEXT DEFAULT ''")
+
     conn.commit()
     conn.close()
 
@@ -3164,21 +3172,28 @@ def build_snapshot(conn, job_id):
 
         snapshot['line_items'].append(item)
 
-    # Include column headers in snapshot
+    # Include column headers and dates in snapshot
     try:
         headers = conn.execute(
-            'SELECT tab_type, column_number, header_name FROM column_headers WHERE job_id = ?',
+            'SELECT tab_type, column_number, header_name, header_date FROM column_headers WHERE job_id = ?',
             (job_id,)
         ).fetchall()
         col_headers = {}
+        col_dates = {}
         for h in headers:
             tab = h['tab_type']
             if tab not in col_headers:
                 col_headers[tab] = {}
             col_headers[tab][str(h['column_number'])] = h['header_name']
+            if h['header_date']:
+                if tab not in col_dates:
+                    col_dates[tab] = {}
+                col_dates[tab][str(h['column_number'])] = h['header_date']
         snapshot['column_headers'] = col_headers
+        snapshot['column_dates'] = col_dates
     except Exception:
         snapshot['column_headers'] = {}
+        snapshot['column_dates'] = {}
 
     return snapshot
 
@@ -3239,14 +3254,16 @@ def restore_snapshot(conn, job_id, snapshot_data):
                 (li_id, int(col), entry['quantity'], entry['entry_date'])
             )
 
-    # Restore column headers
+    # Restore column headers and dates
     conn.execute('DELETE FROM column_headers WHERE job_id = ?', (job_id,))
+    col_dates = snapshot_data.get('column_dates', {})
     for tab, cols in snapshot_data.get('column_headers', {}).items():
         for col_num, header_name in cols.items():
-            if header_name:
+            date_val = col_dates.get(tab, {}).get(col_num, '')
+            if header_name or date_val:
                 conn.execute(
-                    'INSERT INTO column_headers (job_id, tab_type, column_number, header_name) VALUES (?, ?, ?, ?)',
-                    (job_id, tab, int(col_num), header_name)
+                    'INSERT INTO column_headers (job_id, tab_type, column_number, header_name, header_date) VALUES (?, ?, ?, ?, ?)',
+                    (job_id, tab, int(col_num), header_name, date_val)
                 )
 
 def _calc_price(qty, price, pricing_type):
@@ -3319,9 +3336,10 @@ def get_job_data(conn, job_id):
 
     # Load custom column headers
     column_headers = {}
+    column_dates = {}
     try:
         headers = conn.execute(
-            'SELECT tab_type, column_number, header_name FROM column_headers WHERE job_id = ?',
+            'SELECT tab_type, column_number, header_name, header_date FROM column_headers WHERE job_id = ?',
             (job_id,)
         ).fetchall()
         for h in headers:
@@ -3329,6 +3347,10 @@ def get_job_data(conn, job_id):
             if tab not in column_headers:
                 column_headers[tab] = {}
             column_headers[tab][str(h['column_number'])] = h['header_name']
+            if h['header_date']:
+                if tab not in column_dates:
+                    column_dates[tab] = {}
+                column_dates[tab][str(h['column_number'])] = h['header_date']
     except Exception:
         pass  # table may not exist yet
 
@@ -3347,4 +3369,5 @@ def get_job_data(conn, job_id):
         },
         'line_items': items,
         'column_headers': column_headers,
+        'column_dates': column_dates,
     }

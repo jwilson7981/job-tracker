@@ -848,50 +848,12 @@ body {
 }
 
 /* Freeze first 4 columns (Line #, Description, Total Ordered, Total) in entry tabs */
-.entry-table th:nth-child(1),
-.entry-table td:nth-child(1) {
-    position: sticky;
-    left: 0;
-    z-index: 5;
-    min-width: 48px;
-    max-width: 48px;
-}
-.entry-table td:nth-child(1) { background: var(--white); }
-.entry-table th:nth-child(1) { z-index: 12; }
-
-.entry-table th:nth-child(2),
-.entry-table td:nth-child(2) {
-    position: sticky;
-    left: 48px;
-    z-index: 5;
-    min-width: 160px;
-    max-width: 160px;
-}
-.entry-table td:nth-child(2) { background: var(--white); }
-.entry-table th:nth-child(2) { z-index: 12; }
-
-.entry-table th:nth-child(3),
-.entry-table td:nth-child(3) {
-    position: sticky;
-    left: 208px;
-    z-index: 5;
-    min-width: 90px;
-    max-width: 90px;
-}
-.entry-table td:nth-child(3) { background: var(--white); }
-.entry-table th:nth-child(3) { z-index: 12; }
-
-.entry-table th:nth-child(4),
-.entry-table td:nth-child(4) {
-    position: sticky;
-    left: 298px;
-    z-index: 5;
-    min-width: 60px;
-    max-width: 60px;
-    border-right: 2px solid var(--gray-400);
-}
-.entry-table td:nth-child(4) { background: var(--white); }
-.entry-table th:nth-child(4) { z-index: 12; }
+.freeze-col-1 { position: sticky; left: 0; z-index: 5; min-width: 48px; max-width: 48px; }
+.freeze-col-2 { position: sticky; left: 48px; z-index: 5; min-width: 160px; max-width: 160px; }
+.freeze-col-3 { position: sticky; left: 208px; z-index: 5; min-width: 90px; max-width: 90px; }
+.freeze-col-4 { position: sticky; left: 298px; z-index: 5; min-width: 60px; max-width: 60px; border-right: 2px solid var(--gray-400); }
+td.freeze-col-1, td.freeze-col-2, td.freeze-col-3, td.freeze-col-4 { background: var(--white); }
+th.freeze-col-1, th.freeze-col-2, th.freeze-col-3, th.freeze-col-4 { z-index: 12; }
 .cell-entry input {
     width: 100%;
     padding: 6px 8px;
@@ -907,6 +869,23 @@ body {
 }
 
 .editable-header { padding: 0; min-width: 240px; }
+.date-header-cell { padding: 0; min-width: 80px; }
+.date-input {
+    width: 100%;
+    padding: 4px 6px;
+    border: none;
+    background: transparent;
+    font-size: 12px;
+    text-align: center;
+    color: var(--white);
+    cursor: pointer;
+}
+.date-input::-webkit-calendar-picker-indicator { filter: invert(1); }
+.date-input:focus {
+    outline: 2px solid var(--white);
+    outline-offset: -2px;
+    background: rgba(255,255,255,0.15);
+}
 .header-input {
     width: 100%;
     padding: 6px 8px;
