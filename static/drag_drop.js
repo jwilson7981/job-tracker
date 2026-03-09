@@ -21,7 +21,9 @@
         license:          { label: 'License',           dest: '/licenses',        icon: 'Licenses' },
         closeout:         { label: 'Closeout Document', dest: '/documents',       icon: 'Documents' },
         lien_waiver:      { label: 'Lien Waiver',       dest: '/lien-waivers',   icon: 'Lien Waivers' },
-        warranty:         { label: 'Warranty Letter',    dest: '/warranty',       icon: 'Warranty' }
+        warranty:         { label: 'Warranty Letter',    dest: '/warranty',       icon: 'Warranty' },
+        permit:           { label: 'Permit',             dest: '/permits',        icon: 'Permits' },
+        coi:              { label: 'COI',                dest: '/coi',            icon: 'COI' }
     };
 
     // ─── Create Overlay ─────────────────────────────────────────
@@ -67,6 +69,8 @@
                             '<option value="closeout">Closeout Document</option>' +
                             '<option value="lien_waiver">Lien Waiver</option>' +
                             '<option value="warranty">Warranty Letter</option>' +
+                            '<option value="permit">Permit</option>' +
+                            '<option value="coi">COI</option>' +
                         '</select>' +
                     '</div>' +
                     '<div id="ddDestInfo" class="dd-dest-info">Files will be uploaded to <strong>Plans</strong></div>' +
@@ -306,6 +310,8 @@
         if (path.indexOf('/documents') === 0 || path.indexOf('/closeout') === 0) return 'closeout';
         if (path.indexOf('/lien-waivers') === 0) return 'lien_waiver';
         if (path.indexOf('/warranty') === 0) return 'warranty';
+        if (path.indexOf('/permits') === 0) return 'permit';
+        if (path.indexOf('/coi') === 0) return 'coi';
         return 'materials';
     }
 
@@ -419,6 +425,18 @@
             url: '/api/warranty/items',
             fields: function (f, jobId) {
                 return { job_id: jobId, item_description: f.name.replace(/\.[^.]+$/, ''), equipment_type: '', status: 'Active' };
+            }
+        },
+        permit: {
+            url: '/api/permits/upload',
+            fields: function (f, jobId) {
+                return { job_id: jobId };
+            }
+        },
+        coi: {
+            url: '/api/coi',
+            fields: function (f, jobId) {
+                return { job_id: jobId, description: f.name.replace(/\.[^.]+$/, '') };
             }
         }
     };

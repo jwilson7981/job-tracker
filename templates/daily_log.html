@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Daily Crew Log{% endblock %}
+{% block content %}
+<style>
+.log-grid { width: 100%; border-collapse: collapse; }
+.log-grid th { background: var(--gray-50); font-size: 12px; font-weight: 700; color: var(--gray-500);
+    text-transform: uppercase; letter-spacing: .5px; padding: 10px 12px; text-align: left;
+    border-bottom: 2px solid var(--gray-200); position: sticky; top: 0; z-index: 2; }
+.log-grid td { padding: 8px 12px; border-bottom: 1px solid var(--gray-100); vertical-align: middle; }
+.log-grid tr:hover td { background: var(--gray-50); }
+.emp-name { font-weight: 600; font-size: 14px; color: var(--gray-900); white-space: nowrap; }
+.emp-role { font-size: 11px; color: var(--gray-400); }
+.emp-avatar {
+    width: 32px; height: 32px; border-radius: 50%; background: var(--blue-primary);
+    color: #fff; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+}
+.log-row-off td { opacity: .45; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.day-nav { display: flex; align-items: center; gap: 8px; }
+.day-nav button { background: var(--white); border: 1px solid var(--gray-200); border-radius: 6px;
+    padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--gray-700); }
+.day-nav button:hover { border-color: var(--blue-primary); color: var(--blue-primary); }
+.day-label { font-size: 18px; font-weight: 700; color: var(--gray-900); min-width: 200px; text-align: center; }
+.summary-cards { display: flex; gap: 12px; margin-bottom: 20px; }
+.summary-card { background: var(--white); border: 1px solid var(--gray-200); border-radius: 8px; padding: 14px 20px; flex: 1; text-align: center; }
+.summary-card .sc-value { font-size: 22px; font-weight: 800; }
+.summary-card .sc-label { font-size: 12px; color: var(--gray-500); }
+.add-assign-btn { font-size: 12px; color: var(--blue-primary); cursor: pointer; border: none;
+    background: none; font-weight: 600; padding: 2px 0; }
+.add-assign-btn:hover { text-decoration: underline; }
+.assign-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.assign-row select, .assign-row input { font-size: 13px; }
+.remove-assign { color: var(--gray-400); cursor: pointer; font-size: 16px; border: none; background: none; padding: 2px 4px; }
+.remove-assign:hover { color: #dc2626; }
+</style>
+
+<div class="page-header">
+    <h1>Daily Crew Log</h1>
+    <p style="font-size:13px;color:var(--gray-500);margin:0;">Assign employees to projects for each day. Changes auto-feed into payroll time entries.</p>
+</div>
+
+<!-- Date Navigation -->
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+    <div class="day-nav">
+        <button onclick="changeDate(-1)">&larr; Prev</button>
+        <div class="day-label" id="dateLabel"></div>
+        <button onclick="changeDate(1)">Next &rarr;</button>
+        <button onclick="goToday()" style="margin-left:8px;">Today</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <input type="date" id="datePicker" class="form-input" style="max-width:180px;" onchange="loadDate(this.value)">
+        <button class="btn btn-secondary" onclick="copyPreviousDay()" style="font-size:13px;padding:8px 14px;">Copy Previous Day</button>
+        <button class="btn btn-secondary" onclick="clearDay()" style="font-size:13px;padding:8px 14px;">Clear Day</button>
+        <button class="btn btn-primary" onclick="saveDailyLog()" style="font-size:14px;padding:8px 24px;">Save Log</button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="summary-cards" id="summaryCards">
+    <div class="summary-card">
+        <div class="sc-value" id="scCrew" style="color:#3B82F6;">0</div>
+        <div class="sc-label">Crew Assigned</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-value" id="scHours" style="color:#22C55E;">0</div>
+        <div class="sc-label">Total Hours</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-value" id="scJobs" style="color:#8B5CF6;">0</div>
+        <div class="sc-label">Active Jobs</div>
+    </div>
+    <div class="summary-card">
+        <div class="sc-value" id="scUnassigned" style="color:#EF4444;">0</div>
+        <div class="sc-label">Unassigned</div>
+    </div>
+</div>
+
+<!-- Crew Grid -->
+<div class="table-wrapper">
+    <table class="log-grid">
+        <thead>
+            <tr>
+                <th style="width:200px;">Employee</th>
+                <th>Project Assignment</th>
+                <th style="width:80px;text-align:center;">Hours</th>
+                <th style="width:180px;">Notes</th>
+                <th style="width:60px;text-align:center;">Status</th>
+            </tr>
+        </thead>
+        <tbody id="logBody">
+            <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script src="/static/daily_log.js?v=20260308a"></script>
+{% endblock %}

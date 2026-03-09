@@ -2,8 +2,10 @@
 
 const STAGE_COLORS = {
     'Needs Bid':    { bg: '#DBEAFE', text: '#1E40AF', chart: '#3B82F6' },
+    'Takeoff Sent': { bg: '#FEF3C7', text: '#92400E', chart: '#F59E0B' },
     'Bid Complete': { bg: '#E0E7FF', text: '#3730A3', chart: '#6366F1' },
-    'In Progress':  { bg: '#FEF3C7', text: '#92400E', chart: '#F59E0B' },
+    'Awarded':      { bg: '#FDE68A', text: '#78350F', chart: '#D97706' },
+    'In Progress':  { bg: '#FFF7ED', text: '#C2410C', chart: '#F97316' },
     'Complete':     { bg: '#DCFCE7', text: '#166534', chart: '#22C55E' },
 };
 
@@ -85,6 +87,12 @@ function renderBadges(d) {
     }
     if (d.needs_bid > 0) setBadge('qaBadgeBids', d.needs_bid, true);
     if (d.expiring_licenses && d.expiring_licenses.length > 0) setBadge('qaBadgeLic', d.expiring_licenses.length, true);
+    // Crew badge - fetch today's daily log count
+    fetch('/api/daily-log/summary?start=' + new Date().toISOString().split('T')[0])
+        .then(function(r) { return r.json(); })
+        .then(function(s) {
+            if (s.length > 0 && s[0].crew_count > 0) setBadge('qaBadgeCrew', s[0].crew_count, true);
+        }).catch(function() {});
 }
 function setBadge(id, count, show) {
     var el = document.getElementById(id);
@@ -184,12 +192,27 @@ function renderActiveProjects(d) {
         return;
     }
     container.innerHTML = projects.map(function(p) {
+        var complete = p.pct_complete || 0;
+        var billed = p.pct_billed || 0;
         return '<a href="/projects/' + p.id + '" class="proj-row">' +
             '<div class="proj-name">' + esc(p.name) + '</div>' +
-            '<div class="proj-bar"><div class="proj-bar-fill" style="width:' + p.pct_billed + '%;"></div></div>' +
-            '<div class="proj-pct">' + p.pct_billed + '%</div>' +
+            '<div class="proj-bar-dual">' +
+                '<div class="proj-bar-track">' +
+                    '<div class="proj-bar-complete" style="width:' + complete + '%;"></div>' +
+                    '<div class="proj-bar-billed" style="width:' + billed + '%;"></div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="proj-pcts">' +
+                '<span style="color:#22C55E;">' + complete + '%</span>' +
+                '<span style="color:#3B82F6;">' + billed + '%</span>' +
+            '</div>' +
         '</a>';
     }).join('');
+    // Legend
+    container.innerHTML += '<div style="display:flex;gap:14px;justify-content:flex-end;padding:6px 0 0;font-size:11px;color:var(--gray-400);">' +
+        '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#22C55E;margin-right:4px;"></span>Complete</span>' +
+        '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#3B82F6;margin-right:4px;"></span>Billed</span>' +
+    '</div>';
 }
 
 // ─── Charts ─────────────────────────────────────────────────────

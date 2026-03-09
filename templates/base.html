@@ -138,7 +138,7 @@
             var method = (opts && opts.method || 'GET').toUpperCase();
             if (method === 'GET' || method === 'HEAD') return origFetch.apply(this, arguments);
             var urlStr = typeof url === 'string' ? url : (url && url.url) || '';
-            if (urlStr.indexOf('/heartbeat') !== -1 || urlStr.indexOf('/check-duplicate') !== -1 || urlStr.indexOf('/detect-pdf') !== -1) {
+            if (urlStr.indexOf('/heartbeat') !== -1 || urlStr.indexOf('/check-duplicate') !== -1 || urlStr.indexOf('/detect-pdf') !== -1 || urlStr.indexOf('/reorder') !== -1) {
                 return origFetch.apply(this, arguments);
             }
             return origFetch.apply(this, arguments).then(function(response) {

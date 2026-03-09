@@ -93,8 +93,28 @@
 
     <!-- Billing Schedule Tab -->
     <div class="project-tab" id="ptab-billing" style="display:none;">
+        <!-- Pay Apps Section -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-            <h3>Billing Schedule</h3>
+            <h3>Pay Applications</h3>
+            <a href="/payapps" class="btn btn-secondary btn-small">Go to Pay Apps</a>
+        </div>
+        <div id="billingKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;"></div>
+        <div class="module-table-wrapper">
+            <table class="data-table">
+                <thead><tr>
+                    <th>App #</th><th>Period</th><th>Contract</th>
+                    <th style="text-align:right;">This Period</th>
+                    <th style="text-align:right;">Total Billed</th>
+                    <th style="text-align:right;">Retainage</th>
+                    <th>Status</th><th></th>
+                </tr></thead>
+                <tbody id="pPayApps"><tr><td colspan="8" class="empty-state">Loading...</td></tr></tbody>
+            </table>
+        </div>
+        <hr style="margin:24px 0;border:none;border-top:1px solid var(--gray-200);">
+        <!-- Billing Milestones -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h3>Billing Milestones</h3>
             <button class="btn btn-primary btn-small" onclick="showBillingModal()">+ Add Milestone</button>
         </div>
         <div id="billingTimeline"></div>

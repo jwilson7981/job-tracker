@@ -251,7 +251,7 @@ function switchProjectTab(tab, btn) {
     // Lazy-load precon, benchmarks, billing on first tab visit
     if (tab === 'precon' && !window._preconLoaded) { loadPrecon(); window._preconLoaded = true; }
     if (tab === 'benchmarks' && !window._benchmarksLoaded) { loadBenchmarks(); window._benchmarksLoaded = true; }
-    if (tab === 'billing' && !window._billingLoaded) { loadBillingSchedule(); window._billingLoaded = true; }
+    if (tab === 'billing' && !window._billingLoaded) { loadPayApps(); loadBillingSchedule(); window._billingLoaded = true; }
     if (tab === 'documents' && !window._documentsLoaded) { loadDocuments(); initDocDropZone(); window._documentsLoaded = true; }
 }
 
@@ -374,6 +374,45 @@ async function updateBenchmarkNotes(bid, notes) {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ status: b?.status || 'Not Started', notes })
     });
+}
+
+// ─── Pay Apps ────────────────────────────────────────────────
+async function loadPayApps() {
+    var res = await fetch('/api/jobs/' + JOB_ID + '/pay-apps');
+    var d = await res.json();
+    var apps = d.apps || [];
+    var t = d.totals || {};
+
+    // KPIs
+    document.getElementById('billingKpis').innerHTML =
+        kpiCard('Contract Value', fmt(t.contract), '#6366F1') +
+        kpiCard('Total Billed', fmt(t.billed), '#3B82F6') +
+        kpiCard('Retainage Held', fmt(t.retainage), '#F97316') +
+        kpiCard('Net Due', fmt((t.billed || 0) - (t.retainage || 0)), '#22C55E');
+
+    var tbody = document.getElementById('pPayApps');
+    if (!apps.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No pay applications yet. <a href="/payapps">Create one in Pay Apps</a>.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = apps.map(function(a) {
+        return '<tr>' +
+            '<td><strong>#' + a.app_number + '</strong></td>' +
+            '<td>' + (a.period_from || '') + (a.period_to ? ' to ' + a.period_to : '') + '</td>' +
+            '<td>' + (a.contract_name || '') + '</td>' +
+            '<td style="text-align:right;">' + fmt(a.this_period) + '</td>' +
+            '<td style="text-align:right;">' + fmt(a.total_billed) + '</td>' +
+            '<td style="text-align:right;">' + fmt(a.retainage) + '</td>' +
+            '<td><span class="status-badge status-' + (a.status || 'draft').toLowerCase().replace(/ /g, '-') + '">' + (a.status || 'Draft') + '</span></td>' +
+            '<td><a href="/payapps/contract/' + a.contract_id + '#app-' + a.id + '" class="btn btn-small btn-secondary">View</a></td>' +
+        '</tr>';
+    }).join('');
+}
+
+function kpiCard(label, value, color) {
+    return '<div style="background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:12px;border-left:4px solid ' + color + ';">' +
+        '<div style="font-size:18px;font-weight:700;color:' + color + ';">' + value + '</div>' +
+        '<div style="font-size:11px;color:var(--gray-500);">' + label + '</div></div>';
 }
 
 // ─── Billing Schedule ─────────────────────────────────────────

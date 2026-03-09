@@ -76,9 +76,11 @@
 .proj-row:last-child { border-bottom: none; }
 .proj-row:hover { background: var(--gray-50, #f9fafb); margin: 0 -8px; padding: 8px; border-radius: 6px; }
 .proj-name { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.proj-bar { width: 60px; height: 6px; background: var(--gray-200); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
-.proj-bar-fill { height: 100%; background: #3B82F6; border-radius: 3px; }
-.proj-pct { font-size: 11px; color: var(--gray-400); min-width: 32px; text-align: right; }
+.proj-bar-dual { width: 80px; flex-shrink: 0; }
+.proj-bar-track { position: relative; height: 10px; background: var(--gray-200); border-radius: 5px; overflow: hidden; }
+.proj-bar-complete { position: absolute; top: 0; left: 0; height: 50%; background: #22C55E; border-radius: 5px 5px 0 0; }
+.proj-bar-billed { position: absolute; bottom: 0; left: 0; height: 50%; background: #3B82F6; border-radius: 0 0 5px 5px; }
+.proj-pcts { font-size: 10px; min-width: 48px; text-align: right; display: flex; flex-direction: column; line-height: 1.2; font-weight: 700; }
 
 /* ─── Action Items ──────────────────────────────────────────── */
 .action-item {
@@ -169,6 +171,7 @@
                 <div class="qa-section-title">Admin</div>
                 <div class="qa-row">
                     <a href="/employees" class="qa-tile"><span class="qa-icon" style="background:#F5F3FF;color:#6D28D9;">&#128100;</span>Employees</a>
+                    <a href="/daily-log" class="qa-tile"><span class="qa-icon" style="background:#ECFDF5;color:#065F46;">&#128197;</span>Daily Log<span class="qa-badge-info qa-badge" id="qaBadgeCrew" style="display:none;"></span></a>
                     <a href="/payroll" class="qa-tile"><span class="qa-icon" style="background:#FFF7ED;color:#C2410C;">&#128181;</span>Payroll<span class="qa-badge-warn qa-badge" id="qaBadgeHours" style="display:none;"></span></a>
                     <a href="/licenses" class="qa-tile"><span class="qa-icon" style="background:#FEF9C3;color:#854D0E;">&#128203;</span>Licenses<span class="qa-badge-warn qa-badge" id="qaBadgeLic" style="display:none;"></span></a>
                     <a href="/recurring-expenses" class="qa-tile"><span class="qa-icon" style="background:#FEE2E2;color:#991B1B;">&#128337;</span>Recurring</a>
@@ -179,11 +182,11 @@
             <div class="dash-charts">
                 <div class="dash-chart-card">
                     <h4>Projects by Stage</h4>
-                    <canvas id="stageChart" height="200"></canvas>
+                    <div style="position:relative;height:220px;"><canvas id="stageChart"></canvas></div>
                 </div>
                 <div class="dash-chart-card">
                     <h4>Financial Overview</h4>
-                    <canvas id="financeChart" height="200"></canvas>
+                    <div style="position:relative;height:220px;"><canvas id="financeChart"></canvas></div>
                 </div>
             </div>
 
@@ -328,5 +331,5 @@ async function createJob(e) {
 }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="/static/dashboard.js?v=20260307b"></script>
+<script src="/static/dashboard.js?v=20260308c"></script>
 {% endblock %}

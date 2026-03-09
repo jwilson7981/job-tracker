@@ -47,6 +47,7 @@
         <button class="btn btn-secondary" onclick="loadSavedPlans()">Saved Plans</button>
         <button class="btn btn-secondary" onclick="showBackwardsPlan()">Backwards Plan</button>
         <button class="btn btn-secondary" onclick="addDefaultPhases()">Add Default Phases</button>
+        <button class="btn btn-secondary" onclick="showBulkBuildingModal()" style="background:#6366F1;color:#fff;border-color:#6366F1;">Multi-Building Setup</button>
         <button class="btn btn-primary" onclick="showAddPhase()">+ Add Phase</button>
     </div>
 </div>
@@ -398,6 +399,97 @@
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('emailPlanModal').style.display='none'">Cancel</button>
                 <button type="submit" class="btn btn-primary" id="epSendBtn">Send Email</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Multi-Building Setup Modal -->
+<div class="modal-overlay" id="bulkBldgModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+            <h2>Multi-Building Phase Setup</h2>
+            <button class="modal-close" onclick="document.getElementById('bulkBldgModal').style.display='none'">&times;</button>
+        </div>
+        <form onsubmit="generateBuildingPhases(event)">
+            <div style="padding:0 4px;">
+                <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px;">
+                    This will generate phases (Rough-In, AHU Install, Condenser Install, Trim-Out, Startup, Inspection, Punch List) for each building and structure you specify.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">Number of Buildings</label>
+                    <input type="number" id="bbNumBuildings" class="form-input" value="1" min="0" max="100" style="max-width:120px;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Building Label Format</label>
+                    <select id="bbLabelFormat" class="form-select" style="max-width:220px;">
+                        <option value="Bldg">Bldg 1, Bldg 2...</option>
+                        <option value="Building">Building 1, Building 2...</option>
+                        <option value="Unit">Unit 1, Unit 2...</option>
+                        <option value="alpha">Bldg A, Bldg B...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" style="margin-bottom:8px;">Additional Structures</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="bbClubhouse"> Clubhouse
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="bbMaintenance"> Maintenance Bldg
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="bbPoolHouse"> Pool House
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="bbLeasing"> Leasing Office
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="bbFitness"> Fitness Center
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="bbGarage"> Parking Garage
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Other Structures <span style="font-weight:400;color:var(--gray-400);">(comma separated)</span></label>
+                    <input type="text" id="bbOtherStructures" class="form-input" placeholder="e.g. Laundry Bldg, Guard Shack">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" style="margin-bottom:8px;">Phases per Structure</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="Rough-In" checked> Rough-In
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="AHU Install" checked> AHU Install
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="Condenser Install" checked> Condenser Install
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="Trim-Out" checked> Trim-Out
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="Startup" checked> Startup
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="Inspection" checked> Inspection
+                        </label>
+                        <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" class="bbPhase" value="Punch List" checked> Punch List
+                        </label>
+                    </div>
+                </div>
+                <!-- Preview -->
+                <div id="bbPreview" style="margin-top:12px;padding:12px;background:var(--gray-50);border-radius:8px;font-size:12px;max-height:150px;overflow-y:auto;display:none;">
+                </div>
+            </div>
+            <div class="form-actions" style="margin-top:16px;">
+                <button type="button" class="btn btn-secondary" onclick="previewBuildingPhases()">Preview</button>
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('bulkBldgModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Generate Phases</button>
             </div>
         </form>
     </div>

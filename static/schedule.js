@@ -153,14 +153,41 @@ function renderEvents() {
     const byId = {};
     allEvents.forEach(e => byId[e.id] = e);
 
-    tbody.innerHTML = allEvents.map(e => {
+    // Group phases by building/structure prefix (text before " — ")
+    var lastGroup = null;
+    var rows = [];
+    allEvents.forEach(function(e) {
+        var group = null;
+        var dashIdx = e.phase_name.indexOf(' — ');
+        if (dashIdx > 0) {
+            group = e.phase_name.substring(0, dashIdx);
+        }
+        // Insert group header when group changes
+        if (group !== null && group !== lastGroup) {
+            // Calculate group stats
+            var groupEvents = allEvents.filter(function(ev) { return ev.phase_name.indexOf(group + ' — ') === 0; });
+            var groupPct = groupEvents.length ? Math.round(groupEvents.reduce(function(s, ev) { return s + (ev.pct_complete || 0); }, 0) / groupEvents.length) : 0;
+            var groupComplete = groupEvents.filter(function(ev) { return ev.status === 'Complete'; }).length;
+            rows.push(`<tr class="phase-group-header" data-group="${group}" style="background:var(--gray-100,#f3f4f6);border-top:3px solid var(--gray-300,#d1d5db);">
+                <td colspan="9" style="padding:10px 12px;font-weight:700;font-size:14px;color:var(--gray-700);">
+                    ${group}
+                    <span style="font-weight:400;font-size:12px;color:var(--gray-400);margin-left:10px;">${groupComplete}/${groupEvents.length} complete &middot; ${groupPct}% avg</span>
+                </td>
+            </tr>`);
+        }
+        lastGroup = group;
+
         const user = schedUsers.find(u => u.id === e.assigned_to);
         const dep = e.depends_on ? byId[e.depends_on] : null;
         const statuses = ['Pending', 'In Progress', 'Complete', 'Cancelled'];
         const hoursStr = e.estimated_hours ? `${e.estimated_hours}h / ${e.crew_size || 1} crew` : '-';
         const pct = e.pct_complete || 0;
-        return `<tr>
-            <td><strong>${e.phase_name}</strong>${e.description ? '<br><small class="text-muted">' + e.description + '</small>' : ''}</td>
+        // Show short name (after " — ") if in a group, otherwise full name
+        var displayName = (group !== null && e.phase_name.indexOf(group + ' — ') === 0)
+            ? e.phase_name.substring(group.length + 3)
+            : e.phase_name;
+        rows.push(`<tr>
+            <td>${group ? '<span style="padding-left:16px;">' : ''}<strong>${displayName}</strong>${group ? '</span>' : ''}${e.description ? '<br><small class="text-muted">' + e.description + '</small>' : ''}</td>
             <td>${e.start_date || '-'}</td>
             <td>${e.end_date || '-'}</td>
             <td>${hoursStr}</td>
@@ -184,8 +211,9 @@ function renderEvents() {
                 <button class="btn btn-small btn-secondary" onclick="editPhase(${e.id})">Edit</button>
                 <button class="btn btn-small btn-danger" onclick="deletePhase(${e.id})">Delete</button>
             </td>
-        </tr>`;
-    }).join('');
+        </tr>`);
+    });
+    tbody.innerHTML = rows.join('');
 }
 
 async function updatePctComplete(id, value) {
@@ -293,16 +321,123 @@ async function deletePhase(id) {
 
 async function addDefaultPhases() {
     const defaults = ['Rough-In', 'AHU Install', 'Condenser Install', 'Trim-Out', 'Startup', 'Inspection', 'Punch List'];
-    for (let i = 0; i < defaults.length; i++) {
-        await fetch('/api/schedule/events', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                job_id: window.SCHEDULE_JOB_ID,
-                phase_name: defaults[i],
-                sort_order: allEvents.length + i,
-            })
+    var phases = defaults.map(function(name, i) {
+        return { phase_name: name, sort_order: allEvents.length + i };
+    });
+    await fetch('/api/schedule/events/bulk', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: window.SCHEDULE_JOB_ID, phases: phases })
+    });
+    loadEvents();
+}
+
+/* ─── Multi-Building Phase Setup ───────────────────────────── */
+
+function showBulkBuildingModal() {
+    document.getElementById('bbNumBuildings').value = '1';
+    document.getElementById('bbLabelFormat').value = 'Bldg';
+    document.getElementById('bbClubhouse').checked = false;
+    document.getElementById('bbMaintenance').checked = false;
+    document.getElementById('bbPoolHouse').checked = false;
+    document.getElementById('bbLeasing').checked = false;
+    document.getElementById('bbFitness').checked = false;
+    document.getElementById('bbGarage').checked = false;
+    document.getElementById('bbOtherStructures').value = '';
+    document.querySelectorAll('.bbPhase').forEach(function(cb) { cb.checked = true; });
+    document.getElementById('bbPreview').style.display = 'none';
+    document.getElementById('bulkBldgModal').style.display = 'flex';
+}
+
+function getBuildingLabels() {
+    var num = parseInt(document.getElementById('bbNumBuildings').value) || 0;
+    var fmt = document.getElementById('bbLabelFormat').value;
+    var labels = [];
+    for (var i = 1; i <= num; i++) {
+        if (fmt === 'alpha') {
+            labels.push('Bldg ' + String.fromCharCode(64 + i));
+        } else {
+            labels.push(fmt + ' ' + i);
+        }
+    }
+    // Additional structures
+    if (document.getElementById('bbClubhouse').checked) labels.push('Clubhouse');
+    if (document.getElementById('bbMaintenance').checked) labels.push('Maintenance Bldg');
+    if (document.getElementById('bbPoolHouse').checked) labels.push('Pool House');
+    if (document.getElementById('bbLeasing').checked) labels.push('Leasing Office');
+    if (document.getElementById('bbFitness').checked) labels.push('Fitness Center');
+    if (document.getElementById('bbGarage').checked) labels.push('Parking Garage');
+    // Other
+    var other = document.getElementById('bbOtherStructures').value.trim();
+    if (other) {
+        other.split(',').forEach(function(s) {
+            s = s.trim();
+            if (s) labels.push(s);
         });
     }
+    return labels;
+}
+
+function getSelectedPhases() {
+    var phases = [];
+    document.querySelectorAll('.bbPhase:checked').forEach(function(cb) {
+        phases.push(cb.value);
+    });
+    return phases;
+}
+
+function buildPhaseList() {
+    var labels = getBuildingLabels();
+    var phases = getSelectedPhases();
+    var items = [];
+    labels.forEach(function(label) {
+        phases.forEach(function(phase) {
+            items.push(label + ' — ' + phase);
+        });
+    });
+    return items;
+}
+
+function previewBuildingPhases() {
+    var items = buildPhaseList();
+    var el = document.getElementById('bbPreview');
+    if (!items.length) {
+        el.innerHTML = '<span style="color:var(--gray-400);">No phases to generate. Add buildings or structures.</span>';
+        el.style.display = '';
+        return;
+    }
+    el.innerHTML = '<strong>' + items.length + ' phases will be created:</strong><br>' +
+        items.map(function(it) { return '<span style="color:var(--gray-700);">' + it + '</span>'; }).join('<br>');
+    el.style.display = '';
+}
+
+async function generateBuildingPhases(e) {
+    e.preventDefault();
+    var labels = getBuildingLabels();
+    var phases = getSelectedPhases();
+    if (!labels.length) { alert('Add at least one building or structure.'); return; }
+    if (!phases.length) { alert('Select at least one phase.'); return; }
+
+    var total = labels.length * phases.length;
+    if (!confirm('This will create ' + total + ' phases. Continue?')) return;
+
+    var sortBase = allEvents.length;
+    var bulkPhases = [];
+    var idx = 0;
+    for (var b = 0; b < labels.length; b++) {
+        for (var p = 0; p < phases.length; p++) {
+            bulkPhases.push({
+                phase_name: labels[b] + ' — ' + phases[p],
+                sort_order: sortBase + idx,
+            });
+            idx++;
+        }
+    }
+    await fetch('/api/schedule/events/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: window.SCHEDULE_JOB_ID, phases: bulkPhases })
+    });
+    document.getElementById('bulkBldgModal').style.display = 'none';
     loadEvents();
 }
 

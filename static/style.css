@@ -474,6 +474,7 @@ body {
     text-transform: uppercase;
 }
 .status-needs-bid { background: #DBEAFE; color: #1E40AF; }
+.status-takeoff-sent { background: #FEF3C7; color: #92400E; }
 .status-bid-complete { background: #E0E7FF; color: #3730A3; }
 .status-in-progress { background: var(--amber-bg); color: #92400E; }
 .status-complete { background: var(--green-bg); color: #166534; }
@@ -2393,6 +2394,12 @@ body.page-chatbot .chat-widget {
 .schedule-timeline td:first-child {
     white-space: normal;
     min-width: 160px;
+}
+.schedule-timeline tr[draggable="true"]:hover .drag-handle {
+    color: var(--gray-600) !important;
+}
+.schedule-timeline tr[draggable="true"] {
+    transition: opacity 0.15s;
 }
 .phase-status {
     display: inline-block;

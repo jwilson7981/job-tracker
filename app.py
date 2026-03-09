@@ -318,7 +318,7 @@ def api_dashboard():
     pending_hours = conn.execute("SELECT COALESCE(SUM(hours), 0) FROM time_entries WHERE approved = 0").fetchone()[0]
 
     # Stage breakdown
-    stages = ['Needs Bid', 'Bid Complete', 'In Progress', 'Complete']
+    stages = ['Needs Bid', 'Takeoff Sent', 'Bid Complete', 'Awarded', 'In Progress', 'Complete']
     stage_counts = {}
     for s in stages:
         stage_counts[s] = sum(1 for j in jobs if j['status'] == s)
@@ -384,12 +384,19 @@ def api_dashboard():
         contract_val = contract_row['total_contract'] or 0
         billed_val = billed_row['total_billed'] or 0
         pct = round(billed_val / contract_val * 100) if contract_val > 0 else 0
+        # Completion % from schedule phases
+        comp_row = conn.execute(
+            "SELECT AVG(pct_complete) as avg_pct FROM job_schedule_events WHERE job_id = ? AND status != 'Cancelled'",
+            (jid,)
+        ).fetchone()
+        pct_complete = round(comp_row['avg_pct'] or 0) if comp_row and comp_row['avg_pct'] else 0
 
         active_project_list.append({
             'id': jid, 'name': j['name'],
             'contract': round(contract_val, 2),
             'billed': round(billed_val, 2),
             'pct_billed': min(pct, 100),
+            'pct_complete': min(pct_complete, 100),
         })
     active_project_list.sort(key=lambda p: p['name'])
 
@@ -1394,6 +1401,151 @@ def delete_invoice(iid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+# ─── Daily Log (Crew Tracking) ─────────────────────────────────
+
+@app.route('/daily-log')
+@role_required('owner', 'admin', 'project_manager')
+def daily_log_page():
+    return render_template('daily_log.html')
+
+@app.route('/api/daily-log')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_get_daily_log():
+    log_date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+    db = get_db()
+    # Get all active employees
+    employees = db.execute("""
+        SELECT u.id, u.display_name, u.hourly_rate, u.role,
+               COALESCE(ep.employment_status, 'Active') as status
+        FROM users u
+        LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+        WHERE u.is_active = 1
+        ORDER BY u.display_name
+    """).fetchall()
+    # Get logs for this date
+    logs = db.execute("""
+        SELECT dl.id, dl.user_id, dl.job_id, dl.hours, dl.notes, dl.time_entry_id,
+               j.name as job_name
+        FROM daily_logs dl
+        JOIN jobs j ON j.id = dl.job_id
+        WHERE dl.log_date = ?
+        ORDER BY dl.user_id
+    """, (log_date,)).fetchall()
+    # Get active jobs
+    jobs = db.execute("""
+        SELECT id, name FROM jobs
+        WHERE status IN ('In Progress', 'Needs Bid', 'Bid Complete')
+        ORDER BY name
+    """).fetchall()
+    return jsonify({
+        'date': log_date,
+        'employees': [dict(e) for e in employees],
+        'logs': [dict(l) for l in logs],
+        'jobs': [dict(j) for j in jobs]
+    })
+
+@app.route('/api/daily-log', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_save_daily_log():
+    """Save daily log entries and sync to time_entries for payroll."""
+    data = request.get_json()
+    log_date = data.get('date')
+    entries = data.get('entries', [])
+    if not log_date:
+        return jsonify({'error': 'Date required'}), 400
+
+    db = get_db()
+    user_id = session['user_id']
+    saved = 0
+    removed = 0
+
+    # Get existing logs for this date to track what to remove
+    existing = db.execute("SELECT id, user_id, job_id, time_entry_id FROM daily_logs WHERE log_date = ?", (log_date,)).fetchall()
+    existing_keys = {(r['user_id'], r['job_id']): {'id': int(r['id']), 'user_id': r['user_id'], 'job_id': r['job_id'], 'time_entry_id': int(r['time_entry_id']) if r['time_entry_id'] else None} for r in existing}
+    incoming_keys = set()
+
+    for entry in entries:
+        emp_id = entry.get('user_id')
+        job_id = entry.get('job_id')
+        hours = float(entry.get('hours', 0))
+        notes = entry.get('notes', '')
+        if not emp_id or not job_id or hours <= 0:
+            continue
+        incoming_keys.add((emp_id, job_id))
+
+        # Get employee rate
+        emp = db.execute("SELECT hourly_rate FROM users WHERE id = ?", (emp_id,)).fetchone()
+        rate = emp['hourly_rate'] if emp else 0
+
+        key = (emp_id, job_id)
+        if key in existing_keys:
+            # Update existing log
+            row = existing_keys[key]
+            db.execute("""
+                UPDATE daily_logs SET hours = ?, notes = ?, updated_at = datetime('now','localtime')
+                WHERE id = ?
+            """, (hours, notes, row['id']))
+            # Update linked time entry
+            if row['time_entry_id']:
+                db.execute("""
+                    UPDATE time_entries SET hours = ?, hourly_rate = ?, description = ?
+                    WHERE id = ?
+                """, (hours, rate, notes or 'Daily log', row['time_entry_id']))
+            else:
+                # Create time entry
+                cur = db.execute("""
+                    INSERT INTO time_entries (user_id, job_id, hours, hourly_rate, work_date, description, approved)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                """, (emp_id, job_id, hours, rate, log_date, notes or 'Daily log'))
+                db.execute("UPDATE daily_logs SET time_entry_id = ? WHERE id = ?", (cur.lastrowid, row['id']))
+        else:
+            # Create time entry first
+            cur = db.execute("""
+                INSERT INTO time_entries (user_id, job_id, hours, hourly_rate, work_date, description, approved)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            """, (emp_id, job_id, hours, rate, log_date, notes or 'Daily log'))
+            te_id = cur.lastrowid
+            # Create daily log
+            db.execute("""
+                INSERT INTO daily_logs (log_date, user_id, job_id, hours, notes, time_entry_id, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (log_date, emp_id, job_id, hours, notes, te_id, user_id))
+        saved += 1
+
+    # Remove logs that were deleted (not in incoming)
+    for key, row in existing_keys.items():
+        if key not in incoming_keys:
+            te_id = row['time_entry_id']
+            # Delete the daily_log row first (has FK to time_entries)
+            db.execute("DELETE FROM daily_logs WHERE id = ?", (row['id'],))
+            # Then delete the time entry if it hasn't been approved/added to payroll
+            if te_id:
+                te = db.execute("SELECT approved, payroll_run_id FROM time_entries WHERE id = ?", (te_id,)).fetchone()
+                if te and not te['approved'] and not te['payroll_run_id']:
+                    db.execute("DELETE FROM time_entries WHERE id = ?", (te_id,))
+            removed += 1
+
+    db.commit()
+    return jsonify({'ok': True, 'saved': saved, 'removed': removed})
+
+@app.route('/api/daily-log/summary')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_daily_log_summary():
+    """Get summary of crew assignments for a date range (for dashboard)."""
+    start = request.args.get('start', datetime.now().strftime('%Y-%m-%d'))
+    end = request.args.get('end', start)
+    db = get_db()
+    summary = db.execute("""
+        SELECT dl.log_date, COUNT(DISTINCT dl.user_id) as crew_count,
+               SUM(dl.hours) as total_hours,
+               COUNT(DISTINCT dl.job_id) as job_count
+        FROM daily_logs dl
+        WHERE dl.log_date BETWEEN ? AND ?
+        GROUP BY dl.log_date
+        ORDER BY dl.log_date
+    """, (start, end)).fetchall()
+    return jsonify([dict(s) for s in summary])
 
 # ─── Payroll / Time Entry ───────────────────────────────────────
 
@@ -3785,19 +3937,22 @@ def api_reset_user_password(uid):
 @app.route('/api/heartbeat', methods=['POST'])
 @api_login_required
 def api_heartbeat():
-    conn = get_db()
-    today = datetime.now().strftime('%Y-%m-%d')
-    conn.execute(
-        '''INSERT INTO user_sessions (user_id, session_date, first_seen, last_seen, page_views)
-           VALUES (?, ?, datetime('now','localtime'), datetime('now','localtime'), 1)
-           ON CONFLICT(user_id, session_date) DO UPDATE SET
-               last_seen = datetime('now','localtime'),
-               page_views = page_views + 1''',
-        (session['user_id'], today)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'ok': True})
+    try:
+        conn = get_db()
+        today = datetime.now().strftime('%Y-%m-%d')
+        conn.execute(
+            '''INSERT INTO user_sessions (user_id, session_date, first_seen, last_seen, page_views)
+               VALUES (?, ?, datetime('now','localtime'), datetime('now','localtime'), 1)
+               ON CONFLICT(user_id, session_date) DO UPDATE SET
+                   last_seen = datetime('now','localtime'),
+                   page_views = page_views + 1''',
+            (session['user_id'], today)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return jsonify({'ok': True, '_noToast': True})
 
 # ─── Activity Log (Owner Only) ──────────────────────────────────
 
@@ -6072,6 +6227,43 @@ def api_delete_inspection(pid, iid):
     conn.close()
     return jsonify({'ok': True})
 
+PERMITS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'permits')
+
+@app.route('/api/permits/upload', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_permit_upload():
+    """Upload a permit document (drag-and-drop support)."""
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': 'No file provided'}), 400
+    job_id = request.form.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'Job is required'}), 400
+    conn = get_db()
+    # Save file
+    os.makedirs(PERMITS_DIR, exist_ok=True)
+    from werkzeug.utils import secure_filename
+    fname = secure_filename(file.filename)
+    fname = f"{int(datetime.now().timestamp())}_{fname}"
+    file.save(os.path.join(PERMITS_DIR, fname))
+    # Create permit record
+    permit_type = request.form.get('permit_type', 'Mechanical')
+    if permit_type not in ('Mechanical','Building','Plumbing','Electrical','Fire','Roofing','Demolition','Other'):
+        permit_type = 'Mechanical'
+    cursor = conn.execute(
+        '''INSERT INTO permits (job_id, permit_type, status, file_path, notes, created_by)
+           VALUES (?, ?, 'Not Applied', ?, ?, ?)''',
+        (job_id, permit_type, fname, f'Uploaded: {file.filename}', session.get('user_id'))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': cursor.lastrowid})
+
+@app.route('/api/permits/file/<path:filename>')
+@login_required
+def api_permit_file(filename):
+    return send_from_directory(PERMITS_DIR, filename)
+
 def _check_permit_notifications(permits, conn):
     """Send weekly notifications for permits not yet approved."""
     from datetime import timedelta
@@ -7446,11 +7638,14 @@ def api_schedule_events():
         ).fetchall()
     result = [dict(r) for r in rows]
     conn.close()
-    # Check for upcoming due-date notifications (don't let errors block the response)
-    try:
-        _check_schedule_notifications(result)
-    except Exception:
-        pass
+    # Check for upcoming due-date notifications in background thread so it doesn't block
+    import threading
+    def _bg_notify(events):
+        try:
+            _check_schedule_notifications(events)
+        except Exception:
+            pass
+    threading.Thread(target=_bg_notify, args=(result,), daemon=True).start()
     return jsonify(result)
 
 def _check_schedule_notifications(events):
@@ -7579,6 +7774,46 @@ def api_schedule_create():
     conn.close()
     return jsonify({'ok': True, 'id': event_id})
 
+@app.route('/api/schedule/events/bulk', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_create_bulk():
+    """Create multiple schedule phases in one request."""
+    import time as _time
+    data = request.get_json(force=True)
+    job_id = data.get('job_id')
+    phases = data.get('phases', [])
+    if not job_id or not phases:
+        return jsonify({'error': 'job_id and phases required'}), 400
+    # Retry loop to handle SQLite lock contention
+    for attempt in range(5):
+        try:
+            conn = get_db()
+            created = 0
+            for p in phases:
+                conn.execute(
+                    '''INSERT INTO job_schedule_events (job_id, phase_name, description, start_date, end_date,
+                       assigned_to, sort_order, created_by, estimated_hours, crew_size)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (job_id, p.get('phase_name', ''), p.get('description', ''),
+                     p.get('start_date', ''), p.get('end_date', ''),
+                     p.get('assigned_to') or None, p.get('sort_order', 0), session['user_id'],
+                     p.get('estimated_hours', 0), p.get('crew_size', 1))
+                )
+                created += 1
+            conn.commit()
+            conn.close()
+            return jsonify({'ok': True, 'created': created})
+        except Exception as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if 'locked' in str(exc) and attempt < 4:
+                _time.sleep(0.5)
+                continue
+            return jsonify({'error': str(exc)}), 500
+    return jsonify({'error': 'Database busy, please try again'}), 500
+
 @app.route('/api/schedule/events/<int:eid>', methods=['PUT'])
 @api_role_required('owner', 'admin', 'project_manager')
 def api_schedule_update(eid):
@@ -7623,6 +7858,21 @@ def api_schedule_update(eid):
             f'{phase_name} on {job_name} — {date_range}',
             f'/schedule/job/{old["job_id"]}'
         )
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/schedule/events/reorder', methods=['POST'])
+@api_role_required('owner', 'admin', 'project_manager')
+def api_schedule_reorder():
+    data = request.get_json(force=True)
+    order = data.get('order', [])  # list of {id, sort_order}
+    if not order:
+        return jsonify({'error': 'No order provided'}), 400
+    conn = get_db()
+    for item in order:
+        conn.execute('UPDATE job_schedule_events SET sort_order=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?',
+                     (item['sort_order'], item['id']))
+    conn.commit()
     conn.close()
     return jsonify({'ok': True})
 
@@ -16276,6 +16526,61 @@ def api_available_materials(job_id):
     return jsonify(result)
 
 # ─── Billing Schedules ───────────────────────────────────────────
+
+@app.route('/api/jobs/<int:job_id>/pay-apps')
+@api_role_required('owner', 'admin', 'project_manager')
+def api_job_pay_apps(job_id):
+    """Get all pay apps for a job with billing totals."""
+    conn = get_db()
+    contracts = conn.execute(
+        'SELECT id, contract_name, original_contract_sum, retainage_work_pct FROM pay_app_contracts WHERE job_id = ?',
+        (job_id,)
+    ).fetchall()
+    result = []
+    total_contract = 0
+    total_billed = 0
+    total_retainage = 0
+    total_this_period = 0
+    for c in contracts:
+        cid = c['id']
+        apps = conn.execute(
+            'SELECT id, app_number, period_from, period_to, status FROM pay_applications WHERE contract_id = ? ORDER BY app_number',
+            (cid,)
+        ).fetchall()
+        for app in apps:
+            lines = conn.execute(
+                'SELECT COALESCE(SUM(work_this_period + materials_stored), 0) as this_period, COALESCE(SUM(total_completed), 0) as total_billed FROM pay_app_line_entries WHERE pay_app_id = ?',
+                (app['id'],)
+            ).fetchone()
+            this_period = lines['this_period'] or 0
+            billed = lines['total_billed'] or 0
+            ret_pct = c['retainage_work_pct'] or 0
+            retainage = round(billed * ret_pct / 100, 2)
+            total_this_period += this_period
+            total_billed += billed
+            total_retainage += retainage
+            result.append({
+                'id': app['id'], 'contract_id': cid,
+                'app_number': app['app_number'],
+                'period_from': app['period_from'], 'period_to': app['period_to'],
+                'contract_name': c['contract_name'],
+                'contract_sum': c['original_contract_sum'],
+                'this_period': round(this_period, 2),
+                'total_billed': round(billed, 2),
+                'retainage': retainage,
+                'status': app['status']
+            })
+        total_contract += c['original_contract_sum'] or 0
+    conn.close()
+    return jsonify({
+        'apps': result,
+        'totals': {
+            'contract': round(total_contract, 2),
+            'billed': round(total_billed, 2),
+            'retainage': round(total_retainage, 2),
+            'this_period': round(total_this_period, 2),
+        }
+    })
 
 @app.route('/api/jobs/<int:job_id>/billing-schedule')
 @api_role_required('owner', 'admin', 'project_manager')

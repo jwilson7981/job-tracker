@@ -6,7 +6,7 @@ from datetime import datetime
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'jobs.db')
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -2672,6 +2672,29 @@ def init_db():
     sf_cols = [row[1] for row in conn.execute("PRAGMA table_info(submittal_files)").fetchall()]
     if 'keywords' not in sf_cols:
         conn.execute("ALTER TABLE submittal_files ADD COLUMN keywords TEXT DEFAULT ''")
+
+    # ── Daily Logs table ──────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            log_date TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            job_id INTEGER NOT NULL,
+            hours REAL DEFAULT 8,
+            notes TEXT DEFAULT '',
+            time_entry_id INTEGER,
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (time_entry_id) REFERENCES time_entries(id),
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            UNIQUE(log_date, user_id, job_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(log_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_logs_user ON daily_logs(user_id)")
 
     # Migration: add original_filename to lien_waivers
     lw_cols2 = [row[1] for row in conn.execute("PRAGMA table_info(lien_waivers)").fetchall()]
