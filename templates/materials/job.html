@@ -6,6 +6,7 @@
 <div class="page-top-bar">
     <div class="page-top-actions">
         <button class="btn btn-secondary" onclick="openImportModal()">Import PDF</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('excelImportModal').style.display='flex'">Import Excel</button>
         <a href="/api/job/{{ job.id }}/export" class="btn btn-secondary">Download Excel</a>
         <a href="/materials/job/{{ job.id }}/history" class="btn btn-secondary">History</a>
     </div>
@@ -167,10 +168,68 @@
 </div>
 {% endblock %}
 
+<!-- Import Excel Modal -->
+<div class="modal-overlay" id="excelImportModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h2>Import Excel Workbook</h2>
+            <button class="modal-close" onclick="document.getElementById('excelImportModal').style.display='none'">&times;</button>
+        </div>
+        <form id="excelImportForm" onsubmit="submitExcelImport(event)">
+            <p style="margin-bottom:12px;color:var(--gray-500);font-size:13px;">
+                Upload a supplier Excel file (.xlsx) to import line items. The importer auto-detects columns from headers like:
+                Line #, SKU, Description, Qty Ordered, Price Per, Total Net Price.
+                Sheets named "Received", "Shipped to Site", or "Invoiced" will also be imported.
+            </p>
+            <p style="margin-bottom:12px;color:#DC2626;font-size:13px;font-weight:600;">
+                Warning: This will replace all existing line items and tracking entries for this job.
+            </p>
+            <div class="form-group">
+                <label class="form-label">Excel File</label>
+                <input type="file" id="excelFileInput" accept=".xlsx,.xls" class="form-input" required>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('excelImportModal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="excelImportBtn">Import</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         initJobView({{ job.id }});
     });
+
+    async function submitExcelImport(e) {
+        e.preventDefault();
+        var fileInput = document.getElementById('excelFileInput');
+        if (!fileInput.files.length) return;
+
+        var btn = document.getElementById('excelImportBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;"><span class="spinner-sm"></span> Importing...</span>';
+
+        var formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('job_id', '{{ job.id }}');
+
+        try {
+            var res = await fetch('/api/materials/import', { method: 'POST', body: formData });
+            var data = await res.json();
+            if (res.ok && data.ok) {
+                document.getElementById('excelImportModal').style.display = 'none';
+                if (window.showToast) { window._toastShown = true; window.showToast('Imported ' + data.imported + ' line items'); }
+                loadJobData();
+            } else {
+                alert('Import error: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            alert('Import failed: ' + err.message);
+        }
+        btn.disabled = false;
+        btn.textContent = 'Import';
+    }
 </script>
 {% endblock %}
