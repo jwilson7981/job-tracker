@@ -101,39 +101,39 @@
     </div>
 
     <div class="tab-content" id="tab-received">
+        {% if current_user.role != 'supplier' %}
+        <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="addEntryColumn('received')">+ Add Delivery</button>
+        {% endif %}
         <div class="table-wrapper">
             <table class="data-table entry-table" id="receivedTable">
                 <thead id="receivedHead"></thead>
                 <tbody id="receivedBody"></tbody>
             </table>
         </div>
-        {% if current_user.role != 'supplier' %}
-        <button class="btn btn-secondary" style="margin-top:8px;" onclick="addEntryColumn('received')">+ Add Delivery</button>
-        {% endif %}
     </div>
 
     <div class="tab-content" id="tab-shipped">
+        {% if current_user.role != 'supplier' %}
+        <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="addEntryColumn('shipped')">+ Add Shipment</button>
+        {% endif %}
         <div class="table-wrapper">
             <table class="data-table entry-table" id="shippedTable">
                 <thead id="shippedHead"></thead>
                 <tbody id="shippedBody"></tbody>
             </table>
         </div>
-        {% if current_user.role != 'supplier' %}
-        <button class="btn btn-secondary" style="margin-top:8px;" onclick="addEntryColumn('shipped')">+ Add Shipment</button>
-        {% endif %}
     </div>
 
     <div class="tab-content" id="tab-invoiced">
+        {% if current_user.role != 'supplier' %}
+        <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="addEntryColumn('invoiced')">+ Add Invoice</button>
+        {% endif %}
         <div class="table-wrapper">
             <table class="data-table entry-table" id="invoicedTable">
                 <thead id="invoicedHead"></thead>
                 <tbody id="invoicedBody"></tbody>
             </table>
         </div>
-        {% if current_user.role != 'supplier' %}
-        <button class="btn btn-secondary" style="margin-top:8px;" onclick="addEntryColumn('invoiced')">+ Add Invoice</button>
-        {% endif %}
     </div>
 
     {% if current_user.role != 'supplier' %}
