@@ -624,7 +624,7 @@ def api_materials_import():
 @role_required('owner', 'admin', 'project_manager', 'warehouse')
 def materials_list():
     conn = get_db()
-    jobs = conn.execute('SELECT * FROM jobs ORDER BY updated_at DESC').fetchall()
+    jobs = conn.execute('SELECT * FROM jobs ORDER BY name ASC').fetchall()
     conn.close()
     return render_template('materials/list.html', jobs=jobs)
 
