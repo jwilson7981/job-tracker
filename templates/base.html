@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Construction Management{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260309h">
+    <link rel="stylesheet" href="/static/style.css?v=20260309i">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -26,11 +26,11 @@
     <script src="/static/export_utils.js?v=20260304b"></script>
     {% block scripts %}{% endblock %}
     {% if current_user %}
-    <!-- Floating Calculator Widget -->
+    <!-- Calculator Widget (toggled from sidebar) -->
     <div class="calc-widget" id="calcWidget">
-        <div class="calc-widget-header" onclick="toggleCalc()">
+        <div class="calc-widget-header">
             <span>&#128290; Calculator</span>
-            <span class="calc-widget-toggle" id="calcToggle">&#9650;</span>
+            <button class="calc-close-btn" onclick="toggleSidebarCalc()">&times;</button>
         </div>
         <div class="calc-widget-body" id="calcBody">
             <input type="text" id="calcDisplay" class="calc-display" readonly value="0">
@@ -59,11 +59,6 @@
     </div>
     <script>
     let _calcVal='', _calcPrev='', _calcOp='', _calcReset=false;
-    function toggleCalc(){
-        const b=document.getElementById('calcBody'), t=document.getElementById('calcToggle');
-        if(b.style.display==='none'){b.style.display='';t.innerHTML='&#9650;';}
-        else{b.style.display='none';t.innerHTML='&#9660;';}
-    }
     function calcUpdate(){document.getElementById('calcDisplay').value=_calcVal||'0';}
     function calcDigit(d){
         if(_calcReset){_calcVal='';_calcReset=false;}
@@ -85,15 +80,46 @@
     function calcClear(){_calcVal='';_calcPrev='';_calcOp='';_calcReset=false;calcUpdate();}
     function calcBackspace(){_calcVal=_calcVal.slice(0,-1);calcUpdate();}
     function calcPercent(){if(_calcVal)_calcVal=(parseFloat(_calcVal)/100).toString();calcUpdate();}
-    document.getElementById('calcBody').style.display='none';
-    document.getElementById('calcToggle').innerHTML='&#9660;';
+
+    function toggleSidebarCalc() {
+        var w = document.getElementById('calcWidget');
+        var btn = document.getElementById('sidebarCalcBtn');
+        var chatW = document.getElementById('chatWidget');
+        var chatBtn = document.getElementById('sidebarChatBtn');
+        if (w.classList.contains('visible')) {
+            w.classList.remove('visible');
+            if (btn) btn.classList.remove('active');
+        } else {
+            w.classList.add('visible');
+            if (btn) btn.classList.add('active');
+            // Close chat if open
+            if (chatW) chatW.classList.remove('visible');
+            if (chatBtn) chatBtn.classList.remove('active');
+        }
+    }
+    function toggleSidebarChat() {
+        var w = document.getElementById('chatWidget');
+        var btn = document.getElementById('sidebarChatBtn');
+        var calcW = document.getElementById('calcWidget');
+        var calcBtn = document.getElementById('sidebarCalcBtn');
+        if (w.classList.contains('visible')) {
+            w.classList.remove('visible');
+            if (btn) btn.classList.remove('active');
+        } else {
+            w.classList.add('visible');
+            if (btn) btn.classList.add('active');
+            // Close calc if open
+            if (calcW) calcW.classList.remove('visible');
+            if (calcBtn) calcBtn.classList.remove('active');
+        }
+    }
     </script>
 
-    <!-- Floating Chat Widget -->
+    <!-- Chat Widget (toggled from sidebar) -->
     <div class="chat-widget" id="chatWidget">
         <div class="chat-widget-header" id="chatWidgetHeader">
             <span class="chat-widget-title">Chat Assistant</span>
-            <span class="chat-widget-toggle" id="chatWidgetToggle">&#9650;</span>
+            <button class="calc-close-btn" onclick="toggleSidebarChat()">&times;</button>
         </div>
         <div class="chat-widget-body" id="chatWidgetBody">
             <div class="chat-widget-messages" id="widgetMessages">
@@ -168,7 +194,7 @@
         };
     })();
     </script>
-    <script src="/static/chat_widget.js?v=20260304b"></script>
+    <script src="/static/chat_widget.js?v=20260309i"></script>
     <script src="/static/duplicate_check.js?v=20260304b"></script>
     <script src="/static/drag_drop.js?v=20260304c"></script>
     <script src="/static/email_autocomplete.js?v=20260309"></script>

@@ -4,7 +4,6 @@
     const widget = document.getElementById('chatWidget');
     const header = document.getElementById('chatWidgetHeader');
     const body = document.getElementById('chatWidgetBody');
-    const toggle = document.getElementById('chatWidgetToggle');
     const input = document.getElementById('widgetInput');
     const sendBtn = document.getElementById('widgetSendBtn');
     const micBtn = document.getElementById('widgetMicBtn');
@@ -12,7 +11,6 @@
 
     if (!widget) return;
 
-    let expanded = false;
     let sessionId = null;
     let sending = false;
 
@@ -61,11 +59,11 @@
             if (listening) {
                 recognition.stop();
             } else {
-                // Expand widget if collapsed
-                if (!expanded) {
-                    expanded = true;
-                    widget.classList.add('expanded');
-                    toggle.innerHTML = '&#9660;';
+                // Show widget if hidden
+                if (!widget.classList.contains('visible')) {
+                    widget.classList.add('visible');
+                    var btn = document.getElementById('sidebarChatBtn');
+                    if (btn) btn.classList.add('active');
                 }
                 recognition.start();
             }
@@ -83,13 +81,6 @@
     }
 
     /* ─── Core Chat Functions ────────────────────────────────── */
-
-    header.addEventListener('click', function () {
-        expanded = !expanded;
-        widget.classList.toggle('expanded', expanded);
-        toggle.innerHTML = expanded ? '&#9660;' : '&#9650;';
-        if (expanded) input.focus();
-    });
 
     input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') send();

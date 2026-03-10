@@ -142,6 +142,9 @@
                 <a href="/material-shipments" class="sidebar-link {% if '/material-shipments' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128666;</span> Shipments
                 </a>
+                <a href="/deliveries" class="sidebar-link {% if '/deliveries' in request.path %}active{% endif %}">
+                    <span class="sidebar-icon">&#128230;</span> Deliveries
+                </a>
         {% endif %}
         {% if current_user.role in ('owner', 'admin', 'project_manager') %}
             </div>
@@ -168,7 +171,7 @@
                 </a>
                 {% if current_user.role in ('owner', 'admin') %}
                 <a href="/invoices" class="sidebar-link {% if request.path == '/invoices' %}active{% endif %}">
-                    <span class="sidebar-icon">&#128179;</span> Invoices
+                    <span class="sidebar-icon">&#128179;</span> Project Invoices
                 </a>
                 <a href="/invoices/reports" class="sidebar-link {% if '/invoices/reports' in request.path %}active{% endif %}">
                     <span class="sidebar-icon">&#128202;</span> Reports
@@ -200,6 +203,24 @@
         </a>
         <a href="/service-calls" class="sidebar-link {% if '/service-calls' in request.path %}active{% endif %}">
             <span class="sidebar-icon">&#9742;</span> Service Calls
+        </a>
+        {% endif %}
+
+        {% if current_user.role == 'supplier' %}
+        <a href="/deliveries" class="sidebar-link {% if '/deliveries' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128230;</span> Deliveries
+        </a>
+        <a href="/materials" class="sidebar-link {% if request.path == '/materials' or '/materials/job' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#9634;</span> Materials
+        </a>
+        <a href="/inventory" class="sidebar-link {% if '/inventory' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128230;</span> Inventory
+        </a>
+        <a href="/receiving" class="sidebar-link {% if '/receiving' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128230;</span> Receiving
+        </a>
+        <a href="/material-shipments" class="sidebar-link {% if '/material-shipments' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128666;</span> Shipments
         </a>
         {% endif %}
 
@@ -299,12 +320,19 @@
         <a href="/admin/activity-log" class="sidebar-link {% if '/admin/activity-log' in request.path %}active{% endif %}">
             <span class="sidebar-icon">&#128202;</span> Activity Log
         </a>
+        <a href="/admin/sms-settings" class="sidebar-link {% if '/admin/sms-settings' in request.path %}active{% endif %}">
+            <span class="sidebar-icon">&#128241;</span> SMS Settings
+        </a>
         {% endif %}
     </nav>
     <div class="sidebar-footer">
         <div class="sidebar-user">
             <div class="sidebar-user-name">{{ current_user.display_name or current_user.username }}</div>
             <div class="sidebar-user-role">{{ current_user.role|replace('_', ' ')|title }}</div>
+        </div>
+        <div class="sidebar-tools">
+            <button class="sidebar-tool-btn" id="sidebarCalcBtn" onclick="toggleSidebarCalc()" title="Calculator">&#128290;</button>
+            <button class="sidebar-tool-btn" id="sidebarChatBtn" onclick="toggleSidebarChat()" title="Chat Assistant">&#128488;</button>
         </div>
         <a href="/logout" class="sidebar-link sidebar-logout">Logout</a>
     </div>
