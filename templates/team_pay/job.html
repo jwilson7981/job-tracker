@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Team Pay - Project Setup{% endblock %}
+{% block title %}Team Pay - Project{% endblock %}
 {% block content %}
 <div class="page-header">
     <div>
@@ -8,83 +8,128 @@
     </div>
     <div style="display:flex;gap:8px;">
         <button class="btn btn-secondary" onclick="showEditSchedule()">Edit Schedule</button>
-        <button class="btn btn-primary" onclick="showAddMember()">+ Add Member</button>
+        <button class="btn btn-secondary" onclick="showAddMember()">+ Add Member</button>
+        <button class="btn btn-primary" onclick="createPeriod()">+ New Pay Period</button>
     </div>
 </div>
 
 <!-- Schedule Info -->
-<div class="detail-grid" id="scheduleInfo" style="grid-template-columns:1fr 1fr 1fr; margin-bottom:24px;"></div>
+<div class="detail-grid" id="scheduleInfo" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;"></div>
 
-<!-- Members Table -->
-<h3 style="margin-bottom:8px;">Team Members</h3>
-<div class="table-wrapper" style="margin-bottom:24px;">
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th style="width:40px;">#</th>
-                <th>Member</th>
-                <th>Scheduled Amount</th>
-                <th>Total Paid</th>
-                <th>% Complete</th>
-                <th>Balance</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody id="membersBody">
-            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
-        </tbody>
-        <tfoot id="membersFoot"></tfoot>
-    </table>
+<!-- Period Selector -->
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+    <label class="form-label" style="margin:0;">Pay Period:</label>
+    <select id="periodSelect" class="form-select" style="width:250px;" onchange="loadPeriodData()">
+        <option value="">Select period...</option>
+    </select>
+    <span id="periodStatus" class="phase-status" style="display:none;"></span>
+    <div style="margin-left:auto;display:flex;gap:8px;" id="periodActions" style="display:none;">
+        <button class="btn btn-secondary btn-small" id="btnFinalize" onclick="finalizePeriod()" style="display:none;">Finalize</button>
+        <button class="btn btn-primary" id="btnSave" onclick="saveAllMembers()" style="display:none;">Save</button>
+    </div>
 </div>
 
-<!-- Quick Setup -->
-<div style="margin-bottom:24px;">
-    <button class="btn btn-secondary" onclick="showQuickSetup()">Quick Setup — Split Evenly</button>
+<!-- Member Tabs -->
+<div class="tab-bar" id="memberTabs" style="margin-bottom:0;"></div>
+
+<!-- G703 Table for selected member -->
+<div id="g703Container" style="display:none;">
+    <div class="table-wrapper" style="margin-bottom:16px;">
+        <table class="data-table" id="g703Table">
+            <thead>
+                <tr>
+                    <th style="width:50px;">Item #</th>
+                    <th>Description of Work</th>
+                    <th style="width:120px;">Scheduled Value</th>
+                    <th style="width:110px;">From Previous</th>
+                    <th style="width:110px;">This Period</th>
+                    <th style="width:110px;">Materials Stored</th>
+                    <th style="width:120px;">Total Completed</th>
+                    <th style="width:70px;">%</th>
+                    <th style="width:120px;">Balance</th>
+                    <th style="width:100px;">Retainage</th>
+                </tr>
+            </thead>
+            <tbody id="g703Body"></tbody>
+            <tfoot id="g703Foot"></tfoot>
+        </table>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:24px;">
+        <button class="btn btn-secondary btn-small" onclick="addSOVItem()">+ Add Line Item</button>
+    </div>
+
+    <!-- Deductions -->
+    <div style="margin-bottom:24px;">
+        <h3 style="margin-bottom:8px;">Deductions</h3>
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead><tr><th>Description</th><th style="width:120px;">Amount</th><th style="width:60px;"></th></tr></thead>
+                <tbody id="deductionsBody"></tbody>
+                <tfoot id="deductionsFoot"></tfoot>
+            </table>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+            <input type="text" id="newDeductDesc" class="form-input" placeholder="Description (e.g. Hotel 2/3-2/15)" style="width:250px;">
+            <input type="number" id="newDeductAmt" class="form-input" placeholder="Amount" step="0.01" style="width:120px;">
+            <button class="btn btn-secondary btn-small" onclick="addDeduction()">Add</button>
+        </div>
+    </div>
 </div>
 
-<!-- Payment Periods -->
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-    <h3>Payment Periods</h3>
-    <button class="btn btn-primary" onclick="createPeriod()">+ New Period</button>
+<!-- Members overview (when no period selected) -->
+<div id="membersOverview">
+    <div class="table-wrapper" style="margin-top:16px;">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">#</th>
+                    <th>Member</th>
+                    <th>SOV Items</th>
+                    <th>Scheduled Total</th>
+                    <th>Total Paid</th>
+                    <th>% Complete</th>
+                    <th>Balance</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="membersBody"></tbody>
+            <tfoot id="membersFoot"></tfoot>
+        </table>
+    </div>
 </div>
-<div class="table-wrapper">
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>Period #</th>
-                <th>Payment Date</th>
-                <th>Source Amount</th>
-                <th>Distributed</th>
-                <th>Status</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody id="periodsBody">
-            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
-        </tbody>
-    </table>
+
+<!-- Periods List -->
+<div style="margin-top:24px;">
+    <h3 style="margin-bottom:8px;">Payment Periods</h3>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr><th>Period #</th><th>Date</th><th>Distributed</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="periodsBody"></tbody>
+        </table>
+    </div>
 </div>
 
 <!-- Add Member Modal -->
 <div class="modal-overlay" id="memberModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
     <div class="modal">
         <div class="modal-header">
-            <h2 id="memberModalTitle">Add Team Member</h2>
+            <h2>Add Team Member</h2>
             <button class="modal-close" onclick="document.getElementById('memberModal').style.display='none'">&times;</button>
         </div>
         <form onsubmit="saveMember(event)">
-            <input type="hidden" id="amMemberId" value="">
-            <div class="form-group" id="amUserGroup">
-                <label class="form-label">Team Member</label>
-                <select id="amUser" class="form-select" required></select>
+            <div class="form-group">
+                <label class="form-label">Select User (optional)</label>
+                <select id="amUser" class="form-select"><option value="">-- Custom name --</option></select>
             </div>
             <div class="form-group">
-                <label class="form-label">Scheduled Amount</label>
-                <input type="number" id="amAmount" class="form-input" step="0.01" required>
+                <label class="form-label">Or enter name</label>
+                <input type="text" id="amName" class="form-input" placeholder="e.g. LG, Start Up Crew">
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('memberModal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="submit" class="btn btn-primary">Add Member</button>
             </div>
         </form>
     </div>
@@ -100,36 +145,24 @@
         <form onsubmit="updateSchedule(event)">
             <div class="form-group">
                 <label class="form-label">Total Project Value</label>
-                <input type="number" id="esValue" class="form-input" step="0.01" required>
+                <input type="number" id="esValue" class="form-input" step="0.01">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Retainage %</label>
+                <input type="number" id="esRetainage" class="form-input" step="0.1">
             </div>
             <div class="form-group">
                 <label class="form-label">Notes</label>
-                <textarea id="esNotes" class="form-input" rows="3"></textarea>
+                <textarea id="esNotes" class="form-input" rows="2"></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('editScheduleModal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <button type="submit" class="btn btn-primary">Save</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- Quick Setup Modal -->
-<div class="modal-overlay" id="quickSetupModal" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
-    <div class="modal">
-        <div class="modal-header">
-            <h2>Quick Setup — Split Evenly</h2>
-            <button class="modal-close" onclick="document.getElementById('quickSetupModal').style.display='none'">&times;</button>
-        </div>
-        <p style="margin-bottom:12px;">Select team members to add and split the project value evenly among them.</p>
-        <div id="qsUserList" style="margin-bottom:16px;"></div>
-        <div class="form-actions">
-            <button type="button" class="btn btn-secondary" onclick="document.getElementById('quickSetupModal').style.display='none'">Cancel</button>
-            <button type="button" class="btn btn-primary" onclick="applyQuickSetup()">Add & Split</button>
-        </div>
-    </div>
-</div>
-
 <script>window.TP_PAGE = 'job'; window.TP_SCHEDULE_ID = {{ schedule_id }};</script>
-<script src="/static/team_pay.js"></script>
+<script src="/static/team_pay.js?v=20260310a"></script>
 {% endblock %}

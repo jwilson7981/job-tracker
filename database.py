@@ -2176,6 +2176,97 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_entries_period ON team_pay_entries(period_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_team_pay_entries_member ON team_pay_entries(member_id)")
 
+    # Migration: Team Pay v2 — G703-style SOV per member
+    existing_tables_tp2 = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+
+    # Add member_name column (allows non-user members like "LG", "Start Up Crew")
+    tp_mem_cols = [row[1] for row in conn.execute("PRAGMA table_info(team_pay_members)").fetchall()]
+    if 'member_name' not in tp_mem_cols:
+        conn.execute("ALTER TABLE team_pay_members ADD COLUMN member_name TEXT DEFAULT ''")
+    # Relax user_id NOT NULL constraint for non-user members
+    tpm_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='team_pay_members'").fetchone()
+    if tpm_sql and 'user_id INTEGER NOT NULL' in tpm_sql[0]:
+        conn.execute("PRAGMA writable_schema = ON")
+        conn.execute("""UPDATE sqlite_master SET sql = REPLACE(sql,
+            'user_id INTEGER NOT NULL', 'user_id INTEGER')
+            WHERE type='table' AND name='team_pay_members'""")
+        conn.execute("PRAGMA writable_schema = OFF")
+        conn.execute("PRAGMA integrity_check")
+    # Also relax UNIQUE(schedule_id, user_id) since user_id can be NULL now
+    if tpm_sql and 'UNIQUE(schedule_id, user_id)' in tpm_sql[0]:
+        conn.execute("PRAGMA writable_schema = ON")
+        conn.execute("""UPDATE sqlite_master SET sql = REPLACE(sql,
+            'UNIQUE(schedule_id, user_id)', 'UNIQUE(schedule_id, user_id, member_name)')
+            WHERE type='table' AND name='team_pay_members'""")
+        conn.execute("PRAGMA writable_schema = OFF")
+        conn.execute("PRAGMA integrity_check")
+
+    # Add retainage_pct to schedules
+    tp_sched_cols = [row[1] for row in conn.execute("PRAGMA table_info(team_pay_schedules)").fetchall()]
+    if 'retainage_pct' not in tp_sched_cols:
+        conn.execute("ALTER TABLE team_pay_schedules ADD COLUMN retainage_pct REAL NOT NULL DEFAULT 10")
+    conn.commit()
+
+    # SOV line items per member (the rows in each person's G703)
+    if 'team_pay_sov_items' not in existing_tables_tp2:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_sov_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER NOT NULL,
+            item_number INTEGER NOT NULL DEFAULT 0,
+            description TEXT NOT NULL DEFAULT '',
+            scheduled_value REAL DEFAULT 0,
+            is_change_order INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (member_id) REFERENCES team_pay_members(id) ON DELETE CASCADE
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tp_sov_member ON team_pay_sov_items(member_id)")
+
+    # Per-line-item amounts per pay period (replaces flat team_pay_entries)
+    if 'team_pay_line_entries' not in existing_tables_tp2:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_line_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_id INTEGER NOT NULL,
+            sov_item_id INTEGER NOT NULL,
+            work_this_period REAL DEFAULT 0,
+            materials_stored REAL DEFAULT 0,
+            FOREIGN KEY (period_id) REFERENCES team_pay_periods(id) ON DELETE CASCADE,
+            FOREIGN KEY (sov_item_id) REFERENCES team_pay_sov_items(id) ON DELETE CASCADE,
+            UNIQUE(period_id, sov_item_id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tp_line_entries_period ON team_pay_line_entries(period_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tp_line_entries_sov ON team_pay_line_entries(sov_item_id)")
+
+    # Deductions per member per period (hotel, advances, etc.)
+    if 'team_pay_deductions' not in existing_tables_tp2:
+        conn.execute("""CREATE TABLE IF NOT EXISTS team_pay_deductions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_id INTEGER NOT NULL,
+            member_id INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            amount REAL DEFAULT 0,
+            FOREIGN KEY (period_id) REFERENCES team_pay_periods(id) ON DELETE CASCADE,
+            FOREIGN KEY (member_id) REFERENCES team_pay_members(id) ON DELETE CASCADE
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tp_deductions_period ON team_pay_deductions(period_id)")
+
+    # Configurable profit split (replaces hardcoded 30/35/35 in bids)
+    if 'profit_split_config' not in existing_tables_tp2:
+        conn.execute("""CREATE TABLE IF NOT EXISTS profit_split_config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            user_id INTEGER,
+            percentage REAL NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )""")
+        # Seed default split
+        conn.execute("INSERT INTO profit_split_config (name, percentage, sort_order) VALUES ('Company', 30, 1)")
+        conn.execute("INSERT INTO profit_split_config (name, percentage, sort_order) VALUES ('Dan', 35, 2)")
+        conn.execute("INSERT INTO profit_split_config (name, percentage, sort_order) VALUES ('James', 35, 3)")
+
+    conn.commit()
+
     # Migration: material_requests.phase, material_request_items.line_item_id, material_request_items.order_needed
     mr_cols = [row[1] for row in conn.execute("PRAGMA table_info(material_requests)").fetchall()]
     if 'phase' not in mr_cols:

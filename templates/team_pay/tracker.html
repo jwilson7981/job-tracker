@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Team Pay - Running Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/team-pay" class="link" style="font-size:14px;">&larr; Back to Team Pay</a>
+        <h1>Running Pay Tracker</h1>
+    </div>
+</div>
+<div class="table-wrapper" id="trackerWrapper">
+    <p class="text-muted" style="padding:24px;text-align:center;">Loading...</p>
+</div>
+<script>window.TP_PAGE = 'tracker';</script>
+<script src="/static/team_pay.js?v=20260310a"></script>
+{% endblock %}

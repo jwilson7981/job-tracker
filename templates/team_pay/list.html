@@ -2,8 +2,11 @@
 {% block title %}Team Pay - Construction Management{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>Team Pay (Internal Progress Payroll)</h1>
-    <button class="btn btn-primary" onclick="showNewSchedule()">+ New Schedule</button>
+    <h1>Team Pay</h1>
+    <div style="display:flex;gap:8px;">
+        <a href="/team-pay/tracker" class="btn btn-secondary">Running Tracker</a>
+        <button class="btn btn-primary" onclick="showNewSchedule()">+ New Schedule</button>
+    </div>
 </div>
 
 <div class="table-wrapper">
@@ -11,7 +14,6 @@
         <thead>
             <tr>
                 <th>Project</th>
-                <th>Total Project Value</th>
                 <th>Members</th>
                 <th>Scheduled Total</th>
                 <th>Total Paid</th>
@@ -20,9 +22,26 @@
             </tr>
         </thead>
         <tbody id="schedulesBody">
-            <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
         </tbody>
     </table>
+</div>
+
+<!-- Import Section -->
+<div style="margin-top:24px;padding:16px;background:var(--gray-50);border-radius:8px;border:1px solid var(--gray-200);">
+    <h3 style="margin-bottom:8px;">Import Staff AIA Workbook</h3>
+    <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">Upload an Excel workbook (e.g. "Bennington Staff AIA.xlsx") to import team members, SOV items, and payment history.</p>
+    <form id="importForm" onsubmit="importExcel(event)" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+        <div class="form-group" style="margin:0;">
+            <label class="form-label">Project</label>
+            <select id="importJob" class="form-select" required style="width:250px;"></select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label class="form-label">Excel File</label>
+            <input type="file" id="importFile" accept=".xlsx,.xls" class="form-input" required>
+        </div>
+        <button type="submit" class="btn btn-primary" id="importBtn">Import</button>
+    </form>
 </div>
 
 <!-- New Schedule Modal -->
@@ -39,11 +58,15 @@
             </div>
             <div class="form-group">
                 <label class="form-label">Total Project Value</label>
-                <input type="number" id="nsTotalValue" class="form-input" step="0.01" required>
+                <input type="number" id="nsTotalValue" class="form-input" step="0.01">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Retainage %</label>
+                <input type="number" id="nsRetainage" class="form-input" step="0.1" value="10">
             </div>
             <div class="form-group">
                 <label class="form-label">Notes</label>
-                <textarea id="nsNotes" class="form-input" rows="3"></textarea>
+                <textarea id="nsNotes" class="form-input" rows="2"></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('scheduleModal').style.display='none'">Cancel</button>
@@ -53,5 +76,5 @@
     </div>
 </div>
 <script>window.TP_PAGE = 'list';</script>
-<script src="/static/team_pay.js"></script>
+<script src="/static/team_pay.js?v=20260310a"></script>
 {% endblock %}

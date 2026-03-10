@@ -17574,7 +17574,7 @@ def api_quick_add_job():
     return jsonify({'ok': True, 'job_id': job_id}), 201
 
 
-# ─── Team Pay (Internal Progress Payroll) ─────────────────────────
+# ─── Team Pay (Internal Progress Payroll — G703 per member) ─────────
 
 @app.route('/team-pay')
 @role_required('owner')
@@ -17586,10 +17586,12 @@ def team_pay_list_page():
 def team_pay_job_page(schedule_id):
     return render_template('team_pay/job.html', schedule_id=schedule_id)
 
-@app.route('/team-pay/period/<int:period_id>')
+@app.route('/team-pay/tracker')
 @role_required('owner')
-def team_pay_period_page(period_id):
-    return render_template('team_pay/period.html', period_id=period_id)
+def team_pay_tracker_page():
+    return render_template('team_pay/tracker.html')
+
+# --- Schedules ---
 
 @app.route('/api/team-pay/schedules', methods=['GET'])
 @api_role_required('owner')
@@ -17598,17 +17600,33 @@ def api_team_pay_schedules_list():
     rows = conn.execute('''
         SELECT s.*, j.name as job_name,
             (SELECT COUNT(*) FROM team_pay_members WHERE schedule_id = s.id) as member_count,
-            (SELECT COALESCE(SUM(scheduled_amount), 0) FROM team_pay_members WHERE schedule_id = s.id) as scheduled_total,
-            (SELECT COUNT(*) FROM team_pay_periods WHERE schedule_id = s.id) as period_count,
-            (SELECT COALESCE(SUM(e.amount), 0) FROM team_pay_entries e
-             JOIN team_pay_periods p ON e.period_id = p.id
-             WHERE p.schedule_id = s.id) as total_paid
+            (SELECT COUNT(*) FROM team_pay_periods WHERE schedule_id = s.id) as period_count
         FROM team_pay_schedules s
         JOIN jobs j ON s.job_id = j.id
-        ORDER BY s.created_at DESC
+        ORDER BY j.name
     ''').fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        # Compute total scheduled from SOV items
+        sov_total = conn.execute('''
+            SELECT COALESCE(SUM(si.scheduled_value), 0)
+            FROM team_pay_sov_items si
+            JOIN team_pay_members m ON si.member_id = m.id
+            WHERE m.schedule_id = ?
+        ''', (r['id'],)).fetchone()[0]
+        # Compute total paid from line entries
+        total_paid = conn.execute('''
+            SELECT COALESCE(SUM(le.work_this_period), 0)
+            FROM team_pay_line_entries le
+            JOIN team_pay_periods p ON le.period_id = p.id
+            WHERE p.schedule_id = ?
+        ''', (r['id'],)).fetchone()[0]
+        d['scheduled_total'] = sov_total
+        d['total_paid'] = total_paid
+        result.append(d)
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(result)
 
 @app.route('/api/team-pay/schedules', methods=['POST'])
 @api_role_required('owner')
@@ -17623,13 +17641,14 @@ def api_team_pay_schedules_create():
         conn.close()
         return jsonify({'error': 'A team pay schedule already exists for this job'}), 409
     cursor = conn.execute(
-        'INSERT INTO team_pay_schedules (job_id, total_job_value, notes, created_by) VALUES (?,?,?,?)',
-        (job_id, float(data.get('total_job_value', 0)), data.get('notes', ''), session.get('user_id'))
+        'INSERT INTO team_pay_schedules (job_id, total_job_value, notes, retainage_pct, created_by) VALUES (?,?,?,?,?)',
+        (job_id, float(data.get('total_job_value', 0)), data.get('notes', ''),
+         float(data.get('retainage_pct', 10)), session.get('user_id'))
     )
     conn.commit()
-    schedule_id = cursor.lastrowid
+    sid = cursor.lastrowid
     conn.close()
-    return jsonify({'ok': True, 'id': schedule_id}), 201
+    return jsonify({'ok': True, 'id': sid}), 201
 
 @app.route('/api/team-pay/schedules/<int:sid>', methods=['GET'])
 @api_role_required('owner')
@@ -17651,11 +17670,19 @@ def api_team_pay_schedule_detail(sid):
 def api_team_pay_schedule_update(sid):
     data = request.get_json()
     conn = get_db()
-    conn.execute(
-        "UPDATE team_pay_schedules SET total_job_value = ?, notes = ?, updated_at = datetime('now','localtime') WHERE id = ?",
-        (float(data.get('total_job_value', 0)), data.get('notes', ''), sid)
-    )
-    conn.commit()
+    fields, vals = [], []
+    for key in ('total_job_value', 'retainage_pct'):
+        if key in data:
+            fields.append(f'{key} = ?')
+            vals.append(float(data[key]))
+    if 'notes' in data:
+        fields.append('notes = ?')
+        vals.append(data['notes'])
+    if fields:
+        fields.append("updated_at = datetime('now','localtime')")
+        vals.append(sid)
+        conn.execute(f"UPDATE team_pay_schedules SET {', '.join(fields)} WHERE id = ?", vals)
+        conn.commit()
     conn.close()
     return jsonify({'ok': True})
 
@@ -17675,38 +17702,64 @@ def api_team_pay_schedule_delete(sid):
 def api_team_pay_members_list(sid):
     conn = get_db()
     rows = conn.execute('''
-        SELECT m.*, u.display_name, u.username,
-            (SELECT COALESCE(SUM(e.amount), 0) FROM team_pay_entries e
-             JOIN team_pay_periods p ON e.period_id = p.id
-             WHERE e.member_id = m.id) as total_paid
+        SELECT m.*, COALESCE(u.display_name, '') as user_display_name
         FROM team_pay_members m
-        JOIN users u ON m.user_id = u.id
+        LEFT JOIN users u ON m.user_id = u.id
         WHERE m.schedule_id = ?
         ORDER BY m.sort_order, m.id
     ''', (sid,)).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d['display_name'] = d['member_name'] or d['user_display_name'] or 'Member'
+        # Get SOV totals
+        sov = conn.execute('''
+            SELECT COALESCE(SUM(scheduled_value), 0) as sov_total, COUNT(*) as item_count
+            FROM team_pay_sov_items WHERE member_id = ?
+        ''', (r['id'],)).fetchone()
+        d['sov_total'] = sov['sov_total']
+        d['item_count'] = sov['item_count']
+        # Get total paid (sum of all work_this_period across all periods)
+        paid = conn.execute('''
+            SELECT COALESCE(SUM(le.work_this_period), 0) as total_paid
+            FROM team_pay_line_entries le
+            JOIN team_pay_sov_items si ON le.sov_item_id = si.id
+            WHERE si.member_id = ?
+        ''', (r['id'],)).fetchone()
+        d['total_paid'] = paid['total_paid']
+        result.append(d)
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    return jsonify(result)
 
 @app.route('/api/team-pay/schedules/<int:sid>/members', methods=['POST'])
 @api_role_required('owner')
 def api_team_pay_member_add(sid):
     data = request.get_json()
-    user_id = data.get('user_id')
-    if not user_id:
-        return jsonify({'error': 'User is required'}), 400
+    user_id = data.get('user_id')  # can be None for non-user members
+    member_name = data.get('member_name', '')
+    if not user_id and not member_name:
+        return jsonify({'error': 'Either user or name is required'}), 400
     conn = get_db()
-    existing = conn.execute('SELECT id FROM team_pay_members WHERE schedule_id = ? AND user_id = ?', (sid, user_id)).fetchone()
-    if existing:
-        conn.close()
-        return jsonify({'error': 'Member already in schedule'}), 409
     max_order = conn.execute('SELECT COALESCE(MAX(sort_order), 0) FROM team_pay_members WHERE schedule_id = ?', (sid,)).fetchone()[0]
-    conn.execute(
-        'INSERT INTO team_pay_members (schedule_id, user_id, scheduled_amount, sort_order) VALUES (?,?,?,?)',
-        (sid, user_id, float(data.get('scheduled_amount', 0)), max_order + 1)
+    cursor = conn.execute(
+        'INSERT INTO team_pay_members (schedule_id, user_id, member_name, scheduled_amount, sort_order) VALUES (?,?,?,?,?)',
+        (sid, user_id, member_name, 0, max_order + 1)
     )
+    member_id = cursor.lastrowid
+    # Auto-create default SOV items
+    default_phases = [
+        'Contract', 'Project Permits', 'Material Profit', 'Project Material Management',
+        'Project Mobilization', 'Rough In', 'Air Handler', 'PTAC Install',
+        'Condenser', 'Trim Out', 'Start Up'
+    ]
+    for i, desc in enumerate(default_phases):
+        conn.execute(
+            'INSERT INTO team_pay_sov_items (member_id, item_number, description, sort_order) VALUES (?,?,?,?)',
+            (member_id, i + 1, desc, i + 1)
+        )
     conn.commit()
     conn.close()
-    return jsonify({'ok': True}), 201
+    return jsonify({'ok': True, 'id': member_id}), 201
 
 @app.route('/api/team-pay/members/<int:mid>', methods=['PUT'])
 @api_role_required('owner')
@@ -17714,9 +17767,9 @@ def api_team_pay_member_update(mid):
     data = request.get_json()
     conn = get_db()
     fields, values = [], []
-    if 'scheduled_amount' in data:
-        fields.append('scheduled_amount = ?')
-        values.append(float(data['scheduled_amount']))
+    if 'member_name' in data:
+        fields.append('member_name = ?')
+        values.append(data['member_name'])
     if 'sort_order' in data:
         fields.append('sort_order = ?')
         values.append(int(data['sort_order']))
@@ -17736,6 +17789,92 @@ def api_team_pay_member_delete(mid):
     conn.close()
     return jsonify({'ok': True})
 
+# --- Team Pay SOV Items ---
+
+@app.route('/api/team-pay/members/<int:mid>/sov', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_sov_list(mid):
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT * FROM team_pay_sov_items WHERE member_id = ? ORDER BY sort_order, id
+    ''', (mid,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/team-pay/members/<int:mid>/sov', methods=['POST'])
+@api_role_required('owner')
+def api_team_pay_sov_add(mid):
+    data = request.get_json()
+    conn = get_db()
+    max_order = conn.execute('SELECT COALESCE(MAX(sort_order), 0) FROM team_pay_sov_items WHERE member_id = ?', (mid,)).fetchone()[0]
+    max_item = conn.execute('SELECT COALESCE(MAX(item_number), 0) FROM team_pay_sov_items WHERE member_id = ?', (mid,)).fetchone()[0]
+    conn.execute(
+        'INSERT INTO team_pay_sov_items (member_id, item_number, description, scheduled_value, is_change_order, sort_order) VALUES (?,?,?,?,?,?)',
+        (mid, max_item + 1, data.get('description', ''), float(data.get('scheduled_value', 0)),
+         int(data.get('is_change_order', 0)), max_order + 1)
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/team-pay/sov/<int:item_id>', methods=['PUT'])
+@api_role_required('owner')
+def api_team_pay_sov_update(item_id):
+    data = request.get_json()
+    conn = get_db()
+    fields, vals = [], []
+    for key in ('description', 'is_change_order'):
+        if key in data:
+            fields.append(f'{key} = ?')
+            vals.append(data[key])
+    if 'scheduled_value' in data:
+        fields.append('scheduled_value = ?')
+        vals.append(float(data['scheduled_value']))
+    if 'item_number' in data:
+        fields.append('item_number = ?')
+        vals.append(int(data['item_number']))
+    if fields:
+        vals.append(item_id)
+        conn.execute(f"UPDATE team_pay_sov_items SET {', '.join(fields)} WHERE id = ?", vals)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-pay/sov/<int:item_id>', methods=['DELETE'])
+@api_role_required('owner')
+def api_team_pay_sov_delete(item_id):
+    conn = get_db()
+    conn.execute('DELETE FROM team_pay_sov_items WHERE id = ?', (item_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/team-pay/members/<int:mid>/sov/bulk', methods=['PUT'])
+@api_role_required('owner')
+def api_team_pay_sov_bulk_update(mid):
+    """Save all SOV items for a member at once."""
+    data = request.get_json()
+    items = data.get('items', [])
+    conn = get_db()
+    for item in items:
+        if item.get('id'):
+            conn.execute('''
+                UPDATE team_pay_sov_items
+                SET description = ?, scheduled_value = ?, item_number = ?, sort_order = ?
+                WHERE id = ? AND member_id = ?
+            ''', (item.get('description', ''), float(item.get('scheduled_value', 0)),
+                  int(item.get('item_number', 0)), int(item.get('sort_order', 0)),
+                  item['id'], mid))
+        else:
+            conn.execute('''
+                INSERT INTO team_pay_sov_items (member_id, item_number, description, scheduled_value, sort_order)
+                VALUES (?,?,?,?,?)
+            ''', (mid, int(item.get('item_number', 0)), item.get('description', ''),
+                  float(item.get('scheduled_value', 0)), int(item.get('sort_order', 0))))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 # --- Team Pay Periods ---
 
 @app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['GET'])
@@ -17744,28 +17883,38 @@ def api_team_pay_periods_list(sid):
     conn = get_db()
     rows = conn.execute('''
         SELECT p.*,
-            (SELECT COALESCE(SUM(e.amount), 0) FROM team_pay_entries e WHERE e.period_id = p.id) as distributed_total
+            (SELECT COALESCE(SUM(le.work_this_period), 0)
+             FROM team_pay_line_entries le
+             JOIN team_pay_sov_items si ON le.sov_item_id = si.id
+             JOIN team_pay_members m ON si.member_id = m.id
+             WHERE le.period_id = p.id AND m.schedule_id = ?) as distributed_total
         FROM team_pay_periods p
         WHERE p.schedule_id = ?
         ORDER BY p.period_number
-    ''', (sid,)).fetchall()
+    ''', (sid, sid)).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/team-pay/schedules/<int:sid>/periods', methods=['POST'])
 @api_role_required('owner')
 def api_team_pay_period_create(sid):
+    data = request.get_json() or {}
     conn = get_db()
     max_num = conn.execute('SELECT COALESCE(MAX(period_number), 0) FROM team_pay_periods WHERE schedule_id = ?', (sid,)).fetchone()[0]
     cursor = conn.execute(
-        'INSERT INTO team_pay_periods (schedule_id, period_number, created_by) VALUES (?,?,?)',
-        (sid, max_num + 1, session.get('user_id'))
+        'INSERT INTO team_pay_periods (schedule_id, period_number, payment_date, notes, created_by) VALUES (?,?,?,?,?)',
+        (sid, max_num + 1, data.get('payment_date', ''), data.get('notes', ''), session.get('user_id'))
     )
     period_id = cursor.lastrowid
-    # Pre-create entry rows for all members
-    members = conn.execute('SELECT id FROM team_pay_members WHERE schedule_id = ?', (sid,)).fetchall()
-    for m in members:
-        conn.execute('INSERT INTO team_pay_entries (period_id, member_id, amount) VALUES (?,?,0)', (period_id, m['id']))
+    # Pre-create line entry rows for all SOV items across all members
+    sov_items = conn.execute('''
+        SELECT si.id FROM team_pay_sov_items si
+        JOIN team_pay_members m ON si.member_id = m.id
+        WHERE m.schedule_id = ?
+    ''', (sid,)).fetchall()
+    for si in sov_items:
+        conn.execute('INSERT OR IGNORE INTO team_pay_line_entries (period_id, sov_item_id, work_this_period, materials_stored) VALUES (?,?,0,0)',
+                     (period_id, si['id']))
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'id': period_id}), 201
@@ -17773,7 +17922,7 @@ def api_team_pay_period_create(sid):
 @app.route('/api/team-pay/periods/<int:pid>', methods=['GET'])
 @api_role_required('owner')
 def api_team_pay_period_detail(pid):
-    """Main G703 endpoint — returns members with calculated previous/total/balance."""
+    """Full G703 endpoint — returns per-member SOV with line-item detail."""
     conn = get_db()
     period = conn.execute('SELECT * FROM team_pay_periods WHERE id = ?', (pid,)).fetchone()
     if not period:
@@ -17786,49 +17935,106 @@ def api_team_pay_period_detail(pid):
         FROM team_pay_schedules s JOIN jobs j ON s.job_id = j.id
         WHERE s.id = ?
     ''', (schedule_id,)).fetchone()
+    retainage_pct = schedule['retainage_pct'] if schedule else 10
+
     # Get all members
     members = conn.execute('''
-        SELECT m.*, u.display_name, u.username
-        FROM team_pay_members m JOIN users u ON m.user_id = u.id
+        SELECT m.*, COALESCE(u.display_name, '') as user_display_name
+        FROM team_pay_members m
+        LEFT JOIN users u ON m.user_id = u.id
         WHERE m.schedule_id = ?
         ORDER BY m.sort_order, m.id
     ''', (schedule_id,)).fetchall()
-    # Get current period entries
-    entries = conn.execute('SELECT * FROM team_pay_entries WHERE period_id = ?', (pid,)).fetchall()
-    entry_map = {e['member_id']: e['amount'] for e in entries}
+
     # Get prior period IDs
     prior_periods = conn.execute(
-        'SELECT id FROM team_pay_periods WHERE schedule_id = ? AND period_number < ?',
+        'SELECT id FROM team_pay_periods WHERE schedule_id = ? AND period_number < ? ORDER BY period_number',
         (schedule_id, period_number)
     ).fetchall()
     prior_ids = [p['id'] for p in prior_periods]
-    # Calculate previous payments per member
-    prev_map = {}
-    if prior_ids:
-        placeholders = ','.join('?' * len(prior_ids))
-        prev_rows = conn.execute(
-            f'SELECT member_id, COALESCE(SUM(amount), 0) as prev FROM team_pay_entries WHERE period_id IN ({placeholders}) GROUP BY member_id',
-            prior_ids
-        ).fetchall()
-        prev_map = {r['member_id']: r['prev'] for r in prev_rows}
-    conn.close()
+
     result = dict(period)
-    result['schedule_id'] = schedule_id
     result['job_name'] = schedule['job_name'] if schedule else ''
     result['total_job_value'] = schedule['total_job_value'] if schedule else 0
+    result['retainage_pct'] = retainage_pct
     result['members'] = []
+
     for m in members:
-        prev = prev_map.get(m['id'], 0)
-        this_amt = entry_map.get(m['id'], 0)
-        result['members'].append({
+        member_data = {
             'member_id': m['id'],
             'user_id': m['user_id'],
-            'display_name': m['display_name'],
-            'username': m['username'],
-            'scheduled_amount': m['scheduled_amount'],
-            'previous_payments': prev,
-            'this_period': this_amt,
-        })
+            'display_name': m['member_name'] or m['user_display_name'] or 'Member',
+            'items': []
+        }
+        # Get SOV items for this member
+        sov_items = conn.execute(
+            'SELECT * FROM team_pay_sov_items WHERE member_id = ? ORDER BY sort_order, id',
+            (m['id'],)
+        ).fetchall()
+
+        member_sov_total = 0
+        member_prev_total = 0
+        member_this_total = 0
+
+        for si in sov_items:
+            # Get current period entry
+            current = conn.execute(
+                'SELECT work_this_period, materials_stored FROM team_pay_line_entries WHERE period_id = ? AND sov_item_id = ?',
+                (pid, si['id'])
+            ).fetchone()
+            work_this = current['work_this_period'] if current else 0
+            mat_stored = current['materials_stored'] if current else 0
+
+            # Calculate from previous
+            from_prev = 0
+            if prior_ids:
+                placeholders = ','.join('?' * len(prior_ids))
+                prev_row = conn.execute(
+                    f'SELECT COALESCE(SUM(work_this_period + materials_stored), 0) as prev FROM team_pay_line_entries WHERE sov_item_id = ? AND period_id IN ({placeholders})',
+                    [si['id']] + prior_ids
+                ).fetchone()
+                from_prev = prev_row['prev']
+
+            total_completed = from_prev + work_this + mat_stored
+            pct_complete = (total_completed / si['scheduled_value'] * 100) if si['scheduled_value'] else 0
+            balance = si['scheduled_value'] - total_completed
+            retainage = total_completed * retainage_pct / 100
+
+            member_sov_total += si['scheduled_value']
+            member_prev_total += from_prev
+            member_this_total += work_this
+
+            member_data['items'].append({
+                'sov_item_id': si['id'],
+                'item_number': si['item_number'],
+                'description': si['description'],
+                'scheduled_value': si['scheduled_value'],
+                'from_previous': from_prev,
+                'work_this_period': work_this,
+                'materials_stored': mat_stored,
+                'total_completed': total_completed,
+                'pct_complete': round(pct_complete, 1),
+                'balance': balance,
+                'retainage': retainage,
+                'is_change_order': si['is_change_order'],
+            })
+
+        member_data['sov_total'] = member_sov_total
+        member_data['prev_total'] = member_prev_total
+        member_data['this_total'] = member_this_total
+        result['members'].append(member_data)
+
+    # Get deductions for this period
+    deductions = conn.execute('''
+        SELECT d.*, COALESCE(m.member_name, u.display_name, '') as member_display
+        FROM team_pay_deductions d
+        JOIN team_pay_members m ON d.member_id = m.id
+        LEFT JOIN users u ON m.user_id = u.id
+        WHERE d.period_id = ?
+    ''', (pid,)).fetchall()
+    result['deductions'] = [dict(d) for d in deductions]
+
+    conn.close()
     return jsonify(result)
 
 @app.route('/api/team-pay/periods/<int:pid>', methods=['PUT'])
@@ -17843,32 +18049,32 @@ def api_team_pay_period_update(pid):
     if period['status'] == 'Finalized' and data.get('status') != 'Draft':
         conn.close()
         return jsonify({'error': 'Period is finalized'}), 400
+
     # Update period fields
-    update_fields = []
-    update_vals = []
-    if 'notes' in data:
-        update_fields.append('notes = ?')
-        update_vals.append(data['notes'])
+    update_fields, update_vals = [], []
+    for key in ('notes', 'payment_date', 'status'):
+        if key in data:
+            update_fields.append(f'{key} = ?')
+            update_vals.append(data[key])
     if 'source_amount' in data:
         update_fields.append('source_amount = ?')
         update_vals.append(float(data['source_amount']))
-    if 'payment_date' in data:
-        update_fields.append('payment_date = ?')
-        update_vals.append(data['payment_date'])
-    if 'status' in data:
-        update_fields.append('status = ?')
-        update_vals.append(data['status'])
     if update_fields:
         update_vals.append(pid)
         conn.execute(f"UPDATE team_pay_periods SET {', '.join(update_fields)} WHERE id = ?", update_vals)
-    # Save entries
-    entries = data.get('entries', [])
-    for entry in entries:
+
+    # Save line entries
+    line_entries = data.get('line_entries', [])
+    for le in line_entries:
         conn.execute('''
-            INSERT INTO team_pay_entries (period_id, member_id, amount)
-            VALUES (?, ?, ?)
-            ON CONFLICT(period_id, member_id) DO UPDATE SET amount = excluded.amount
-        ''', (pid, entry['member_id'], float(entry.get('amount', 0))))
+            INSERT INTO team_pay_line_entries (period_id, sov_item_id, work_this_period, materials_stored)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(period_id, sov_item_id) DO UPDATE SET
+                work_this_period = excluded.work_this_period,
+                materials_stored = excluded.materials_stored
+        ''', (pid, le['sov_item_id'], float(le.get('work_this_period', 0)),
+              float(le.get('materials_stored', 0))))
+
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -17886,23 +18092,282 @@ def api_team_pay_period_delete(pid):
     conn.close()
     return jsonify({'ok': True})
 
-@app.route('/api/team-pay/dashboard')
+# --- Team Pay Deductions ---
+
+@app.route('/api/team-pay/periods/<int:pid>/deductions', methods=['POST'])
 @api_role_required('owner')
-def api_team_pay_dashboard():
-    """Cross-job summary per member."""
+def api_team_pay_deduction_add(pid):
+    data = request.get_json()
     conn = get_db()
-    rows = conn.execute('''
-        SELECT u.id as user_id, u.display_name, u.username,
-            COALESCE(SUM(m.scheduled_amount), 0) as total_scheduled,
-            COALESCE((SELECT SUM(e.amount) FROM team_pay_entries e WHERE e.member_id IN
-                (SELECT id FROM team_pay_members WHERE user_id = u.id)), 0) as total_paid
-        FROM users u
-        JOIN team_pay_members m ON m.user_id = u.id
-        GROUP BY u.id
-        ORDER BY u.display_name
+    conn.execute(
+        'INSERT INTO team_pay_deductions (period_id, member_id, description, amount) VALUES (?,?,?,?)',
+        (pid, int(data['member_id']), data.get('description', ''), float(data.get('amount', 0)))
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True}), 201
+
+@app.route('/api/team-pay/deductions/<int:did>', methods=['DELETE'])
+@api_role_required('owner')
+def api_team_pay_deduction_delete(did):
+    conn = get_db()
+    conn.execute('DELETE FROM team_pay_deductions WHERE id = ?', (did,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# --- Team Pay Running Tracker ---
+
+@app.route('/api/team-pay/tracker', methods=['GET'])
+@api_role_required('owner')
+def api_team_pay_tracker():
+    """Running pay tracker — members x jobs grid for a given period or all."""
+    period_label = request.args.get('period', '')  # e.g. "all" or specific date
+    conn = get_db()
+
+    # Get all schedules with job names
+    schedules = conn.execute('''
+        SELECT s.id, s.job_id, j.name as job_name
+        FROM team_pay_schedules s
+        JOIN jobs j ON s.job_id = j.id
+        ORDER BY j.name
     ''').fetchall()
+
+    # Get all unique members across all schedules
+    all_members = conn.execute('''
+        SELECT DISTINCT COALESCE(m.member_name, u.display_name, m.user_id) as name,
+            m.member_name, m.user_id, COALESCE(u.display_name, '') as user_display
+        FROM team_pay_members m
+        LEFT JOIN users u ON m.user_id = u.id
+        ORDER BY COALESCE(m.member_name, u.display_name, '')
+    ''').fetchall()
+
+    # Build unique member list (by name)
+    member_names = []
+    seen = set()
+    for m in all_members:
+        name = m['member_name'] or m['user_display'] or f"User {m['user_id']}"
+        if name not in seen:
+            member_names.append(name)
+            seen.add(name)
+
+    # Build grid: for each member, for each job, sum work_this_period
+    grid = []
+    for mname in member_names:
+        row = {'member': mname, 'jobs': {}, 'total': 0}
+        for s in schedules:
+            # Find member_id for this member in this schedule
+            member_row = conn.execute('''
+                SELECT m.id FROM team_pay_members m
+                LEFT JOIN users u ON m.user_id = u.id
+                WHERE m.schedule_id = ? AND (m.member_name = ? OR u.display_name = ?)
+            ''', (s['id'], mname, mname)).fetchone()
+            if not member_row:
+                row['jobs'][s['job_name']] = 0
+                continue
+            paid = conn.execute('''
+                SELECT COALESCE(SUM(le.work_this_period), 0) as total
+                FROM team_pay_line_entries le
+                JOIN team_pay_sov_items si ON le.sov_item_id = si.id
+                WHERE si.member_id = ?
+            ''', (member_row['id'],)).fetchone()['total']
+            row['jobs'][s['job_name']] = paid
+            row['total'] += paid
+        grid.append(row)
+
+    conn.close()
+    return jsonify({
+        'jobs': [s['job_name'] for s in schedules],
+        'members': grid
+    })
+
+# --- Team Pay Import ---
+
+@app.route('/api/team-pay/import', methods=['POST'])
+@api_role_required('owner')
+def api_team_pay_import():
+    """Import a Staff AIA Excel workbook for a job."""
+    import openpyxl
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    job_id = request.form.get('job_id')
+    if not job_id:
+        return jsonify({'error': 'job_id is required'}), 400
+    job_id = int(job_id)
+
+    wb = openpyxl.load_workbook(file, data_only=True)
+    conn = get_db()
+
+    # Create or get schedule
+    existing = conn.execute('SELECT id FROM team_pay_schedules WHERE job_id = ?', (job_id,)).fetchone()
+    if existing:
+        schedule_id = existing['id']
+    else:
+        cursor = conn.execute(
+            'INSERT INTO team_pay_schedules (job_id, total_job_value, retainage_pct, created_by) VALUES (?,?,?,?)',
+            (job_id, 0, 10, session.get('user_id'))
+        )
+        schedule_id = cursor.lastrowid
+
+    imported_members = 0
+    skip_sheets = {'Master 703', 'Payment Printout', 'Sheet1'}
+
+    for sheet_name in wb.sheetnames:
+        if sheet_name.strip() in skip_sheets:
+            continue
+
+        ws = wb[sheet_name]
+        # Extract member name from sheet (row 2, col A or clean sheet name)
+        member_name = ''
+        r2 = ws.cell(row=2, column=1).value
+        if r2 and isinstance(r2, str) and r2.strip():
+            member_name = r2.strip()
+        else:
+            member_name = sheet_name.replace(' 703', '').strip()
+
+        if not member_name:
+            continue
+
+        # Check if member already exists for this schedule
+        existing_member = conn.execute(
+            'SELECT id FROM team_pay_members WHERE schedule_id = ? AND member_name = ?',
+            (schedule_id, member_name)
+        ).fetchone()
+        if existing_member:
+            member_id = existing_member['id']
+            # Clear existing SOV items and line entries
+            conn.execute('DELETE FROM team_pay_sov_items WHERE member_id = ?', (member_id,))
+        else:
+            max_order = conn.execute('SELECT COALESCE(MAX(sort_order), 0) FROM team_pay_members WHERE schedule_id = ?', (schedule_id,)).fetchone()[0]
+            cursor = conn.execute(
+                'INSERT INTO team_pay_members (schedule_id, member_name, scheduled_amount, sort_order) VALUES (?,?,?,?)',
+                (schedule_id, member_name, 0, max_order + 1)
+            )
+            member_id = cursor.lastrowid
+
+        # Parse G703 line items (rows 13-25 typically, col A=item#, B=desc, C=scheduled value)
+        # Also parse pay columns (N onwards = Pay 1, Pay 2, etc.)
+        sov_items = []
+        pay_columns = []  # list of column indices for Pay 1, Pay 2, etc.
+
+        # Find pay columns from row 12 headers
+        for col in range(14, ws.max_column + 1):  # N=14
+            val = ws.cell(row=12, column=col).value
+            if val and isinstance(val, str) and val.startswith('Pay'):
+                pay_columns.append(col)
+
+        # Parse line items (rows 13 onwards until blank or change orders)
+        for row_num in range(13, min(ws.max_row + 1, 40)):
+            item_no = ws.cell(row=row_num, column=1).value
+            desc = ws.cell(row=row_num, column=2).value
+            sched_val = ws.cell(row=row_num, column=3).value
+
+            if item_no is None and desc is None:
+                continue
+            if desc and desc == 'Change Orders':
+                # Start change order section
+                continue
+
+            if item_no is not None and desc and isinstance(desc, str) and desc.strip():
+                sched_val = float(sched_val) if sched_val else 0
+                # Get pay amounts per period
+                pay_amounts = []
+                for pc in pay_columns:
+                    amt = ws.cell(row=row_num, column=pc).value
+                    pay_amounts.append(float(amt) if amt else 0)
+
+                sov_items.append({
+                    'item_number': item_no,
+                    'description': desc.strip(),
+                    'scheduled_value': sched_val,
+                    'pay_amounts': pay_amounts,
+                })
+
+        # Insert SOV items and create periods/line entries
+        total_scheduled = 0
+        for i, item in enumerate(sov_items):
+            cursor = conn.execute(
+                'INSERT INTO team_pay_sov_items (member_id, item_number, description, scheduled_value, sort_order) VALUES (?,?,?,?,?)',
+                (member_id, item['item_number'], item['description'], item['scheduled_value'], i + 1)
+            )
+            item['sov_id'] = cursor.lastrowid
+            total_scheduled += item['scheduled_value']
+
+        # Create periods if needed (based on pay columns found)
+        if pay_columns and sov_items:
+            for period_idx in range(len(pay_columns)):
+                period_num = period_idx + 1
+                # Check if period exists
+                existing_period = conn.execute(
+                    'SELECT id FROM team_pay_periods WHERE schedule_id = ? AND period_number = ?',
+                    (schedule_id, period_num)
+                ).fetchone()
+                if existing_period:
+                    period_id = existing_period['id']
+                else:
+                    cursor = conn.execute(
+                        "INSERT INTO team_pay_periods (schedule_id, period_number, status, created_by) VALUES (?,?,?,?)",
+                        (schedule_id, period_num, 'Finalized', session.get('user_id'))
+                    )
+                    period_id = cursor.lastrowid
+
+                # Insert line entries for each SOV item
+                for item in sov_items:
+                    amt = item['pay_amounts'][period_idx] if period_idx < len(item['pay_amounts']) else 0
+                    if amt:
+                        conn.execute('''
+                            INSERT INTO team_pay_line_entries (period_id, sov_item_id, work_this_period)
+                            VALUES (?,?,?)
+                            ON CONFLICT(period_id, sov_item_id) DO UPDATE SET work_this_period = excluded.work_this_period
+                        ''', (period_id, item['sov_id'], amt))
+
+        # Update member's contract value (row 13 col C)
+        conn.execute('UPDATE team_pay_members SET scheduled_amount = ? WHERE id = ?', (total_scheduled, member_id))
+        imported_members += 1
+
+    # Update total job value from contract row
+    total_val = conn.execute('''
+        SELECT COALESCE(MAX(m.scheduled_amount), 0) FROM team_pay_members m WHERE m.schedule_id = ?
+    ''', (schedule_id,)).fetchone()[0]
+    conn.execute("UPDATE team_pay_schedules SET updated_at = datetime('now','localtime') WHERE id = ?", (schedule_id,))
+
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'imported': imported_members, 'schedule_id': schedule_id})
+
+# --- Profit Split Config ---
+
+@app.route('/api/profit-split-config', methods=['GET'])
+@api_role_required('owner')
+def api_profit_split_config_get():
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM profit_split_config WHERE is_active = 1 ORDER BY sort_order').fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+@app.route('/api/profit-split-config', methods=['PUT'])
+@api_role_required('owner')
+def api_profit_split_config_update():
+    data = request.get_json()
+    splits = data.get('splits', [])
+    conn = get_db()
+    # Deactivate all first
+    conn.execute('UPDATE profit_split_config SET is_active = 0')
+    for i, s in enumerate(splits):
+        if s.get('id'):
+            conn.execute(
+                'UPDATE profit_split_config SET name = ?, percentage = ?, is_active = 1, sort_order = ? WHERE id = ?',
+                (s['name'], float(s['percentage']), i + 1, s['id'])
+            )
+        else:
+            conn.execute(
+                'INSERT INTO profit_split_config (name, percentage, is_active, sort_order) VALUES (?,?,1,?)',
+                (s['name'], float(s['percentage']), i + 1)
+            )
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 # ─── Team Chat ──────────────────────────────────────────────────
 
