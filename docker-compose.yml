@@ -13,3 +13,4 @@ services:
       - .env
     environment:
       - FLASK_ENV=production
+      - TZ=America/Chicago
